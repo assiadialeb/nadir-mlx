@@ -12,7 +12,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from .models import InferenceInstance, BenchmarkRun, ModelDownload
 from .downloader import start_model_download
-from .model_utils import reconcile_stale_downloads, sync_model_download_status
+from .model_utils import reconcile_stale_downloads, sync_model_download_status, validate_model_folder_name
 from .server_manager import (
     parse_launch_mode,
     start_instance,
@@ -192,8 +192,11 @@ def download_model_view(request):
     if request.method == 'POST':
         repo_id = request.POST.get('repo_id')
         if repo_id:
-            start_model_download(repo_id)
-            messages.success(request, f"Le téléchargement du modèle {repo_id} a démarré en arrière-plan.")
+            try:
+                start_model_download(repo_id)
+                messages.success(request, f"Le téléchargement du modèle {repo_id} a démarré en arrière-plan.")
+            except ValueError as exc:
+                messages.error(request, str(exc))
         else:
             messages.error(request, "Aucun identifiant de modèle spécifié.")
     tab = request.POST.get('tab', 'hub')
@@ -314,6 +317,12 @@ def delete_instance_view(request, instance_id):
 # Logs View API / AJAX page
 @login_required
 def logs_view(request, model_name, port):
+    try:
+        validate_model_folder_name(model_name)
+    except ValueError:
+        messages.error(request, "Invalid model name.")
+        return redirect('servers')
+
     logs = get_instance_logs(model_name, port)
     
     if request.headers.get('x-requested-with') == 'XMLHttpRequest':

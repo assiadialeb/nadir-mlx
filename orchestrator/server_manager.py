@@ -17,6 +17,8 @@ from .model_utils import (
     is_model_complete,
     prepare_model_for_multimodal_inference,
     prepare_model_for_text_inference,
+    resolve_log_file_path,
+    resolve_model_dir,
     supports_embedding_mode,
     supports_image_mode,
     supports_multimodal_mode,
@@ -553,7 +555,7 @@ def start_instance(
     """Launch an inference server in the background."""
     launch_mode = parse_launch_mode(launch_mode)
     normalized_config = _resolve_server_config(launch_mode, server_config, model_name)
-    model_path = os.path.join(settings.MODELS_DIR, model_name)
+    model_path = str(resolve_model_dir(model_name))
     if not os.path.isdir(model_path):
         raise ValueError(f"Model folder '{model_name}' was not found in ./models.")
     if not is_model_complete(model_path):
@@ -573,7 +575,7 @@ def start_instance(
         raise ValueError(f"Port {port} is already in use.")
 
     os.makedirs(settings.LOGS_DIR, exist_ok=True)
-    log_file_path = os.path.join(settings.LOGS_DIR, f"{model_name}_{port}.log")
+    log_file_path = str(resolve_log_file_path(model_name, port))
     log_file = open(log_file_path, "w", encoding="utf-8")
 
     instance = _get_or_create_instance(model_name, port, launch_mode, normalized_config)
@@ -699,13 +701,17 @@ def delete_instance(instance: InferenceInstance) -> None:
 
 def get_instance_logs(model_name: str, port: int) -> str:
     """Read the last 500 lines of logs for the given instance."""
-    log_file_path = os.path.join(settings.LOGS_DIR, f"{model_name}_{port}.log")
-    if not os.path.exists(log_file_path):
+    try:
+        log_file_path = resolve_log_file_path(model_name, port)
+    except ValueError:
+        return "Log file not found."
+
+    if not log_file_path.is_file():
         return "Log file not found."
 
     try:
         with open(log_file_path, "r", encoding="utf-8", errors="replace") as handle:
             lines = handle.readlines()
             return "".join(lines[-500:])
-    except OSError as exc:
-        return f"Error reading logs: {exc}"
+    except OSError:
+        return "Error reading logs."

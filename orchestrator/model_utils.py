@@ -12,6 +12,9 @@ LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TT
 CONFIG_JSON = "config.json"
 CONFIG_JSON_ORIG = "config.json.orig"
 
+SAFE_MODEL_FOLDER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+HF_REPO_ID_PATTERN = re.compile(r"^[\w.-]+/[\w.-]+$")
+
 EMBEDDING_NAME_PATTERN = re.compile(
     r"(embedding|embed|e5|bge|nomic|gte|retrieval)",
     re.IGNORECASE,
@@ -71,14 +74,59 @@ VLM_MODEL_TYPES = {
 }
 
 
+def validate_model_folder_name(folder_name: str) -> str:
+    """Reject path traversal and unsafe characters in a local model folder name."""
+    name = folder_name.strip()
+    if not name or name in {".", ".."}:
+        raise ValueError("Invalid model folder name.")
+    if "/" in name or "\\" in name or ".." in name:
+        raise ValueError("Invalid model folder name.")
+    if not SAFE_MODEL_FOLDER_PATTERN.fullmatch(name):
+        raise ValueError("Invalid model folder name.")
+    return name
+
+
+def validate_hf_repo_id(repo_id: str) -> str:
+    """Validate a Hugging Face repo id before download (org/model format)."""
+    cleaned = repo_id.strip()
+    if not cleaned or ".." in cleaned or cleaned.startswith(("/", "\\")):
+        raise ValueError("Invalid Hugging Face repo id.")
+    if not HF_REPO_ID_PATTERN.fullmatch(cleaned):
+        raise ValueError("Invalid Hugging Face repo id.")
+    validate_model_folder_name(cleaned.split("/")[-1])
+    return cleaned
+
+
+def resolve_model_dir(folder_name: str) -> Path:
+    """Return a model directory path constrained under MODELS_DIR."""
+    name = validate_model_folder_name(folder_name)
+    models_root = Path(settings.MODELS_DIR).resolve()
+    resolved = (models_root / name).resolve()
+    if not resolved.is_relative_to(models_root):
+        raise ValueError("Invalid model folder path.")
+    return resolved
+
+
+def resolve_log_file_path(model_name: str, port: int) -> Path:
+    """Return a log file path constrained under LOGS_DIR."""
+    if port < 1 or port > 65535:
+        raise ValueError("Invalid port.")
+    name = validate_model_folder_name(model_name)
+    logs_root = Path(settings.LOGS_DIR).resolve()
+    resolved = (logs_root / f"{name}_{port}.log").resolve()
+    if not resolved.is_relative_to(logs_root):
+        raise ValueError("Invalid log file path.")
+    return resolved
+
+
 def get_folder_name(repo_id: str) -> str:
     """Extract the local folder name from a Hugging Face repo id."""
-    return repo_id.split("/")[-1]
+    return validate_model_folder_name(repo_id.split("/")[-1])
 
 
 def get_model_path(folder_name: str) -> Path:
     """Return the absolute path to a model folder."""
-    return Path(settings.MODELS_DIR) / folder_name
+    return resolve_model_dir(folder_name)
 
 
 def _read_model_config(model_path: Path) -> dict[str, Any]:
