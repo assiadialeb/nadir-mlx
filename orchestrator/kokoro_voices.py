@@ -21,21 +21,23 @@ KOKORO_VOICES: tuple[tuple[str, str], ...] = (
     ("zm_yunjian", "zm_yunjian — Mandarin (M)"),
 )
 
-DEFAULT_KOKORO_VOICE = "af_heart"
+DEFAULT_KOKORO_VOICE = "ff_siwis"
+
+# Default for new French-first deployments; override per server in UI.
+DEFAULT_KOKORO_LANG_CODE = "f"
+
 
 KOKORO_LANG_CODES: tuple[tuple[str, str], ...] = (
+    ("f", "French"),
     ("a", "American English"),
     ("b", "British English"),
     ("e", "Spanish"),
-    ("f", "French"),
     ("h", "Hindi"),
     ("i", "Italian"),
     ("p", "Portuguese"),
     ("j", "Japanese"),
     ("z", "Mandarin"),
 )
-
-DEFAULT_KOKORO_LANG_CODE = "a"
 
 
 def is_valid_kokoro_voice(voice_id: str) -> bool:

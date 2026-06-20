@@ -22,9 +22,9 @@ class AudioModeTests(TestCase):
 
     def test_build_default_server_config_tts(self) -> None:
         config = build_default_server_config("TTS")
-        assert config["voice_id"] == "af_heart"
+        assert config["voice_id"] == "ff_siwis"
         assert config["speaking_rate"] == 1.0
-        assert config["lang_code"] == "a"
+        assert config["lang_code"] == "f"
 
     def test_build_default_server_config_stt(self) -> None:
         config = build_default_server_config("STT")

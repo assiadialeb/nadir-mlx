@@ -96,6 +96,20 @@ def _has_diffusion_weights(path: Path) -> bool:
     return bool(safetensors) and any(file.stat().st_size > 0 for file in safetensors)
 
 
+def _has_npz_weights(path: Path) -> bool:
+    """Return True for MLX checkpoints that ship weights as .npz (legacy Whisper, etc.)."""
+    weight_npz = path / "weights.npz"
+    if weight_npz.is_file() and weight_npz.stat().st_size > 0:
+        return True
+
+    config = _read_model_config(path)
+    if config.get("model_type", "").lower() != "whisper":
+        return False
+
+    npz_files = list(path.glob("*.npz"))
+    return bool(npz_files) and all(file.stat().st_size > 0 for file in npz_files)
+
+
 def is_model_complete(model_path: os.PathLike[str] | str) -> bool:
     """Check whether a model directory contains all required weight files."""
     path = Path(model_path)
@@ -125,7 +139,10 @@ def is_model_complete(model_path: os.PathLike[str] | str) -> bool:
         )
 
     safetensors = list(path.glob("*.safetensors"))
-    return bool(safetensors) and all(f.stat().st_size > 0 for f in safetensors)
+    if safetensors and all(file.stat().st_size > 0 for file in safetensors):
+        return True
+
+    return _has_npz_weights(path)
 
 
 def get_model_type(model_path: os.PathLike[str] | str) -> Optional[str]:

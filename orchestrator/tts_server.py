@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import logging
 import os
 import time
 from pathlib import Path
@@ -15,6 +16,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from orchestrator.kokoro_tts_utils import (
+    OPENAI_TTS_VOICES,
+    is_kokoro_voice_id,
+    resolve_kokoro_voice,
+    resolve_lang_code,
+)
+from orchestrator.kokoro_voices import KOKORO_VOICES
+
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="MLX TTS Server")
 _state: dict[str, object] = {}
 
@@ -25,6 +36,7 @@ class SpeechRequest(BaseModel):
     voice: Optional[str] = None
     speed: Optional[float] = Field(default=None, ge=0.25, le=4.0)
     lang_code: Optional[str] = None
+    language: Optional[str] = None
     response_format: Literal["wav", "mp3"] = "wav"
 
 
@@ -57,20 +69,33 @@ def list_models() -> dict[str, object]:
 @app.get("/v1/audio/voices")
 def list_voices() -> dict[str, object]:
     model_path = _state.get("model_path")
-    voices: list[dict[str, str]] = []
+    installed: dict[str, str] = {}
     if isinstance(model_path, Path):
         voices_dir = model_path / "voices"
         if voices_dir.is_dir():
-            voices = [
-                {"id": voice_file.stem, "name": voice_file.stem}
-                for voice_file in sorted(voices_dir.glob("*.safetensors"))
-            ]
-    default_voice = str(_defaults().get("voice_id", "af_heart"))
+            for voice_file in sorted(voices_dir.glob("*.safetensors")):
+                installed[voice_file.stem] = voice_file.stem
+
+    default_voice = str(_defaults().get("voice_id", "ff_siwis"))
+    default_lang = str(_defaults().get("lang_code", "f"))
+    catalog = [
+        {
+            "id": voice_id,
+            "name": label,
+            "installed": voice_id in installed,
+        }
+        for voice_id, label in KOKORO_VOICES
+    ]
     return {
         "object": "list",
         "model": str(_state.get("model_id", "")),
         "default_voice": default_voice,
-        "data": voices,
+        "default_lang_code": default_lang,
+        "openai_voice_mapping": True,
+        "data": catalog or [
+            {"id": voice_id, "name": voice_id, "installed": True}
+            for voice_id in sorted(installed)
+        ],
     }
 
 
@@ -84,25 +109,59 @@ def create_speech(body: SpeechRequest) -> Response:
     if not text:
         raise HTTPException(status_code=400, detail="input must not be empty.")
 
+    if body.voice:
+        raw_voice = body.voice.strip()
+        if (
+            not is_kokoro_voice_id(raw_voice)
+            and raw_voice.lower() not in OPENAI_TTS_VOICES
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown voice '{raw_voice}'. Use a Kokoro id (e.g. ff_siwis) "
+                    "or an OpenAI voice name (alloy, nova, …)."
+                ),
+            )
+
     defaults = _defaults()
-    voice = body.voice or defaults.get("voice_id") or "af_heart"
+    lang_code = resolve_lang_code(
+        body.lang_code,
+        body.language,
+        str(defaults.get("lang_code") or "f"),
+    )
+    voice, remap_note = resolve_kokoro_voice(
+        body.voice,
+        lang_code,
+        str(defaults.get("voice_id") or "") or None,
+    )
+    if remap_note:
+        logger.info(remap_note)
+
     speed = body.speed if body.speed is not None else defaults.get("speaking_rate", 1.0)
-    lang_code = body.lang_code or defaults.get("lang_code") or "a"
 
     audio_chunks: list[np.ndarray] = []
     sample_rate: int | None = None
     try:
         for result in model.generate(
             text,
-            voice=str(voice),
+            voice=voice,
             speed=float(speed),
-            lang_code=str(lang_code),
+            lang_code=lang_code,
         ):
             audio_chunks.append(np.asarray(result.audio))
             if sample_rate is None:
                 sample_rate = int(result.sample_rate)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        message = str(exc)
+        if "Failed to open file" in message and ".safetensors" in message:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Kokoro voice '{voice}' is not available for lang '{lang_code}'. "
+                    "Pick a voice from GET /v1/audio/voices (e.g. ff_siwis for French)."
+                ),
+            ) from exc
+        raise HTTPException(status_code=500, detail=message) from exc
 
     if not audio_chunks or sample_rate is None:
         raise HTTPException(status_code=400, detail="No audio generated.")
@@ -120,15 +179,28 @@ def create_speech(body: SpeechRequest) -> Response:
     )
 
 
+def _verify_kokoro_dependencies() -> None:
+    """Fail fast when misaki extras required for Kokoro G2P are missing."""
+    try:
+        import misaki.espeak  # noqa: F401
+        import misaki.en  # noqa: F401
+    except ImportError as exc:
+        raise SystemExit(
+            "Kokoro TTS requires misaki with English/espeak extras. "
+            "Install in the mlx-server venv: pip install 'misaki[en]==0.9.4' "
+            "(or pip install -r requirements.txt), then restart the TTS server."
+        ) from exc
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MLX Kokoro TTS server")
     parser.add_argument("--model", required=True, help="Local path to Kokoro checkpoint")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=11400)
     parser.add_argument("--model-id", default=None)
-    parser.add_argument("--default-voice", default="af_heart")
+    parser.add_argument("--default-voice", default="ff_siwis")
     parser.add_argument("--default-speed", type=float, default=1.0)
-    parser.add_argument("--default-lang-code", default="a")
+    parser.add_argument("--default-lang-code", default="f")
     return parser.parse_args()
 
 
@@ -139,6 +211,7 @@ def main() -> None:
     if not model_path.is_dir():
         raise SystemExit(f"Model path not found: {model_path}")
 
+    _verify_kokoro_dependencies()
     print(f"Loading Kokoro TTS model from {model_path} ...")
     from mlx_audio.utils import load_model
 

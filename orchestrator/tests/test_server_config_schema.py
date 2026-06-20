@@ -46,8 +46,8 @@ class ServerConfigSchemaTests(TestCase):
 
     def test_validate_tts_config_defaults(self) -> None:
         config = validate_and_normalize_server_config("TTS", {}, "Kokoro-82M-bf16")
-        self.assertEqual(config["voice_id"], "af_heart")
-        self.assertEqual(config["lang_code"], "a")
+        self.assertEqual(config["voice_id"], "ff_siwis")
+        self.assertEqual(config["lang_code"], "f")
         self.assertEqual(config["model_id"], "Kokoro-82M-bf16")
 
     def test_validate_stt_config_defaults(self) -> None:

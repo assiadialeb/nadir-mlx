@@ -217,6 +217,14 @@ Response images are returned as base64 PNG in `data[].b64_json`. First launch ma
 
 ### Text-to-speech (TTS mode)
 
+Kokoro requires **`misaki[en]`** for G2P (English + espeak for French, Spanish, etc.). It is included in `requirements.txt`; after upgrading dependencies, **restart the TTS server**.
+
+**Multilingual:** set `lang_code` in the server UI (`f` = French, `a` = American English, …). Default is French (`ff_siwis`).
+
+LiteLLM and other OpenAI clients often send voices like `alloy` or `nova`. The TTS server **maps them automatically** to the closest Kokoro voice for the configured language (e.g. `alloy` + French → `ff_siwis`).
+
+For long French texts, split paragraphs with newlines — espeak-based languages truncate very long inputs.
+
 Recommended model: `mlx-community/Kokoro-82M-bf16`.
 
 ```bash
@@ -246,6 +254,8 @@ curl http://127.0.0.1:11442/v1/audio/transcriptions \
 
 ### LiteLLM proxy
 
+#### Reranker
+
 Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
 
 1. **Credentials** → provider **vLLM (Hosted vLLM)**
@@ -253,6 +263,62 @@ Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
 3. **Add Model** → `hosted_vllm/your-model-name`, mode **Rerank**
 
 Then call LiteLLM's `/rerank` endpoint with your proxy model name.
+
+#### Text-to-speech (Kokoro)
+
+Use provider **`openai`** (OpenAI-compatible), **not** chat mode. The backend model id is whatever `/v1/models` returns (often `kokoro`).
+
+`config.yaml` example (LiteLLM in Docker → use `host.docker.internal` instead of `127.0.0.1`):
+
+```yaml
+model_list:
+  - model_name: kokoro-tts
+    litellm_params:
+      model: openai/kokoro
+      api_base: http://host.docker.internal:11444/v1
+      api_key: sk-local
+    model_info:
+      mode: audio_speech
+```
+
+Test through LiteLLM proxy:
+
+```bash
+curl http://127.0.0.1:4000/v1/audio/speech \
+  -H "Authorization: Bearer sk-1234" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "kokoro-tts",
+    "input": "Bonjour depuis LiteLLM.",
+    "voice": "alloy"
+  }' \
+  --output speech.wav
+```
+
+**UI checklist**
+
+| Field | Value |
+|-------|--------|
+| Provider | **OpenAI** (or OpenAI-compatible) |
+| LiteLLM model | `openai/kokoro` |
+| API Base | `http://host.docker.internal:11444/v1` (must end with `/v1`) |
+| API Key | any non-empty string (`sk-local`) |
+| Mode | **Audio Speech** (`audio_speech`) — not Chat |
+
+`voice: alloy` is fine: mlx-server maps OpenAI voices to Kokoro (`alloy` → `ff_siwis` in French).
+
+**Sanity check without proxy** (from the LiteLLM venv):
+
+```python
+import litellm
+litellm.speech(
+    model="openai/kokoro",
+    api_base="http://127.0.0.1:11444/v1",
+    api_key="sk-fake",
+    voice="alloy",
+    input="Bonjour test direct",
+).stream_to_file("test.wav")
+```
 
 ---
 

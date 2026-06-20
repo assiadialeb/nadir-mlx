@@ -48,6 +48,8 @@ _LOG_FAILURE_PATTERNS = (
     re.compile(r"No module named 'local_reranker'"),
     re.compile(r"No module named 'mflux'"),
     re.compile(r"No module named 'misaki'"),
+    re.compile(r"No module named 'num2words'"),
+    re.compile(r"requires misaki with English extras"),
     re.compile(r"Unsupported image model folder"),
 )
 
