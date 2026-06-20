@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
 import os
-import tempfile
 import time
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
@@ -53,6 +52,33 @@ def list_models() -> dict[str, object]:
     }
 
 
+def _decode_uploaded_audio(audio_bytes: bytes) -> np.ndarray:
+    """Decode uploaded audio to mono 16 kHz float32 for Whisper."""
+    from mlx_audio.audio_io import read as audio_read
+    from mlx_audio.stt.utils import SAMPLE_RATE, resample_audio
+
+    try:
+        audio, sample_rate = audio_read(io.BytesIO(audio_bytes), always_2d=False)
+    except Exception as exc:
+        message = str(exc)
+        if "ffmpeg" in message.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "This audio format requires ffmpeg. Install ffmpeg "
+                    "(brew install ffmpeg) or upload WAV/MP3 decodable by miniaudio."
+                ),
+            ) from exc
+        raise HTTPException(status_code=400, detail=f"Audio decode failed: {message}") from exc
+
+    waveform = np.asarray(audio, dtype=np.float32)
+    if waveform.ndim > 1:
+        waveform = waveform.mean(axis=1)
+    if sample_rate != SAMPLE_RATE:
+        waveform = resample_audio(waveform, sample_rate, SAMPLE_RATE)
+    return np.asarray(waveform, dtype=np.float32)
+
+
 @app.post("/v1/audio/transcriptions", response_model=None)
 async def create_transcription(
     file: UploadFile = File(...),
@@ -73,16 +99,8 @@ async def create_transcription(
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Empty audio file.")
 
-    suffix = Path(file.filename or "audio.wav").suffix or ".wav"
-    tmp_path: str | None = None
     try:
-        from mlx_audio.audio_io import read as audio_read
-        from mlx_audio.audio_io import write as audio_write
-
-        audio, sample_rate = audio_read(io.BytesIO(audio_bytes), always_2d=False)
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
-            tmp_path = tmp_file.name
-            audio_write(tmp_path, audio, sample_rate)
+        waveform = _decode_uploaded_audio(audio_bytes)
 
         generate_kwargs: dict[str, object] = {
             "chunk_duration": effective_chunk,
@@ -91,7 +109,7 @@ async def create_transcription(
         if effective_language:
             generate_kwargs["language"] = effective_language
 
-        result = stt_model.generate(tmp_path, **generate_kwargs)
+        result = stt_model.generate(waveform, **generate_kwargs)
         if hasattr(result, "text"):
             payload = {
                 "text": result.text,
@@ -107,11 +125,10 @@ async def create_transcription(
                 payload = {"text": "".join(str(chunk) for chunk in chunks)}
         else:
             payload = {"text": str(result)}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
     text = str(payload.get("text", "")).strip()
     if response_format == "text":
@@ -140,8 +157,10 @@ def main() -> None:
         raise SystemExit(f"Model path not found: {model_path}")
 
     print(f"Loading Whisper STT model from {model_path} ...")
+    from orchestrator.whisper_assets import ensure_whisper_hf_assets
     from mlx_audio.utils import load_model
 
+    ensure_whisper_hf_assets(model_path)
     model = load_model(str(model_path))
     _state["model"] = model
     _state["model_id"] = args.model_id or model_path.name

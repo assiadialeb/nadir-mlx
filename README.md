@@ -243,7 +243,9 @@ List installed Kokoro voices: `GET /v1/audio/voices`.
 
 ### Speech-to-text (STT mode)
 
-Recommended model: `mlx-community/whisper-large-v3-turbo-asr-fp16`.
+Recommended model: `mlx-community/whisper-large-v3-turbo-asr-fp16`. Legacy `whisper-*-mlx` checkpoints work after mlx-server bootstraps tokenizer/processor files from OpenAI.
+
+WAV and MP3 uploads are decoded in memory (no temp re-encode). For **M4A / WebM / AAC**, install **ffmpeg** on the host: `brew install ffmpeg`.
 
 ```bash
 curl http://127.0.0.1:11442/v1/audio/transcriptions \

@@ -226,7 +226,9 @@ def is_stt_focused_model(model_path: os.PathLike[str] | str) -> bool:
 
 def supports_stt_mode(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model can be served with mlx-audio Whisper."""
-    return is_stt_focused_model(model_path)
+    from orchestrator.whisper_assets import is_stt_servable
+
+    return is_stt_servable(model_path)
 
 
 def is_rerank_focused_model(model_path: os.PathLike[str] | str) -> bool:
