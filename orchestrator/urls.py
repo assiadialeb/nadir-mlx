@@ -4,13 +4,15 @@ from . import views
 
 def root_redirect(request):
     if request.user.is_authenticated:
-        return redirect('dashboard')
+        return redirect('servers')
     return redirect('login')
 
 urlpatterns = [
     path('', root_redirect, name='root'),
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
+    path('servers/', views.servers_view, name='servers'),
+    path('models/', views.models_view, name='models'),
     path('dashboard/', views.dashboard_view, name='dashboard'),
     path('search/', views.search_view, name='search'),
     path('download/', views.download_model_view, name='download'),

@@ -62,7 +62,7 @@
                             </label>
                         </div>
                         <div class="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600 leading-relaxed">
-                            <strong class="text-slate-700">MLX instance</strong> — benchmarks a server already launched from the dashboard (mlx_lm or mlx_vlm).<br>
+                            <strong class="text-slate-700">MLX instance</strong> — benchmarks a server already launched from the Servers page (mlx_lm or mlx_vlm).<br>
                             <strong class="text-slate-700">Custom endpoint</strong> — compare against Ollama (<code class="text-slate-800">:11434</code>), LM Studio, vLLM, or any OpenAI-compatible API.
                         </div>
                     </div>
@@ -80,7 +80,7 @@
                             {% endfor %}
                         </select>
                         {% if not running_instances %}
-                        <p class="text-xs text-amber-700 mt-2">No RUNNING instance. Start a server from the dashboard or use a custom endpoint.</p>
+                        <p class="text-xs text-amber-700 mt-2">No RUNNING instance. Start a server from the Servers page or use a custom endpoint.</p>
                         {% endif %}
                     </div>
 

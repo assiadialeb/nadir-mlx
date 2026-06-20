@@ -124,7 +124,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Authentication configurations
 LOGIN_URL = 'login'
-LOGIN_REDIRECT_URL = 'dashboard'
+LOGIN_REDIRECT_URL = 'servers'
 LOGOUT_REDIRECT_URL = 'login'
 
 # MLX Model Orchestrator Path Settings

@@ -1,0 +1,253 @@
+{% extends 'orchestrator/base.html' %}
+
+{% block title %}Serveurs - MLX Orchestrator{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <div>
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900">Serveurs d'inférence</h1>
+        <p class="text-sm text-slate-600 mt-1">
+            Créez et gérez vos serveurs locaux OpenAI-compatible (ports 11400–11500).
+            Chaque type de serveur expose une API dédiée selon son rôle.
+        </p>
+    </div>
+
+    <!-- Create server -->
+    <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+        <div class="absolute -top-12 -left-12 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl"></div>
+        <h2 class="text-lg font-bold text-slate-900 mb-4 flex items-center space-x-2 relative z-10">
+            <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+            <span>Créer un serveur</span>
+        </h2>
+
+        <form action="{% url 'start_instance' %}" method="POST" id="create-server-form" class="relative z-10 space-y-4">
+            {% csrf_token %}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label for="launch_mode" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                        Type de serveur
+                    </label>
+                    <select name="launch_mode" id="launch_mode"
+                        class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        {% for server_type in server_types %}
+                        <option value="{{ server_type.id }}" data-api="{{ server_type.api_hint }}">
+                            {{ server_type.label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <p id="server-type-hint" class="mt-1.5 text-xxs text-slate-500"></p>
+                </div>
+
+                <div>
+                    <label for="model_name" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                        Modèle
+                    </label>
+                    <select name="model_name" id="model_name" required
+                        class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">Sélectionnez un modèle</option>
+                    </select>
+                    <p id="model-empty-hint" class="mt-1.5 text-xxs text-amber-600 hidden">
+                        Aucun modèle compatible installé.
+                        <a href="{% url 'models' %}?tab=hub" class="underline font-semibold">Installer depuis Hugging Face</a>
+                    </p>
+                </div>
+
+                <div>
+                    <label for="port" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                        Port <span class="normal-case font-normal text-slate-400">(optionnel)</span>
+                    </label>
+                    <input type="number" name="port" id="port" min="1024" max="65535"
+                        class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="ex. 11400">
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+                <a href="{% url 'models' %}" class="text-xs text-indigo-600 hover:text-indigo-700 font-semibold">
+                    Gérer les modèles installés &rarr;
+                </a>
+                <button type="submit" id="create-server-btn"
+                    class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg transition-all active:scale-95 flex items-center space-x-2 shadow-md shadow-indigo-600/10 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span>Démarrer le serveur</span>
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Server list -->
+    <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+        <div class="absolute -top-12 -right-12 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl"></div>
+        <h2 class="text-lg font-bold text-slate-900 mb-4 flex items-center space-x-2 relative z-10">
+            <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"></path></svg>
+            <span>Serveurs actifs et historique</span>
+        </h2>
+
+        {% if instances %}
+        <div class="space-y-4 relative z-10">
+            {% for instance in instances %}
+            <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 hover:border-slate-300 transition-all">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            {% if instance.launch_mode == 'MULTIMODAL' %}
+                            <span class="text-xxs px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-semibold">Multimodal</span>
+                            {% elif instance.launch_mode == 'EMBEDDING' %}
+                            <span class="text-xxs px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 font-semibold">Embeddings</span>
+                            {% elif instance.launch_mode == 'RERANKER' %}
+                            <span class="text-xxs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-semibold">Rerank</span>
+                            {% elif instance.launch_mode == 'IMAGE' %}
+                            <span class="text-xxs px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-semibold">Image</span>
+                            {% else %}
+                            <span class="text-xxs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">Texte</span>
+                            {% endif %}
+                            <h3 class="text-sm font-bold text-slate-900 break-all" title="{{ instance.model_name }}">
+                                {{ instance.model_name }}
+                            </h3>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500">
+                            <span>Port: <strong class="text-slate-700">{{ instance.port }}</strong></span>
+                            <span>&bull;</span>
+                            <span>PID: <strong class="text-slate-700">{{ instance.pid|default:"N/A" }}</strong></span>
+                            <span>&bull;</span>
+                            <span>Lancé: {{ instance.created_at|date:"d/m H:i:s" }}</span>
+                        </div>
+                    </div>
+                    <div>
+                        {% if instance.status == 'RUNNING' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
+                            Running
+                        </span>
+                        {% elif instance.status == 'LOADING' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 mr-1.5 animate-pulse"></span>
+                            Loading
+                        </span>
+                        {% elif instance.status == 'STOPPED' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200">Stopped</span>
+                        {% elif instance.status == 'FAILED' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">Failed</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 gap-3">
+                    <a href="{% url 'view_logs' instance.model_name instance.port %}" target="_blank"
+                        class="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-lg border border-slate-200 transition-all flex items-center space-x-1">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        <span>Logs</span>
+                    </a>
+                    {% if instance.status == 'RUNNING' and instance.launch_mode != 'EMBEDDING' and instance.launch_mode != 'RERANKER' and instance.launch_mode != 'IMAGE' %}
+                    <a href="{% url 'benchmark' %}?instance_id={{ instance.id }}"
+                        class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-lg border border-indigo-200 transition-all flex items-center space-x-1">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        <span>Benchmark</span>
+                    </a>
+                    {% endif %}
+                    <div class="flex items-center gap-2 ml-auto">
+                        {% if instance.status == 'RUNNING' or instance.status == 'LOADING' %}
+                        <form action="{% url 'stop_instance' instance.id %}" method="POST" onsubmit="return confirm('Arrêter ce serveur ?');">
+                            {% csrf_token %}
+                            <button type="submit" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-semibold text-xs rounded-lg transition-all">Arrêter</button>
+                        </form>
+                        {% elif instance.status == 'STOPPED' or instance.status == 'FAILED' %}
+                        <form action="{% url 'start_instance' %}" method="POST">
+                            {% csrf_token %}
+                            <input type="hidden" name="model_name" value="{{ instance.model_name }}">
+                            <input type="hidden" name="port" value="{{ instance.port }}">
+                            <input type="hidden" name="launch_mode" value="{{ instance.launch_mode }}">
+                            <button type="submit" class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-semibold text-xs rounded-lg transition-all">Relancer</button>
+                        </form>
+                        {% endif %}
+                        <button type="button"
+                            class="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 hover:text-rose-600 font-semibold text-xs rounded-lg transition-all"
+                            data-delete-url="{% url 'delete_instance' instance.id %}"
+                            data-model-name="{{ instance.model_name }}"
+                            data-port="{{ instance.port }}"
+                            onclick="openDeleteInstanceModal(this)">
+                            Supprimer
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="p-12 text-center bg-slate-50 border border-slate-200 rounded-xl relative z-10 text-slate-500">
+            <p class="text-sm">Aucun serveur configuré.</p>
+            <p class="text-xs mt-2">Utilisez le formulaire ci-dessus pour démarrer votre premier serveur.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div id="delete-instance-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+    <div class="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onclick="closeDeleteInstanceModal()"></div>
+    <div class="relative z-10 flex min-h-full items-center justify-center p-4">
+        <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-2xl">
+            <h3 class="text-lg font-bold text-slate-900">Supprimer le serveur</h3>
+            <p class="mt-3 text-sm text-slate-600">
+                Confirmer la suppression de
+                <strong id="delete-instance-label" class="text-slate-800"></strong>
+                ? Le processus sera arrêté si nécessaire.
+            </p>
+            <form id="delete-instance-form" method="POST" class="mt-6 flex justify-end gap-3">
+                {% csrf_token %}
+                <button type="button" onclick="closeDeleteInstanceModal()"
+                    class="px-4 py-2 text-sm font-semibold text-slate-600 rounded-lg border border-slate-300">Annuler</button>
+                <button type="submit"
+                    class="px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg">Supprimer</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+const modelsByMode = {{ models_by_mode_json|safe }};
+
+function openDeleteInstanceModal(button) {
+    const form = document.getElementById('delete-instance-form');
+    document.getElementById('delete-instance-label').textContent =
+        `${button.dataset.modelName} (port ${button.dataset.port})`;
+    form.action = button.dataset.deleteUrl;
+    document.getElementById('delete-instance-modal').classList.remove('hidden');
+}
+
+function closeDeleteInstanceModal() {
+    document.getElementById('delete-instance-modal').classList.add('hidden');
+}
+
+function updateModelSelect() {
+    const modeSelect = document.getElementById('launch_mode');
+    const modelSelect = document.getElementById('model_name');
+    const emptyHint = document.getElementById('model-empty-hint');
+    const submitBtn = document.getElementById('create-server-btn');
+    const hint = document.getElementById('server-type-hint');
+    const mode = modeSelect.value;
+    const compatible = modelsByMode[mode] || [];
+
+    hint.textContent = modeSelect.selectedOptions[0]?.dataset.api || '';
+
+    modelSelect.innerHTML = '<option value="">Sélectionnez un modèle</option>';
+    compatible.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        modelSelect.appendChild(opt);
+    });
+
+    const hasModels = compatible.length > 0;
+    emptyHint.classList.toggle('hidden', hasModels);
+    submitBtn.disabled = !hasModels;
+}
+
+document.getElementById('launch_mode').addEventListener('change', updateModelSelect);
+document.getElementById('create-server-form').addEventListener('submit', (e) => {
+    if (!document.getElementById('model_name').value) {
+        e.preventDefault();
+    }
+});
+updateModelSelect();
+</script>
+{% endblock %}

@@ -1,0 +1,105 @@
+{% extends 'orchestrator/base.html' %}
+
+{% block title %}Modèles - MLX Orchestrator{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <div>
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900">Modèles</h1>
+        <p class="text-sm text-slate-600 mt-1">
+            Inventaire des modèles installés localement et catalogue Hugging Face
+            <span class="text-indigo-600 font-semibold">mlx-community</span>.
+        </p>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex border-b border-slate-200 gap-1">
+        <a href="{% url 'models' %}?tab=installed"
+            class="px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-all {% if active_tab == 'installed' %}bg-white border border-b-white border-slate-200 text-indigo-700 -mb-px{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+            Installés
+            {% if installed_models %}
+            <span class="ml-1 text-xxs px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">{{ installed_models|length }}</span>
+            {% endif %}
+        </a>
+        <a href="{% url 'models' %}?tab=hub{% if query %}&q={{ query|urlencode }}{% endif %}"
+            class="px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-all {% if active_tab == 'hub' %}bg-white border border-b-white border-slate-200 text-indigo-700 -mb-px{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+            Hugging Face
+        </a>
+    </div>
+
+    {% if active_tab == 'installed' %}
+    <div class="space-y-6">
+        {% if downloading_models %}
+        <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-lg">
+            <h2 class="text-sm font-bold text-slate-900 mb-4 flex items-center space-x-2">
+                <svg class="animate-spin h-4 w-4 text-amber-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                <span>Téléchargements en cours</span>
+            </h2>
+            <div class="space-y-2">
+                {% for download in downloading_models %}
+                <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+                    <div class="truncate">
+                        <span class="font-medium text-slate-700 block truncate" title="{{ download.repo_id }}">{{ download.repo_id }}</span>
+                        <span class="text-slate-500 text-xxs">Lancé à {{ download.created_at|date:"H:i:s" }}</span>
+                    </div>
+                    <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-amber-50 text-amber-700 border border-amber-200">En cours</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if installed_models %}
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% for model in installed_models %}
+            <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-lg hover:border-slate-300 transition-all">
+                <div class="flex items-start justify-between gap-2">
+                    <h3 class="text-sm font-bold text-slate-900 break-all" title="{{ model.name }}">{{ model.name }}</h3>
+                    <span class="text-xxs px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">Prêt</span>
+                </div>
+                <p class="text-xxs text-slate-500 mt-1 font-mono">./models/{{ model.name }}</p>
+                <div class="flex flex-wrap gap-1.5 mt-3">
+                    {% include 'orchestrator/partials/capability_badges.html' %}
+                </div>
+                <a href="{% url 'servers' %}"
+                    class="mt-4 inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                    Démarrer un serveur &rarr;
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-500">
+            <p class="text-sm">Aucun modèle installé dans <code class="text-slate-600">./models</code>.</p>
+            <a href="{% url 'models' %}?tab=hub" class="mt-3 inline-block text-sm font-semibold text-indigo-600 hover:text-indigo-700">
+                Parcourir Hugging Face &rarr;
+            </a>
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <!-- Hugging Face tab -->
+    <div class="space-y-6">
+        <div class="bg-white border border-slate-200 p-6 rounded-2xl shadow-xl">
+            <form method="GET" action="{% url 'models' %}" class="flex flex-col sm:flex-row gap-3">
+                <input type="hidden" name="tab" value="hub">
+                <div class="relative flex-grow">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </div>
+                    <input type="text" name="q" value="{{ query }}"
+                        class="block w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl bg-white text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                        placeholder="Rechercher (ex: llama, mistral, flux)...">
+                </div>
+                <button type="submit"
+                    class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white text-sm font-semibold rounded-xl shadow-lg active:scale-95">
+                    Rechercher
+                </button>
+            </form>
+        </div>
+
+        {% include 'orchestrator/partials/hf_model_grid.html' %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

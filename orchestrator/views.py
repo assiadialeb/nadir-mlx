@@ -1,23 +1,27 @@
 import re
+from urllib.parse import urlencode
+
 import requests
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
-from .models import ModelDownload, InferenceInstance, BenchmarkRun
+from .models import InferenceInstance, BenchmarkRun, ModelDownload
 from .downloader import start_model_download
-from .model_utils import get_model_capabilities, reconcile_stale_downloads, sync_model_download_status
+from .model_utils import reconcile_stale_downloads, sync_model_download_status
 from .server_manager import (
-    get_downloaded_models,
     parse_launch_mode,
     start_instance,
     stop_instance,
     delete_instance,
     check_instance_status,
-    get_instance_logs
+    get_instance_logs,
 )
+from .server_types import SERVER_TYPES
+from .ui_selectors import list_installed_models, models_by_server_type_json
 from .benchmark_service import parse_benchmark_form, start_benchmark
 
 _startup_reconciled = False
@@ -34,7 +38,7 @@ def _ensure_downloads_reconciled() -> None:
 # Authentication Views
 def login_view(request):
     if request.user.is_authenticated:
-        return redirect('dashboard')
+        return redirect('servers')
     
     if request.method == 'POST':
         username = request.POST.get('username')
@@ -42,7 +46,7 @@ def login_view(request):
         user = authenticate(request, username=username, password=password)
         if user is not None:
             login(request, user)
-            return redirect('dashboard')
+            return redirect('servers')
         else:
             messages.error(request, "Nom d'utilisateur ou mot de passe incorrect.")
             
@@ -101,58 +105,72 @@ def parse_hf_model(repo_id, tags=None):
     }
 
 
-# Search Hugging Face
-@login_required
-def search_view(request):
-    _ensure_downloads_reconciled()
-    sync_model_download_status()
-    query = request.GET.get('q', '')
-    parsed_models = []
-    
-    # Call HF API
+def _fetch_hf_models(query: str) -> list[dict]:
     url = "https://huggingface.co/api/models"
     params = {
         'author': 'mlx-community',
         'sort': 'downloads',
         'direction': '-1',
-        'limit': 24
+        'limit': 24,
     }
     if query:
         params['search'] = query
-        
-    try:
-        response = requests.get(url, params=params, timeout=8)
-        response.raise_for_status()
-        models_data = response.json()
-    except Exception as e:
-        messages.error(request, f"Impossible de contacter l'API Hugging Face : {str(e)}")
-        models_data = []
-        
-    for m in models_data:
-        repo_id = m.get('id', '')
+
+    response = requests.get(url, params=params, timeout=8)
+    response.raise_for_status()
+    parsed_models = []
+    for model_data in response.json():
+        repo_id = model_data.get('id', '')
         if not repo_id:
             continue
-        tags = m.get('tags', [])
-        downloads = m.get('downloads', 0)
-        likes = m.get('likes', 0)
-        
-        parsed = parse_hf_model(repo_id, tags)
-        parsed['downloads'] = downloads
-        parsed['likes'] = likes
-        
-        # Check download record
+        parsed = parse_hf_model(repo_id, model_data.get('tags', []))
+        parsed['downloads'] = model_data.get('downloads', 0)
+        parsed['likes'] = model_data.get('likes', 0)
         download_record = ModelDownload.objects.filter(repo_id=repo_id).first()
         if download_record:
             parsed['download_status'] = download_record.status
             parsed['error_message'] = download_record.error_message
         else:
             parsed['download_status'] = 'NOT_STARTED'
-            
         parsed_models.append(parsed)
-        
-    return render(request, 'orchestrator/search.html', {
-        'models': parsed_models,
-        'query': query
+    return parsed_models
+
+
+@login_required
+def search_view(request):
+    """Legacy route — redirects to the Models page (Hugging Face tab)."""
+    params = {'tab': 'hub'}
+    query = request.GET.get('q', '')
+    if query:
+        params['q'] = query
+    return redirect(f"{reverse('models')}?{urlencode(params)}")
+
+
+@login_required
+def models_view(request):
+    _ensure_downloads_reconciled()
+    sync_model_download_status()
+    active_tab = request.GET.get('tab', 'installed')
+    if active_tab not in ('installed', 'hub'):
+        active_tab = 'installed'
+
+    installed_models = list_installed_models()
+    downloading_models = ModelDownload.objects.filter(status='DOWNLOADING').order_by('-created_at')
+    query = request.GET.get('q', '')
+    hf_models = []
+
+    if active_tab == 'hub':
+        try:
+            hf_models = _fetch_hf_models(query)
+        except Exception as exc:
+            messages.error(request, f"Impossible de contacter l'API Hugging Face : {exc}")
+
+    return render(request, 'orchestrator/models.html', {
+        'active_tab': active_tab,
+        'installed_models': installed_models,
+        'downloading_models': downloading_models,
+        'models': hf_models,
+        'query': query,
     })
 
 
@@ -166,34 +184,28 @@ def download_model_view(request):
             messages.success(request, f"Le téléchargement du modèle {repo_id} a démarré en arrière-plan.")
         else:
             messages.error(request, "Aucun identifiant de modèle spécifié.")
-    return redirect('search')
+    tab = request.POST.get('tab', 'hub')
+    return redirect(f"{reverse('models')}?{urlencode({'tab': tab})}")
 
 
-# Instances / Dashboard View
 @login_required
 def dashboard_view(request):
+    """Legacy route — redirects to the Servers page."""
+    return redirect('servers')
+
+
+@login_required
+def servers_view(request):
     _ensure_downloads_reconciled()
-    sync_model_download_status()
-    downloaded_models = [
-        {
-            "name": model_name,
-            **get_model_capabilities(model_name),
-        }
-        for model_name in get_downloaded_models()
-    ]
-    
-    # Fetch active downloads to display in the UI
-    downloading_models = ModelDownload.objects.filter(status='DOWNLOADING').order_by('-created_at')
-    
-    # Fetch all active instances and verify status
+    installed_models = list_installed_models()
     instances = InferenceInstance.objects.all().order_by('-created_at')
     for instance in instances:
         check_instance_status(instance)
-        
-    return render(request, 'orchestrator/instances.html', {
-        'downloaded_models': downloaded_models,
-        'downloading_models': downloading_models,
-        'instances': instances
+
+    return render(request, 'orchestrator/servers.html', {
+        'instances': instances,
+        'server_types': SERVER_TYPES,
+        'models_by_mode_json': models_by_server_type_json(installed_models),
     })
 
 
@@ -202,17 +214,21 @@ def dashboard_view(request):
 @login_required
 def start_instance_view(request):
     if request.method == 'POST':
-        model_name = request.POST.get('model_name')
+        model_name = (request.POST.get('model_name') or '').strip()
         port_raw = request.POST.get('port')
         launch_mode_raw = request.POST.get('launch_mode', 'TEXT')
-        
+
+        if not model_name:
+            messages.error(request, "Veuillez sélectionner un modèle.")
+            return redirect('servers')
+
         port = None
         if port_raw and port_raw.strip():
             try:
                 port = int(port_raw)
             except ValueError:
                 messages.error(request, "Le port spécifié doit être un nombre valide.")
-                return redirect('dashboard')
+                return redirect('servers')
 
         try:
             launch_mode = parse_launch_mode(launch_mode_raw)
@@ -233,7 +249,7 @@ def start_instance_view(request):
         except Exception as e:
             messages.error(request, f"Erreur lors du lancement de l'instance : {str(e)}")
             
-    return redirect('dashboard')
+    return redirect('servers')
 
 
 # Stop Instance Trigger
@@ -249,7 +265,7 @@ def stop_instance_view(request, instance_id):
         except Exception as e:
             messages.error(request, f"Erreur lors de l'arrêt de l'instance : {str(e)}")
             
-    return redirect('dashboard')
+    return redirect('servers')
 
 
 @login_required
@@ -270,7 +286,7 @@ def delete_instance_view(request, instance_id):
                 f"Erreur lors de la suppression de l'instance : {str(e)}",
             )
 
-    return redirect('dashboard')
+    return redirect('servers')
 
 
 # Logs View API / AJAX page

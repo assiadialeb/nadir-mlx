@@ -1,0 +1,15 @@
+{% if model.supports_text %}
+<span class="text-xxs px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">Texte</span>
+{% endif %}
+{% if model.supports_multimodal %}
+<span class="text-xxs px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">Vision</span>
+{% endif %}
+{% if model.supports_embedding %}
+<span class="text-xxs px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">Embeddings</span>
+{% endif %}
+{% if model.supports_rerank %}
+<span class="text-xxs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">Rerank</span>
+{% endif %}
+{% if model.supports_image %}
+<span class="text-xxs px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">Image</span>
+{% endif %}
