@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional
 
 from django.conf import settings
 
-LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE"]
+LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
 
 EMBEDDING_NAME_PATTERN = re.compile(
     r"(embedding|embed|e5|bge|nomic|gte|retrieval)",
@@ -23,6 +23,10 @@ IMAGE_NAME_PATTERN = re.compile(
     r"(flux|schnell|z-image|z_image|qwen-image|qwen_image|klein|fibo|text-to-image)",
     re.IGNORECASE,
 )
+
+TTS_NAME_PATTERN = re.compile(r"kokoro", re.IGNORECASE)
+
+STT_NAME_PATTERN = re.compile(r"whisper", re.IGNORECASE)
 
 EMBEDDING_MODEL_TYPES = {
     "bert",
@@ -174,6 +178,40 @@ def supports_image_mode(model_path: os.PathLike[str] | str) -> bool:
     return is_image_focused_model(model_path)
 
 
+def is_tts_focused_model(model_path: os.PathLike[str] | str) -> bool:
+    """Return True when the model should be launched as TTS, not chat."""
+    path = Path(model_path)
+    if not is_model_complete(path):
+        return False
+    if TTS_NAME_PATTERN.search(path.name):
+        return True
+    config = _read_model_config(path)
+    return config.get("model_type", "").lower() == "kokoro"
+
+
+def supports_tts_mode(model_path: os.PathLike[str] | str) -> bool:
+    """Return True when the model can be served with mlx-audio Kokoro."""
+    return is_tts_focused_model(model_path)
+
+
+def is_stt_focused_model(model_path: os.PathLike[str] | str) -> bool:
+    """Return True when the model should be launched as STT, not chat."""
+    path = Path(model_path)
+    if not is_model_complete(path):
+        return False
+    if STT_NAME_PATTERN.search(path.name):
+        return True
+    config = _read_model_config(path)
+    model_type = config.get("model_type", "").lower()
+    architectures = " ".join(config.get("architectures", [])).lower()
+    return model_type == "whisper" or "whisper" in architectures
+
+
+def supports_stt_mode(model_path: os.PathLike[str] | str) -> bool:
+    """Return True when the model can be served with mlx-audio Whisper."""
+    return is_stt_focused_model(model_path)
+
+
 def is_rerank_focused_model(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model should be launched as reranker, not chat/embed."""
     path = Path(model_path)
@@ -243,16 +281,24 @@ def get_model_capabilities(folder_name: str) -> dict[str, bool]:
     embedding_focused = is_embedding_focused_model(model_path)
     rerank_focused = is_rerank_focused_model(model_path)
     image_focused = is_image_focused_model(model_path)
+    tts_focused = is_tts_focused_model(model_path)
+    stt_focused = is_stt_focused_model(model_path)
     return {
         "supports_text": is_model_complete(model_path)
         and not embedding_focused
         and not rerank_focused
-        and not image_focused,
+        and not image_focused
+        and not tts_focused
+        and not stt_focused,
         "supports_multimodal": supports_multimodal_mode(model_path)
-        and not image_focused,
+        and not image_focused
+        and not tts_focused
+        and not stt_focused,
         "supports_embedding": supports_embedding_mode(model_path),
         "supports_rerank": supports_rerank_mode(model_path),
         "supports_image": supports_image_mode(model_path),
+        "supports_tts": supports_tts_mode(model_path),
+        "supports_stt": supports_stt_mode(model_path),
     }
 
 

@@ -1,3 +1,4 @@
+import json
 import re
 from urllib.parse import urlencode
 
@@ -21,6 +22,11 @@ from .server_manager import (
     get_instance_logs,
 )
 from .server_types import SERVER_TYPES
+from .server_config_schema import (
+    advanced_keys_for_ui_json,
+    config_fields_for_ui_json,
+    resolve_server_config_from_request,
+)
 from .ui_selectors import list_installed_models, models_by_server_type_json
 from .benchmark_service import parse_benchmark_form, start_benchmark
 
@@ -201,11 +207,14 @@ def servers_view(request):
     instances = InferenceInstance.objects.all().order_by('-created_at')
     for instance in instances:
         check_instance_status(instance)
+        instance.server_config_json = json.dumps(instance.server_config or {})
 
     return render(request, 'orchestrator/servers.html', {
         'instances': instances,
         'server_types': SERVER_TYPES,
         'models_by_mode_json': models_by_server_type_json(installed_models),
+        'config_fields_json': config_fields_for_ui_json(),
+        'advanced_keys_json': advanced_keys_for_ui_json(),
     })
 
 
@@ -232,12 +241,19 @@ def start_instance_view(request):
 
         try:
             launch_mode = parse_launch_mode(launch_mode_raw)
-            instance = start_instance(model_name, port, launch_mode)
+            server_config = resolve_server_config_from_request(
+                request.POST,
+                launch_mode,
+                model_name,
+            )
+            instance = start_instance(model_name, port, launch_mode, server_config)
             mode_labels = {
                 "MULTIMODAL": "Multimodal (mlx_vlm)",
                 "EMBEDDING": "Embeddings (mlx-embeddings)",
                 "RERANKER": "Rerank (local-reranker)",
                 "IMAGE": "Image (mflux)",
+                "TTS": "TTS (mlx-audio / Kokoro)",
+                "STT": "STT (mlx-audio / Whisper)",
             }
             mode_label = mode_labels.get(instance.launch_mode, "Texte (mlx_lm)")
             messages.success(

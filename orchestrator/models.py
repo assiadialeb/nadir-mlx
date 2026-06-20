@@ -30,6 +30,8 @@ class InferenceInstance(models.Model):
         ('EMBEDDING', 'Embedding'),
         ('RERANKER', 'Reranker'),
         ('IMAGE', 'Image'),
+        ('TTS', 'TTS'),
+        ('STT', 'STT'),
     ]
 
     model_name = models.CharField(max_length=255)
@@ -39,6 +41,7 @@ class InferenceInstance(models.Model):
         choices=LAUNCH_MODE_CHOICES,
         default='TEXT',
     )
+    server_config = models.JSONField(default=dict, blank=True)
     pid = models.IntegerField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='LOADING')
     created_at = models.DateTimeField(auto_now_add=True)

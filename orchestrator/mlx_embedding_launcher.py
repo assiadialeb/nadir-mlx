@@ -11,6 +11,7 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--model-id", default=None)
     args = parser.parse_args()
 
     model_path = Path(args.model).resolve()
@@ -27,7 +28,7 @@ def main() -> None:
         "--port",
         str(args.port),
         "--model-id",
-        model_path.name,
+        args.model_id or model_path.name,
     ]
     server_main()
 

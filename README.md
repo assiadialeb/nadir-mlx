@@ -37,7 +37,7 @@ Everything runs on your machine. Model weights, logs, and SQLite state stay loca
 
 ## Launch modes
 
-MLX Server supports five inference backends, each exposing standard HTTP APIs:
+MLX Server supports seven inference backends, each exposing standard HTTP APIs:
 
 | Mode | Backend | API |
 |------|---------|-----|
@@ -46,6 +46,8 @@ MLX Server supports five inference backends, each exposing standard HTTP APIs:
 | **EMBEDDING** | [mlx-embeddings](https://github.com/Blaizzy/mlx-embeddings) | `POST /v1/embeddings` |
 | **RERANKER** | local-reranker + custom Jina server | `POST /v1/rerank` |
 | **IMAGE** | [mflux](https://github.com/filipstrand/mflux) | `POST /v1/images/generations` |
+| **TTS** | [mlx-audio](https://github.com/Blaizzy/mlx-audio) (Kokoro) | `POST /v1/audio/speech` |
+| **STT** | [mlx-audio](https://github.com/Blaizzy/mlx-audio) (Whisper) | `POST /v1/audio/transcriptions` |
 
 Reranker routing is automatic:
 
@@ -85,6 +87,8 @@ flowchart TB
         EMB[embedding_server]
         RR[reranker_server]
         IMG[image_server]
+        TTS[tts_server]
+        STT[stt_server]
     end
 
     Models[(./models/)]
@@ -94,7 +98,7 @@ flowchart TB
     Dashboard --> SM
     Search --> DL
     DL --> Models
-    SM --> TEXT & VLM & EMB & RR & IMG
+    SM --> TEXT & VLM & EMB & RR & IMG & TTS & STT
     SM --> Logs
     UI --> DB
     Benchmark --> Instances
@@ -211,6 +215,35 @@ curl http://127.0.0.1:11440/v1/images/generations \
 
 Response images are returned as base64 PNG in `data[].b64_json`. First launch may take 20–30s while mflux loads weights.
 
+### Text-to-speech (TTS mode)
+
+Recommended model: `mlx-community/Kokoro-82M-bf16`.
+
+```bash
+curl http://127.0.0.1:11441/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Kokoro-82M-bf16",
+    "input": "Hello from MLX Server.",
+    "voice": "af_heart",
+    "speed": 1.0
+  }' \
+  --output speech.wav
+```
+
+List installed Kokoro voices: `GET /v1/audio/voices`.
+
+### Speech-to-text (STT mode)
+
+Recommended model: `mlx-community/whisper-large-v3-turbo-asr-fp16`.
+
+```bash
+curl http://127.0.0.1:11442/v1/audio/transcriptions \
+  -F "file=@sample.wav" \
+  -F "model=whisper-large-v3-turbo-asr-fp16" \
+  -F "response_format=json"
+```
+
 ### LiteLLM proxy
 
 Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
@@ -236,6 +269,8 @@ mlx-server/
 │   ├── embedding_server.py   # OpenAI-compatible embeddings
 │   ├── reranker_server.py    # JinaForRanking rerank API
 │   ├── image_server.py       # OpenAI-compatible image generation (mflux)
+│   ├── tts_server.py         # OpenAI-compatible TTS (Kokoro / mlx-audio)
+│   ├── stt_server.py         # OpenAI-compatible STT (Whisper / mlx-audio)
 │   ├── image_model_loader.py # mflux model routing & inference helpers
 │   ├── mlx_*_launcher.py     # Subprocess entrypoints
 │   ├── benchmark_service.py  # llmbenchmark integration

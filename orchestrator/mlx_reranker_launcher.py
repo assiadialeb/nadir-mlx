@@ -38,7 +38,7 @@ def _patch_local_reranker_for_local_paths() -> None:
     reranker_mlx.Reranker._mlx_local_path_patch_applied = True
 
 
-def _run_local_reranker(model_path: Path, host: str, port: int) -> None:
+def _run_local_reranker(model_path: Path, host: str, port: int, disable_batching: bool) -> None:
     _patch_local_reranker_for_local_paths()
 
     os.environ["RERANKER_BACKEND_TYPE"] = "mlx"
@@ -59,7 +59,7 @@ def _run_local_reranker(model_path: Path, host: str, port: int) -> None:
         port=port,
         log_level="info",
         reload=False,
-        disable_batching=False,
+        disable_batching=disable_batching,
     )
     run_server(settings)
 
@@ -69,6 +69,7 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--disable-batching", action="store_true")
     args = parser.parse_args()
 
     model_path = Path(args.model).resolve()
@@ -91,7 +92,7 @@ def main() -> None:
             ],
         )
 
-    _run_local_reranker(model_path, args.host, args.port)
+    _run_local_reranker(model_path, args.host, args.port, args.disable_batching)
 
 
 if __name__ == "__main__":

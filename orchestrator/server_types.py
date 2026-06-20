@@ -55,6 +55,22 @@ SERVER_TYPES: tuple[ServerTypeSpec, ...] = (
         "backend": "mflux",
         "api_hint": "/v1/images/generations",
     },
+    {
+        "id": "TTS",
+        "label": "TTS — mlx-audio (Kokoro)",
+        "short_label": "TTS",
+        "capability": "supports_tts",
+        "backend": "mlx-audio",
+        "api_hint": "/v1/audio/speech",
+    },
+    {
+        "id": "STT",
+        "label": "STT — mlx-audio (Whisper)",
+        "short_label": "STT",
+        "capability": "supports_stt",
+        "backend": "mlx-audio",
+        "api_hint": "/v1/audio/transcriptions",
+    },
 )
 
 

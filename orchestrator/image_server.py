@@ -28,13 +28,20 @@ _state: dict[str, object] = {}
 _generation_lock = threading.Lock()
 
 
+def _default_image_quality() -> str:
+    raw = os.environ.get("IMAGE_DEFAULT_QUALITY", "balanced")
+    if raw in ("fast", "balanced", "quality"):
+        return raw
+    return "balanced"
+
+
 class ImageGenerationRequest(BaseModel):
     prompt: str
     model: str = "default_model"
     n: int = Field(default=1, ge=1, le=4)
     size: Optional[str] = None
     response_format: Literal["url", "b64_json"] = "b64_json"
-    quality: Literal["fast", "balanced", "quality"] = "balanced"
+    quality: Literal["fast", "balanced", "quality"] = Field(default_factory=_default_image_quality)
     user: Optional[str] = None
     seed: Optional[int] = None
     num_inference_steps: Optional[int] = None

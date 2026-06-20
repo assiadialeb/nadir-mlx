@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import re
@@ -5,12 +6,13 @@ import socket
 import subprocess
 import signal
 import time
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from django.conf import settings
 from django.utils import timezone
 
 from .models import InferenceInstance
+from .server_config_schema import build_default_server_config, validate_and_normalize_server_config
 from .model_utils import (
     is_model_complete,
     prepare_model_for_multimodal_inference,
@@ -19,16 +21,20 @@ from .model_utils import (
     supports_image_mode,
     supports_multimodal_mode,
     supports_rerank_mode,
+    supports_stt_mode,
+    supports_tts_mode,
 )
 
-LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE"]
-SERVER_HOST = "0.0.0.0"
+LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
+DEFAULT_SERVER_HOST = "0.0.0.0"
 STARTUP_WAIT_SECONDS = {
     "TEXT": 2,
     "MULTIMODAL": 8,
     "EMBEDDING": 5,
     "RERANKER": 8,
     "IMAGE": 25,
+    "TTS": 15,
+    "STT": 20,
 }
 
 _LOG_FAILURE_PATTERNS = (
@@ -41,6 +47,7 @@ _LOG_FAILURE_PATTERNS = (
     re.compile(r"local-reranker is not installed"),
     re.compile(r"No module named 'local_reranker'"),
     re.compile(r"No module named 'mflux'"),
+    re.compile(r"No module named 'misaki'"),
     re.compile(r"Unsupported image model folder"),
 )
 
@@ -66,9 +73,9 @@ def get_downloaded_models() -> list[str]:
 def parse_launch_mode(raw_mode: Optional[str]) -> LaunchMode:
     """Normalize and validate the requested launch mode."""
     mode = (raw_mode or "TEXT").upper()
-    if mode not in ("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE"):
+    if mode not in ("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"):
         raise ValueError(
-            "Launch mode must be TEXT, MULTIMODAL, EMBEDDING, RERANKER, or IMAGE."
+            "Launch mode must be TEXT, MULTIMODAL, EMBEDDING, RERANKER, IMAGE, TTS, or STT."
         )
     return mode
 
@@ -279,24 +286,79 @@ def _get_python_bin() -> str:
     return "python"
 
 
+def _resolve_server_config(
+    launch_mode: LaunchMode,
+    server_config: dict[str, Any] | None,
+    model_name: str,
+) -> dict[str, Any]:
+    return validate_and_normalize_server_config(
+        launch_mode,
+        server_config or build_default_server_config(launch_mode),
+        model_name,
+    )
+
+
+def _config_host(server_config: dict[str, Any]) -> str:
+    return str(server_config.get("host") or DEFAULT_SERVER_HOST)
+
+
+def _config_model_id(server_config: dict[str, Any], model_name: str) -> str:
+    return str(server_config.get("model_id") or model_name)
+
+
+def _append_cli_args(command: list[str], flags: dict[str, Any]) -> None:
+    for flag, value in flags.items():
+        if value is None or value is False:
+            continue
+        if value is True:
+            command.append(f"--{flag}")
+            continue
+        if isinstance(value, dict):
+            command.extend([f"--{flag}", json.dumps(value)])
+            continue
+        command.extend([f"--{flag}", str(value)])
+
+
 def _build_launch_command(
     model_path: str,
     port: int,
     launch_mode: LaunchMode,
+    server_config: dict[str, Any],
+    model_name: str,
 ) -> list[str]:
+    host = _config_host(server_config)
+    model_id = _config_model_id(server_config, model_name)
+    advanced = server_config.get("advanced") or {}
     python_bin = _get_python_bin()
+
     if launch_mode == "MULTIMODAL":
-        return [
+        command = [
             python_bin,
             "-m",
             "orchestrator.mlx_vlm_launcher",
             "--model",
             model_path,
             "--host",
-            SERVER_HOST,
+            host,
             "--port",
             str(port),
         ]
+        _append_cli_args(command, {
+            "max-tokens": server_config.get("max_tokens"),
+            "max-kv-size": server_config.get("max_kv_size"),
+            "trust-remote-code": server_config.get("trust_remote_code"),
+            "adapter-path": advanced.get("adapter_path"),
+            "draft-model": advanced.get("draft_model"),
+            "draft-kind": advanced.get("draft_kind"),
+            "draft-block-size": advanced.get("draft_block_size"),
+            "kv-bits": advanced.get("kv_bits"),
+            "kv-quant-scheme": advanced.get("kv_quant_scheme"),
+            "kv-group-size": advanced.get("kv_group_size"),
+            "enable-thinking": advanced.get("enable_thinking"),
+            "thinking-budget": advanced.get("thinking_budget"),
+        })
+        return command
+
     if launch_mode == "EMBEDDING":
         return [
             python_bin,
@@ -305,22 +367,29 @@ def _build_launch_command(
             "--model",
             model_path,
             "--host",
-            SERVER_HOST,
+            host,
             "--port",
             str(port),
+            "--model-id",
+            model_id,
         ]
+
     if launch_mode == "RERANKER":
-        return [
+        command = [
             python_bin,
             "-m",
             "orchestrator.mlx_reranker_launcher",
             "--model",
             model_path,
             "--host",
-            SERVER_HOST,
+            host,
             "--port",
             str(port),
         ]
+        if server_config.get("disable_batching"):
+            command.append("--disable-batching")
+        return command
+
     if launch_mode == "IMAGE":
         return [
             python_bin,
@@ -329,21 +398,78 @@ def _build_launch_command(
             "--model",
             model_path,
             "--host",
-            SERVER_HOST,
+            host,
             "--port",
             str(port),
+            "--model-id",
+            model_id,
         ]
-    return [
+
+    if launch_mode == "TTS":
+        command = [
+            python_bin,
+            "-m",
+            "orchestrator.mlx_tts_launcher",
+            "--model",
+            model_path,
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--model-id",
+            model_id,
+        ]
+        _append_cli_args(command, {
+            "default-voice": server_config.get("voice_id"),
+            "default-speed": server_config.get("speaking_rate"),
+            "default-lang-code": server_config.get("lang_code"),
+        })
+        return command
+
+    if launch_mode == "STT":
+        command = [
+            python_bin,
+            "-m",
+            "orchestrator.mlx_stt_launcher",
+            "--model",
+            model_path,
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--model-id",
+            model_id,
+        ]
+        _append_cli_args(command, {
+            "default-language": server_config.get("language"),
+            "default-chunk-duration": server_config.get("chunk_duration"),
+        })
+        return command
+
+    command = [
         python_bin,
         "-m",
         "orchestrator.mlx_launcher",
         "--model",
         model_path,
         "--host",
-        SERVER_HOST,
+        host,
         "--port",
         str(port),
     ]
+    _append_cli_args(command, {
+        "max-tokens": server_config.get("max_tokens"),
+        "trust-remote-code": server_config.get("trust_remote_code"),
+        "adapter-path": advanced.get("adapter_path"),
+        "draft-model": advanced.get("draft_model"),
+        "num-draft-tokens": advanced.get("num_draft_tokens"),
+        "chat-template-args": advanced.get("chat_template_args"),
+        "temp": advanced.get("temp"),
+        "top-p": advanced.get("top_p"),
+        "top-k": advanced.get("top_k"),
+        "min-p": advanced.get("min_p"),
+    })
+    return command
 
 
 def _prepare_model_for_launch(model_path: str, launch_mode: LaunchMode) -> None:
@@ -364,14 +490,28 @@ def _prepare_model_for_launch(model_path: str, launch_mode: LaunchMode) -> None:
         if not supports_image_mode(model_path):
             raise ValueError("This model does not support image generation.")
         return
+    if launch_mode == "TTS":
+        if not supports_tts_mode(model_path):
+            raise ValueError("This model does not support TTS inference.")
+        return
+    if launch_mode == "STT":
+        if not supports_stt_mode(model_path):
+            raise ValueError("This model does not support STT inference.")
+        return
     prepare_model_for_text_inference(model_path)
 
 
-def _get_launch_env(launch_mode: LaunchMode) -> dict[str, str]:
+def _get_launch_env(
+    launch_mode: LaunchMode,
+    server_config: dict[str, Any],
+) -> dict[str, str]:
     env = os.environ.copy()
-    if launch_mode == "IMAGE":
-        # tqdm uses carriage returns; use ImageProgressLogger for log files instead.
+    if launch_mode in ("IMAGE", "TTS", "STT"):
         env["TQDM_DISABLE"] = "1"
+        if launch_mode == "IMAGE":
+            quality = server_config.get("default_quality")
+            if quality:
+                env["IMAGE_DEFAULT_QUALITY"] = str(quality)
     return env
 
 
@@ -379,6 +519,7 @@ def _get_or_create_instance(
     model_name: str,
     port: int,
     launch_mode: LaunchMode,
+    server_config: dict[str, Any],
 ) -> InferenceInstance:
     existing = InferenceInstance.objects.filter(
         model_name=model_name,
@@ -388,15 +529,17 @@ def _get_or_create_instance(
     if existing:
         existing.status = "LOADING"
         existing.launch_mode = launch_mode
+        existing.server_config = server_config
         existing.pid = None
         existing.stopped_at = None
-        existing.save(update_fields=["status", "launch_mode", "pid", "stopped_at"])
+        existing.save(update_fields=["status", "launch_mode", "server_config", "pid", "stopped_at"])
         return existing
 
     return InferenceInstance.objects.create(
         model_name=model_name,
         port=port,
         launch_mode=launch_mode,
+        server_config=server_config,
         status="LOADING",
     )
 
@@ -405,9 +548,11 @@ def start_instance(
     model_name: str,
     port: Optional[int] = None,
     launch_mode: LaunchMode = "TEXT",
+    server_config: dict[str, Any] | None = None,
 ) -> InferenceInstance:
-    """Launch a text or multimodal inference server in the background."""
+    """Launch an inference server in the background."""
     launch_mode = parse_launch_mode(launch_mode)
+    normalized_config = _resolve_server_config(launch_mode, server_config, model_name)
     model_path = os.path.join(settings.MODELS_DIR, model_name)
     if not os.path.isdir(model_path):
         raise ValueError(f"Model folder '{model_name}' was not found in ./models.")
@@ -431,8 +576,8 @@ def start_instance(
     log_file_path = os.path.join(settings.LOGS_DIR, f"{model_name}_{port}.log")
     log_file = open(log_file_path, "w", encoding="utf-8")
 
-    instance = _get_or_create_instance(model_name, port, launch_mode)
-    cmd = _build_launch_command(model_path, port, launch_mode)
+    instance = _get_or_create_instance(model_name, port, launch_mode, normalized_config)
+    cmd = _build_launch_command(model_path, port, launch_mode, normalized_config, model_name)
 
     try:
         process = subprocess.Popen(
@@ -440,7 +585,7 @@ def start_instance(
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            env=_get_launch_env(launch_mode),
+            env=_get_launch_env(launch_mode, normalized_config),
         )
         instance.pid = process.pid
         instance.status = "LOADING"

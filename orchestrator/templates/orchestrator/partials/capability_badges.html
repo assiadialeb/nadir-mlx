@@ -13,3 +13,9 @@
 {% if model.supports_image %}
 <span class="text-xxs px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">Image</span>
 {% endif %}
+{% if model.supports_tts %}
+<span class="text-xxs px-1.5 py-0.5 rounded bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200">TTS</span>
+{% endif %}
+{% if model.supports_stt %}
+<span class="text-xxs px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200">STT</span>
+{% endif %}

@@ -62,6 +62,24 @@
                 </div>
             </div>
 
+            <div class="border-t border-slate-100 pt-4">
+                <button type="button" id="toggle-config-panel"
+                    class="text-sm font-semibold text-slate-700 hover:text-indigo-600 flex items-center gap-2">
+                    <svg id="config-chevron" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                    Configuration serveur
+                </button>
+                <div id="config-panel" class="hidden mt-4 space-y-4">
+                    <div id="config-fields" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                    <details class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <summary class="text-sm font-semibold text-slate-700 cursor-pointer">Avancé (JSON)</summary>
+                        <p class="text-xxs text-slate-500 mt-2 mb-2" id="advanced-keys-hint"></p>
+                        <textarea name="config_advanced" id="config_advanced" rows="5"
+                            class="w-full font-mono text-xs border border-slate-200 rounded-lg p-3 bg-white"
+                            placeholder='{"adapter_path": "/chemin/vers/lora"}'></textarea>
+                    </details>
+                </div>
+            </div>
+
             <div class="flex items-center justify-between pt-2">
                 <a href="{% url 'models' %}" class="text-xs text-indigo-600 hover:text-indigo-700 font-semibold">
                     Gérer les modèles installés &rarr;
@@ -98,6 +116,10 @@
                             <span class="text-xxs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-semibold">Rerank</span>
                             {% elif instance.launch_mode == 'IMAGE' %}
                             <span class="text-xxs px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-semibold">Image</span>
+                            {% elif instance.launch_mode == 'TTS' %}
+                            <span class="text-xxs px-2 py-0.5 rounded-full bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200 font-semibold">TTS</span>
+                            {% elif instance.launch_mode == 'STT' %}
+                            <span class="text-xxs px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200 font-semibold">STT</span>
                             {% else %}
                             <span class="text-xxs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">Texte</span>
                             {% endif %}
@@ -111,6 +133,14 @@
                             <span>PID: <strong class="text-slate-700">{{ instance.pid|default:"N/A" }}</strong></span>
                             <span>&bull;</span>
                             <span>Lancé: {{ instance.created_at|date:"d/m H:i:s" }}</span>
+                            {% if instance.server_config.host %}
+                            <span>&bull;</span>
+                            <span>Host: <strong class="text-slate-700">{{ instance.server_config.host }}</strong></span>
+                            {% endif %}
+                            {% if instance.server_config.model_id and instance.server_config.model_id != instance.model_name %}
+                            <span>&bull;</span>
+                            <span>API ID: <strong class="text-slate-700">{{ instance.server_config.model_id }}</strong></span>
+                            {% endif %}
                         </div>
                     </div>
                     <div>
@@ -138,7 +168,7 @@
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                         <span>Logs</span>
                     </a>
-                    {% if instance.status == 'RUNNING' and instance.launch_mode != 'EMBEDDING' and instance.launch_mode != 'RERANKER' and instance.launch_mode != 'IMAGE' %}
+                    {% if instance.status == 'RUNNING' and instance.launch_mode != 'EMBEDDING' and instance.launch_mode != 'RERANKER' and instance.launch_mode != 'IMAGE' and instance.launch_mode != 'TTS' and instance.launch_mode != 'STT' %}
                     <a href="{% url 'benchmark' %}?instance_id={{ instance.id }}"
                         class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-lg border border-indigo-200 transition-all flex items-center space-x-1">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
@@ -157,6 +187,7 @@
                             <input type="hidden" name="model_name" value="{{ instance.model_name }}">
                             <input type="hidden" name="port" value="{{ instance.port }}">
                             <input type="hidden" name="launch_mode" value="{{ instance.launch_mode }}">
+                            <input type="hidden" name="server_config_json" value="{{ instance.server_config_json }}">
                             <button type="submit" class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-semibold text-xs rounded-lg transition-all">Relancer</button>
                         </form>
                         {% endif %}
@@ -205,6 +236,8 @@
 
 <script>
 const modelsByMode = {{ models_by_mode_json|safe }};
+const configFieldsByMode = {{ config_fields_json|safe }};
+const advancedKeysByMode = {{ advanced_keys_json|safe }};
 
 function openDeleteInstanceModal(button) {
     const form = document.getElementById('delete-instance-form');
@@ -218,6 +251,67 @@ function closeDeleteInstanceModal() {
     document.getElementById('delete-instance-modal').classList.add('hidden');
 }
 
+function renderConfigFields(mode) {
+    const container = document.getElementById('config-fields');
+    const hint = document.getElementById('advanced-keys-hint');
+    const fields = configFieldsByMode[mode] || [];
+    container.innerHTML = '';
+
+    fields.forEach(field => {
+        const wrapper = document.createElement('div');
+        const label = document.createElement('label');
+        label.className = 'block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5';
+        label.textContent = field.label;
+        label.htmlFor = `config_${field.name}`;
+        wrapper.appendChild(label);
+
+        let input;
+        if (field.widget === 'select') {
+            input = document.createElement('select');
+            field.choices.forEach(choice => {
+                const opt = document.createElement('option');
+                opt.value = choice.value;
+                opt.textContent = choice.label;
+                if (field.default === choice.value) opt.selected = true;
+                input.appendChild(opt);
+            });
+        } else if (field.widget === 'checkbox') {
+            input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = Boolean(field.default);
+            input.className = 'h-4 w-4 rounded border-slate-300 text-indigo-600';
+        } else {
+            input = document.createElement('input');
+            input.type = field.widget === 'number' ? 'number' : 'text';
+            if (field.placeholder) input.placeholder = field.placeholder;
+            if (field.min != null) input.min = field.min;
+            if (field.max != null) input.max = field.max;
+            if (field.default != null && field.widget !== 'number') input.value = field.default;
+        }
+
+        input.id = `config_${field.name}`;
+        input.name = `config_${field.name}`;
+        input.className = input.type === 'checkbox'
+            ? input.className
+            : 'w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500';
+        wrapper.appendChild(input);
+
+        if (field.help_text) {
+            const help = document.createElement('p');
+            help.className = 'mt-1 text-xxs text-slate-500';
+            help.textContent = field.help_text;
+            wrapper.appendChild(help);
+        }
+        container.appendChild(wrapper);
+    });
+
+    const allowed = advancedKeysByMode[mode] || [];
+    hint.textContent = allowed.length
+        ? `Clés autorisées: ${allowed.join(', ')}`
+        : 'Aucune option avancée pour ce type de serveur.';
+    document.getElementById('config_advanced').value = '';
+}
+
 function updateModelSelect() {
     const modeSelect = document.getElementById('launch_mode');
     const modelSelect = document.getElementById('model_name');
@@ -228,6 +322,7 @@ function updateModelSelect() {
     const compatible = modelsByMode[mode] || [];
 
     hint.textContent = modeSelect.selectedOptions[0]?.dataset.api || '';
+    renderConfigFields(mode);
 
     modelSelect.innerHTML = '<option value="">Sélectionnez un modèle</option>';
     compatible.forEach(name => {
@@ -241,6 +336,13 @@ function updateModelSelect() {
     emptyHint.classList.toggle('hidden', hasModels);
     submitBtn.disabled = !hasModels;
 }
+
+document.getElementById('toggle-config-panel').addEventListener('click', () => {
+    const panel = document.getElementById('config-panel');
+    const chevron = document.getElementById('config-chevron');
+    panel.classList.toggle('hidden');
+    chevron.classList.toggle('rotate-90');
+});
 
 document.getElementById('launch_mode').addEventListener('change', updateModelSelect);
 document.getElementById('create-server-form').addEventListener('submit', (e) => {
