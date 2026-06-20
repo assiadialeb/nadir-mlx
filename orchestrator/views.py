@@ -19,9 +19,11 @@ from .server_manager import (
     start_instance,
     stop_instance,
     delete_instance,
-    check_instance_status,
+    restart_instance,
+    update_stopped_instance,
     get_instance_logs,
 )
+from .instance_health import refresh_instance_health
 from .server_types import SERVER_TYPES
 from .model_registry import (
     build_registry_defaults_json,
@@ -250,7 +252,7 @@ def servers_view(request):
     installed_names = [model["name"] for model in installed_models]
     instances = InferenceInstance.objects.all().order_by('-created_at')
     for instance in instances:
-        check_instance_status(instance)
+        refresh_instance_health(instance)
         instance.server_config_json = json.dumps(instance.server_config or {})
 
     return render(request, 'orchestrator/servers.html', {
@@ -327,6 +329,71 @@ def stop_instance_view(request, instance_id):
         except Exception as e:
             messages.error(request, f"Erreur lors de l'arrêt de l'instance : {str(e)}")
             
+    return redirect('servers')
+
+
+@login_required
+def edit_instance_view(request, instance_id):
+    if request.method != 'POST':
+        return redirect('servers')
+
+    instance = get_object_or_404(InferenceInstance, id=instance_id)
+    port_raw = (request.POST.get('port') or '').strip()
+    launch_mode_raw = request.POST.get('launch_mode')
+    restart_after = request.POST.get('restart_after') == '1'
+
+    try:
+        port = int(port_raw) if port_raw else None
+        launch_mode = parse_launch_mode(launch_mode_raw) if launch_mode_raw else None
+        server_config = resolve_server_config_from_request(
+            request.POST,
+            launch_mode or instance.launch_mode,
+            instance.model_name,
+        )
+        update_stopped_instance(
+            instance,
+            port=port,
+            launch_mode=launch_mode,
+            server_config=server_config,
+        )
+        instance.refresh_from_db()
+
+        if restart_after:
+            restart_instance(instance)
+            messages.success(
+                request,
+                f"Instance {instance.model_name} updated and restarted on port {instance.port}.",
+            )
+        else:
+            messages.success(
+                request,
+                f"Configuration updated for {instance.model_name} (port {instance.port}).",
+            )
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    except Exception as exc:
+        messages.error(request, f"Failed to update instance: {exc}")
+
+    return redirect('servers')
+
+
+@login_required
+def restart_instance_view(request, instance_id):
+    if request.method != 'POST':
+        return redirect('servers')
+
+    instance = get_object_or_404(InferenceInstance, id=instance_id)
+    try:
+        restarted = restart_instance(instance)
+        messages.success(
+            request,
+            f"Instance {restarted.model_name} restarted on port {restarted.port} (PID: {restarted.pid}).",
+        )
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    except Exception as exc:
+        messages.error(request, f"Failed to restart instance: {exc}")
+
     return redirect('servers')
 
 

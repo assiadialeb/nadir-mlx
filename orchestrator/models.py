@@ -44,6 +44,18 @@ class InferenceInstance(models.Model):
     server_config = models.JSONField(default=dict, blank=True)
     pid = models.IntegerField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='LOADING')
+    health_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('HEALTHY', 'Healthy'),
+            ('DEGRADED', 'Degraded'),
+            ('DOWN', 'Down'),
+            ('UNKNOWN', 'Unknown'),
+        ],
+        default='UNKNOWN',
+        blank=True,
+    )
+    last_health_check_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     stopped_at = models.DateTimeField(null=True, blank=True)
 

@@ -28,7 +28,14 @@ from .model_utils import (
 )
 
 LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
-DEFAULT_SERVER_HOST = "0.0.0.0"
+
+
+def default_server_host() -> str:
+    """Return the default bind address for inference servers."""
+    return str(getattr(settings, "MLX_DEFAULT_SERVER_HOST", "127.0.0.1"))
+
+
+DEFAULT_SERVER_HOST = "127.0.0.1"
 STARTUP_WAIT_SECONDS = {
     "TEXT": 2,
     "MULTIMODAL": 8,
@@ -303,7 +310,7 @@ def _resolve_server_config(
 
 
 def _config_host(server_config: dict[str, Any]) -> str:
-    return str(server_config.get("host") or DEFAULT_SERVER_HOST)
+    return str(server_config.get("host") or default_server_host())
 
 
 def _config_model_id(server_config: dict[str, Any], model_name: str) -> str:
@@ -697,6 +704,56 @@ def delete_instance(instance: InferenceInstance) -> None:
     if instance.status in ("RUNNING", "LOADING"):
         stop_instance(instance)
     instance.delete()
+
+
+def update_stopped_instance(
+    instance: InferenceInstance,
+    *,
+    port: int | None = None,
+    launch_mode: LaunchMode | None = None,
+    server_config: dict[str, Any] | None = None,
+) -> InferenceInstance:
+    """Update port, mode, or config for a stopped or failed instance."""
+    if instance.status in ("RUNNING", "LOADING"):
+        raise ValueError("Stop the server before editing its configuration.")
+
+    new_port = int(port) if port is not None else instance.port
+    new_mode = parse_launch_mode(launch_mode) if launch_mode else instance.launch_mode
+    if server_config is not None:
+        new_config = _resolve_server_config(new_mode, server_config, instance.model_name)
+    else:
+        new_config = dict(instance.server_config or {})
+
+    if new_port != instance.port:
+        conflict = (
+            InferenceInstance.objects.filter(port=new_port)
+            .exclude(pk=instance.pk)
+            .exists()
+        )
+        if conflict:
+            raise ValueError(f"Port {new_port} is already used by another instance.")
+        if not is_port_free(new_port):
+            raise ValueError(f"Port {new_port} is already in use.")
+
+    instance.port = new_port
+    instance.launch_mode = new_mode
+    instance.server_config = new_config
+    instance.save(update_fields=["port", "launch_mode", "server_config"])
+    return instance
+
+
+def restart_instance(instance: InferenceInstance) -> InferenceInstance:
+    """Gracefully stop a running instance and relaunch with the same configuration."""
+    model_name = instance.model_name
+    port = instance.port
+    launch_mode = parse_launch_mode(instance.launch_mode)
+    server_config = dict(instance.server_config or {})
+
+    if instance.status in ("RUNNING", "LOADING"):
+        stop_instance(instance)
+        instance.refresh_from_db()
+
+    return start_instance(model_name, port, launch_mode, server_config)
 
 
 def get_instance_logs(model_name: str, port: int) -> str:

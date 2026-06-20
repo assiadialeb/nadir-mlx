@@ -144,7 +144,16 @@
                             {% endif %}
                         </div>
                     </div>
-                    <div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        {% if instance.health_status == 'HEALTHY' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Health: OK</span>
+                        {% elif instance.health_status == 'DEGRADED' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">Health: Degraded</span>
+                        {% elif instance.health_status == 'DOWN' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">Health: Down</span>
+                        {% else %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200">Health: Unknown</span>
+                        {% endif %}
                         {% if instance.status == 'RUNNING' %}
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
@@ -159,6 +168,9 @@
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200">Stopped</span>
                         {% elif instance.status == 'FAILED' %}
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">Failed</span>
+                        {% endif %}
+                        {% if instance.last_health_check_at %}
+                        <span class="text-xxs text-slate-400">Checked {{ instance.last_health_check_at|date:"H:i:s" }}</span>
                         {% endif %}
                     </div>
                 </div>
@@ -177,19 +189,28 @@
                     </a>
                     {% endif %}
                     <div class="flex items-center gap-2 ml-auto">
+                        {% if instance.status == 'RUNNING' or instance.status == 'LOADING' or instance.status == 'STOPPED' or instance.status == 'FAILED' %}
+                        <form action="{% url 'restart_instance' instance.id %}" method="POST">
+                            {% csrf_token %}
+                            <button type="submit" class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-semibold text-xs rounded-lg transition-all">Redémarrer</button>
+                        </form>
+                        {% endif %}
+                        {% if instance.status == 'STOPPED' or instance.status == 'FAILED' %}
+                        <button type="button"
+                            class="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-semibold text-xs rounded-lg transition-all"
+                            data-edit-url="{% url 'edit_instance' instance.id %}"
+                            data-instance-id="{{ instance.id }}"
+                            data-model-name="{{ instance.model_name }}"
+                            data-port="{{ instance.port }}"
+                            data-launch-mode="{{ instance.launch_mode }}"
+                            onclick="openEditInstanceModal(this)">
+                            Modifier
+                        </button>
+                        {% endif %}
                         {% if instance.status == 'RUNNING' or instance.status == 'LOADING' %}
                         <form action="{% url 'stop_instance' instance.id %}" method="POST" onsubmit="return confirm('Arrêter ce serveur ?');">
                             {% csrf_token %}
                             <button type="submit" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-semibold text-xs rounded-lg transition-all">Arrêter</button>
-                        </form>
-                        {% elif instance.status == 'STOPPED' or instance.status == 'FAILED' %}
-                        <form action="{% url 'start_instance' %}" method="POST">
-                            {% csrf_token %}
-                            <input type="hidden" name="model_name" value="{{ instance.model_name }}">
-                            <input type="hidden" name="port" value="{{ instance.port }}">
-                            <input type="hidden" name="launch_mode" value="{{ instance.launch_mode }}">
-                            <input type="hidden" name="server_config_json" value="{{ instance.server_config_json }}">
-                            <button type="submit" class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-semibold text-xs rounded-lg transition-all">Relancer</button>
                         </form>
                         {% endif %}
                         <button type="button"
@@ -211,6 +232,49 @@
             <p class="text-xs mt-2">Utilisez le formulaire ci-dessus pour démarrer votre premier serveur.</p>
         </div>
         {% endif %}
+    </div>
+</div>
+
+<div id="edit-instance-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+    <button type="button"
+        class="absolute inset-0 w-full h-full border-0 bg-slate-900/30 backdrop-blur-sm cursor-default p-0"
+        aria-label="Close edit dialog"
+        onclick="closeEditInstanceModal()"></button>
+    <div class="relative z-10 flex min-h-full items-center justify-center p-4">
+        <div class="w-full max-w-2xl rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h3 class="text-lg font-bold text-slate-900">Edit server configuration</h3>
+            <p class="mt-2 text-sm text-slate-600">
+                Update <strong id="edit-instance-label" class="text-slate-800"></strong>.
+                The server must be stopped before saving changes.
+            </p>
+            <form id="edit-instance-form" method="POST" class="mt-5 space-y-4">
+                {% csrf_token %}
+                <input type="hidden" name="launch_mode" id="edit_launch_mode">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="edit_port" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Port</label>
+                        <input type="number" name="port" id="edit_port" min="1024" max="65535" required
+                            class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+                <div id="edit-config-fields" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                <details class="rounded-xl border border-slate-200 bg-white p-4">
+                    <summary class="text-sm font-semibold text-slate-700 cursor-pointer">Advanced (JSON)</summary>
+                    <textarea name="config_advanced" id="edit_config_advanced" rows="5"
+                        class="mt-3 w-full font-mono text-xs border border-slate-200 rounded-lg p-3 bg-white"></textarea>
+                </details>
+                <label class="flex items-center gap-2 text-sm text-slate-700">
+                    <input type="checkbox" name="restart_after" value="1" class="h-4 w-4 rounded border-slate-300 text-indigo-600">
+                    Restart server after saving
+                </label>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button" onclick="closeEditInstanceModal()"
+                        class="px-4 py-2 text-sm font-semibold text-slate-600 rounded-lg border border-slate-300">Cancel</button>
+                    <button type="submit"
+                        class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg">Save</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -244,6 +308,11 @@ const configFieldsByMode = {{ config_fields_json|safe }};
 const advancedKeysByMode = {{ advanced_keys_json|safe }};
 const registryDefaultsByMode = {{ registry_defaults_json|safe }};
 const registryMetadata = {{ registry_metadata_json|safe }};
+const instanceConfigsById = {
+{% for instance in instances %}
+    "{{ instance.id }}": {{ instance.server_config_json|safe }}{% if not forloop.last %},{% endif %}
+{% endfor %}
+};
 
 function openDeleteInstanceModal(button) {
     const form = document.getElementById('delete-instance-form');
@@ -255,6 +324,26 @@ function openDeleteInstanceModal(button) {
 
 function closeDeleteInstanceModal() {
     document.getElementById('delete-instance-modal').classList.add('hidden');
+}
+
+function openEditInstanceModal(button) {
+    const instanceId = button.dataset.instanceId;
+    const mode = button.dataset.launchMode;
+    const config = instanceConfigsById[instanceId] || {};
+    document.getElementById('edit-instance-label').textContent =
+        `${button.dataset.modelName} (port ${button.dataset.port})`;
+    document.getElementById('edit-instance-form').action = button.dataset.editUrl;
+    document.getElementById('edit_launch_mode').value = mode;
+    document.getElementById('edit_port').value = button.dataset.port;
+    renderConfigFieldsInto('edit-config-fields', mode, button.dataset.modelName, config, 'edit');
+    const advanced = config.advanced || {};
+    document.getElementById('edit_config_advanced').value =
+        Object.keys(advanced).length ? JSON.stringify(advanced, null, 2) : '';
+    document.getElementById('edit-instance-modal').classList.remove('hidden');
+}
+
+function closeEditInstanceModal() {
+    document.getElementById('edit-instance-modal').classList.add('hidden');
 }
 
 function applyRegistryDefaults(mode, modelName) {
@@ -290,9 +379,8 @@ function applyRegistryDefaults(mode, modelName) {
     hint.textContent = '';
 }
 
-function renderConfigFields(mode, modelName = '') {
-    const container = document.getElementById('config-fields');
-    const hint = document.getElementById('advanced-keys-hint');
+function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfig = {}, idPrefix = 'config') {
+    const container = document.getElementById(containerId);
     const fields = configFieldsByMode[mode] || [];
     container.innerHTML = '';
 
@@ -301,8 +389,13 @@ function renderConfigFields(mode, modelName = '') {
         const label = document.createElement('label');
         label.className = 'block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5';
         label.textContent = field.label;
-        label.htmlFor = `config_${field.name}`;
+        label.htmlFor = `${idPrefix}_${field.name}`;
         wrapper.appendChild(label);
+
+        const ops = existingConfig.ops || {};
+        const existingValue = field.section === 'ops'
+            ? ops[field.name]
+            : existingConfig[field.name];
 
         let input;
         if (field.widget === 'select') {
@@ -311,13 +404,13 @@ function renderConfigFields(mode, modelName = '') {
                 const opt = document.createElement('option');
                 opt.value = choice.value;
                 opt.textContent = choice.label;
-                if (field.default === choice.value) opt.selected = true;
                 input.appendChild(opt);
             });
+            input.value = existingValue ?? field.default ?? '';
         } else if (field.widget === 'checkbox') {
             input = document.createElement('input');
             input.type = 'checkbox';
-            input.checked = Boolean(field.default);
+            input.checked = existingValue != null ? Boolean(existingValue) : Boolean(field.default);
             input.className = 'h-4 w-4 rounded border-slate-300 text-indigo-600';
         } else {
             input = document.createElement('input');
@@ -325,14 +418,18 @@ function renderConfigFields(mode, modelName = '') {
             if (field.placeholder) input.placeholder = field.placeholder;
             if (field.min != null) input.min = field.min;
             if (field.max != null) input.max = field.max;
-            if (field.default != null && field.widget !== 'number') input.value = field.default;
+            if (existingValue != null && existingValue !== '') {
+                input.value = existingValue;
+            } else if (field.default != null) {
+                input.value = field.default;
+            }
         }
 
-        input.id = `config_${field.name}`;
+        input.id = `${idPrefix}_${field.name}`;
         input.name = `config_${field.name}`;
-        input.className = input.type === 'checkbox'
-            ? input.className
-            : 'w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500';
+        if (input.type !== 'checkbox') {
+            input.className = 'w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500';
+        }
         wrapper.appendChild(input);
 
         if (field.help_text) {
@@ -344,12 +441,19 @@ function renderConfigFields(mode, modelName = '') {
         container.appendChild(wrapper);
     });
 
+    if (idPrefix === 'config') {
+        applyRegistryDefaults(mode, modelName);
+    }
+}
+
+function renderConfigFields(mode, modelName = '') {
+    const hint = document.getElementById('advanced-keys-hint');
+    renderConfigFieldsInto('config-fields', mode, modelName, {}, 'config');
     const allowed = advancedKeysByMode[mode] || [];
     hint.textContent = allowed.length
         ? `Clés autorisées: ${allowed.join(', ')}`
         : 'Aucune option avancée pour ce type de serveur.';
     document.getElementById('config_advanced').value = '';
-    applyRegistryDefaults(mode, modelName);
 }
 
 function updateModelSelect() {

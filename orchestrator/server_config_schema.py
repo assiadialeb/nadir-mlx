@@ -15,6 +15,15 @@ from orchestrator.kokoro_voices import (
 from orchestrator.model_registry import apply_registry_server_defaults
 
 LaunchModeId = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
+ALL_LAUNCH_MODES: tuple[str, ...] = (
+    "TEXT",
+    "MULTIMODAL",
+    "EMBEDDING",
+    "RERANKER",
+    "IMAGE",
+    "TTS",
+    "STT",
+)
 
 FieldWidget = Literal["text", "number", "select", "checkbox", "resource"]
 
@@ -41,8 +50,8 @@ COMMON_FIELDS: tuple[ConfigFieldSpec, ...] = (
         name="host",
         label="Interface réseau",
         widget="select",
-        modes=("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"),
-        default="0.0.0.0",
+        modes=ALL_LAUNCH_MODES,
+        default=None,
         choices=(
             ("0.0.0.0", "Toutes les interfaces (0.0.0.0)"),
             ("127.0.0.1", "Local uniquement (127.0.0.1)"),
@@ -159,6 +168,27 @@ MODE_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ),
 )
 
+OPS_FIELDS: tuple[ConfigFieldSpec, ...] = (
+    ConfigFieldSpec(
+        name="auto_restart",
+        label="Auto-restart on failure",
+        widget="checkbox",
+        modes=ALL_LAUNCH_MODES,
+        default=False,
+        help_text="Relaunch automatically when health checks report DOWN (opt-in).",
+    ),
+    ConfigFieldSpec(
+        name="auto_restart_max_retries",
+        label="Max auto-restart attempts",
+        widget="number",
+        modes=ALL_LAUNCH_MODES,
+        default=3,
+        min_value=1,
+        max_value=20,
+        help_text="Stop retrying after this many attempts (1 hour freeze).",
+    ),
+)
+
 ADVANCED_WHITELIST: dict[str, frozenset[str]] = {
     "TEXT": frozenset({
         "adapter_path",
@@ -189,9 +219,25 @@ ADVANCED_WHITELIST: dict[str, frozenset[str]] = {
 }
 
 ALL_FIELD_SPECS: tuple[ConfigFieldSpec, ...] = COMMON_FIELDS + MODE_FIELDS
+OPS_FIELD_NAMES: frozenset[str] = frozenset(field.name for field in OPS_FIELDS)
+
+
+def _default_bind_host() -> str:
+    from django.conf import settings
+
+    return str(getattr(settings, "MLX_DEFAULT_SERVER_HOST", "127.0.0.1"))
 
 
 def get_fields_for_mode(launch_mode: str) -> list[ConfigFieldSpec]:
+    return [
+        field
+        for field in ALL_FIELD_SPECS + OPS_FIELDS
+        if launch_mode in field.modes and not field.advanced_only
+    ]
+
+
+def get_config_fields_for_mode(launch_mode: str) -> list[ConfigFieldSpec]:
+    """Return user-facing config fields (excluding ops)."""
     return [
         field
         for field in ALL_FIELD_SPECS
@@ -199,14 +245,38 @@ def get_fields_for_mode(launch_mode: str) -> list[ConfigFieldSpec]:
     ]
 
 
+def get_ops_fields_for_mode(launch_mode: str) -> list[ConfigFieldSpec]:
+    return [field for field in OPS_FIELDS if launch_mode in field.modes]
+
+
+def _merge_ops_config(
+    launch_mode: str,
+    raw_config: dict[str, Any],
+    existing_ops: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    ops = dict(existing_ops or {})
+    for field in get_ops_fields_for_mode(launch_mode):
+        if field.name in raw_config:
+            ops[field.name] = _coerce_field_value(field, raw_config.pop(field.name))
+        elif field.name not in ops and field.default is not None:
+            ops[field.name] = field.default
+    return ops
+
+
 def build_default_server_config(
     launch_mode: str,
     model_name: str | None = None,
 ) -> dict[str, Any]:
-    config: dict[str, Any] = {"advanced": {}}
-    for field in get_fields_for_mode(launch_mode):
+    config: dict[str, Any] = {"advanced": {}, "ops": {}}
+    config["host"] = _default_bind_host()
+    for field in get_config_fields_for_mode(launch_mode):
+        if field.name == "host":
+            continue
         if field.default is not None:
             config[field.name] = field.default
+    for field in get_ops_fields_for_mode(launch_mode):
+        if field.default is not None:
+            config["ops"][field.name] = field.default
     if model_name:
         config = apply_registry_server_defaults(launch_mode, model_name, config)
     return config
@@ -295,15 +365,18 @@ def validate_and_normalize_server_config(
     """Merge defaults, validate fields, and return a storable server_config dict."""
     raw = dict(raw_config or {})
     advanced_raw = raw.pop("advanced", {})
+    existing_ops = raw.pop("ops", None)
     normalized = build_default_server_config(launch_mode, model_name)
 
-    for field in get_fields_for_mode(launch_mode):
+    for field in get_config_fields_for_mode(launch_mode):
         if field.name not in raw:
             continue
         value = raw[field.name]
         if value is None or (isinstance(value, str) and not value.strip()):
             continue
         normalized[field.name] = _coerce_field_value(field, value)
+
+    normalized["ops"] = _merge_ops_config(launch_mode, raw, existing_ops)
 
     if not normalized.get("model_id"):
         normalized["model_id"] = model_name
@@ -359,22 +432,28 @@ def resolve_server_config_from_request(
 
 def config_fields_for_ui_json() -> str:
     """Serialize field metadata for client-side form rendering."""
+    default_host = _default_bind_host()
     payload: dict[str, list[dict[str, Any]]] = {}
-    for mode in ("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"):
-        payload[mode] = [
-            {
-                "name": field.name,
-                "label": field.label,
-                "widget": field.widget,
-                "default": field.default,
-                "placeholder": field.placeholder,
-                "help_text": field.help_text,
-                "choices": [{"value": v, "label": lbl} for v, lbl in field.choices],
-                "min": field.min_value,
-                "max": field.max_value,
-            }
-            for field in get_fields_for_mode(mode)
-        ]
+    for mode in ALL_LAUNCH_MODES:
+        payload[mode] = []
+        for field in get_fields_for_mode(mode):
+            field_default = field.default
+            if field.name == "host" and field_default is None:
+                field_default = default_host
+            payload[mode].append(
+                {
+                    "name": field.name,
+                    "label": field.label,
+                    "widget": field.widget,
+                    "default": field_default,
+                    "placeholder": field.placeholder,
+                    "help_text": field.help_text,
+                    "choices": [{"value": v, "label": lbl} for v, lbl in field.choices],
+                    "min": field.min_value,
+                    "max": field.max_value,
+                    "section": "ops" if field.name in OPS_FIELD_NAMES else "config",
+                }
+            )
     return json.dumps(payload)
 
 

@@ -11,21 +11,38 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-k8k&vy*1mu4iuaa*=jz9mx^+qkwi(0$qf^inbqz44j)+4v22om'
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-k8k&vy*1mu4iuaa*=jz9mx^+qkwi(0$qf^inbqz44j)+4v22om",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = _env_bool("DJANGO_DEBUG", True)
 
-ALLOWED_HOSTS = ['*']
+_allowed_hosts_raw = os.environ.get("DJANGO_ALLOWED_HOSTS", "")
+if _allowed_hosts_raw.strip():
+    ALLOWED_HOSTS = [host.strip() for host in _allowed_hosts_raw.split(",") if host.strip()]
+elif DEBUG:
+    ALLOWED_HOSTS = ["*"]
+else:
+    ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
 
 # Application definition
@@ -130,4 +147,24 @@ LOGOUT_REDIRECT_URL = 'login'
 # MLX Model Orchestrator Path Settings
 MODELS_DIR = BASE_DIR / 'models'
 LOGS_DIR = BASE_DIR / 'logs'
+
+# Inference plane defaults (private bind in production)
+MLX_DEFAULT_SERVER_HOST = os.environ.get(
+    "MLX_DEFAULT_SERVER_HOST",
+    "127.0.0.1" if not DEBUG else "0.0.0.0",
+)
+INSTANCE_HEALTH_CHECK_INTERVAL_SECONDS = int(
+    os.environ.get("MLX_HEALTH_INTERVAL_SECONDS", "30")
+)
+INSTANCE_AUTO_RESTART_BACKOFF_SECONDS = int(
+    os.environ.get("MLX_RESTART_BACKOFF_SECONDS", "30")
+)
+INSTANCE_WATCHDOG_ENABLED = _env_bool("MLX_INSTANCE_WATCHDOG_ENABLED", True)
+
+if not DEBUG:
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = "DENY"
+    SESSION_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = True
 
