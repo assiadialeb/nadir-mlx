@@ -286,13 +286,8 @@ def _parse_flag_str(command: str, flag: str) -> str | None:
     return None
 
 
-def parse_readme_inference_hints(model_path: Path) -> dict[str, Any]:
-    """Parse mflux-generate flags from a model README when present."""
-    readme_path = model_path / "README.md"
-    if not readme_path.is_file():
-        return {}
-
-    content = readme_path.read_text(encoding="utf-8", errors="replace")
+def parse_readme_inference_hints_from_text(content: str) -> dict[str, Any]:
+    """Parse mflux-generate flags from README markdown text."""
     commands = MFLUX_GENERATE_CMD.findall(content)
     if not commands:
         return {}
@@ -325,6 +320,16 @@ def parse_readme_inference_hints(model_path: Path) -> dict[str, Any]:
         hints["default_height"] = height
 
     return hints
+
+
+def parse_readme_inference_hints(model_path: Path) -> dict[str, Any]:
+    """Parse mflux-generate flags from a model README when present."""
+    readme_path = model_path / "README.md"
+    if not readme_path.is_file():
+        return {}
+
+    content = readme_path.read_text(encoding="utf-8", errors="replace")
+    return parse_readme_inference_hints_from_text(content)
 
 
 def _template_match_score(name: str, template: _ProfileTemplate) -> int:
