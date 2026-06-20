@@ -15,7 +15,16 @@ class ImageModeTests(TestCase):
     def test_infer_quantize_from_name_extracts_bits(self) -> None:
         self.assertEqual(infer_quantize_from_name("FLUX.1-schnell-4bit"), 4)
         self.assertEqual(infer_quantize_from_name("z-image-turbo-8bit"), 8)
+        self.assertEqual(infer_quantize_from_name("Flux-1.lite-8B-MLX-Q4"), 4)
         self.assertIsNone(infer_quantize_from_name("flux-dev"))
+
+    def test_resolve_image_model_spec_flux_lite(self) -> None:
+        spec = resolve_image_model_spec(Path("Flux-1.lite-8B-MLX-Q4"))
+        self.assertEqual(spec.family, "flux1")
+        self.assertEqual(spec.config_attr, "dev")
+        self.assertEqual(spec.quantize, 4)
+        self.assertEqual(spec.default_steps, 50)
+        self.assertEqual(spec.default_guidance, 4.0)
 
     def test_resolve_image_model_spec_flux_schnell(self) -> None:
         spec = resolve_image_model_spec(Path("FLUX.1-schnell-4bit"))

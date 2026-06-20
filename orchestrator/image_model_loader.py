@@ -27,6 +27,13 @@ def infer_quantize_from_name(folder_name: str) -> int | None:
         bits = int(match.group(1))
         if bits in (3, 4, 5, 6, 8):
             return bits
+
+    q_match = re.search(r"[-_]q(\d)\b", folder_name, re.IGNORECASE)
+    if q_match:
+        bits = int(q_match.group(1))
+        if bits in (3, 4, 5, 6, 8):
+            return bits
+
     return None
 
 
@@ -45,10 +52,15 @@ def resolve_image_model_spec(model_path: Path) -> ImageModelSpec:
         return ImageModelSpec("qwen_image", "qwen_image", quantize, 20, 3.5)
     if "krea" in name:
         return ImageModelSpec("flux1", "krea_dev", quantize, 20, 4.0)
+    if "lite" in name and "flux" in name:
+        # flux.1-lite is distilled from FLUX.1-dev (see model README on HF)
+        return ImageModelSpec("flux1", "dev", quantize or 4, 50, 4.0)
     if "dev" in name and "flux" in name:
         return ImageModelSpec("flux1", "dev", quantize, 20, 4.0)
-    if "schnell" in name or "flux" in name or "fibo" in name:
+    if "schnell" in name:
         return ImageModelSpec("flux1", "schnell", quantize, 4, 0.0)
+    if "flux" in name or "fibo" in name:
+        return ImageModelSpec("flux1", "dev", quantize, 20, 4.0)
 
     raise ValueError(
         f"Unsupported image model folder '{model_path.name}'. "
