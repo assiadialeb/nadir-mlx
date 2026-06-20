@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import BenchmarkRun, InferenceInstance
@@ -20,9 +21,22 @@ BENCHMARK_TIMEOUT_SECONDS = 3600
 
 
 def _benchmark_output_path(run_id: int) -> Path:
-    benchmarks_dir = settings.LOGS_DIR / "benchmarks"
+    benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
     benchmarks_dir.mkdir(parents=True, exist_ok=True)
     return benchmarks_dir / f"bench_{run_id}.json"
+
+
+def delete_benchmark_runs_for_model(folder_name: str) -> int:
+    """Delete benchmark DB rows and JSON artifacts linked to a model folder."""
+    runs = BenchmarkRun.objects.filter(
+        Q(instance__model_name=folder_name) | Q(model_id=folder_name),
+    )
+    removed = 0
+    for run in runs:
+        _benchmark_output_path(run.id).unlink(missing_ok=True)
+        run.delete()
+        removed += 1
+    return removed
 
 
 def _build_command(run: BenchmarkRun, output_path: Path) -> list[str]:

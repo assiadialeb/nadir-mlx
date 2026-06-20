@@ -12,6 +12,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from .models import InferenceInstance, BenchmarkRun, ModelDownload
 from .downloader import start_model_download
+from .model_lifecycle import delete_installed_model
 from .model_utils import reconcile_stale_downloads, sync_model_download_status, validate_model_folder_name
 from .server_manager import (
     parse_launch_mode,
@@ -188,6 +189,35 @@ def models_view(request):
         'models': hf_models,
         'query': query,
     })
+
+
+@login_required
+def delete_model_view(request):
+    if request.method != 'POST':
+        return redirect('models')
+
+    folder_name = (request.POST.get('model_name') or '').strip()
+    if not folder_name:
+        messages.error(request, "Aucun modèle sélectionné.")
+        return redirect(f"{reverse('models')}?tab=installed")
+
+    try:
+        result = delete_installed_model(folder_name)
+        messages.success(
+            request,
+            (
+                f"Modèle {result.folder_name} supprimé "
+                f"({result.instances_removed} serveur(s), "
+                f"{result.benchmark_runs_removed} benchmark(s), "
+                f"{result.log_files_removed} log(s))."
+            ),
+        )
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    except Exception as exc:
+        messages.error(request, f"Erreur lors de la suppression du modèle : {exc}")
+
+    return redirect(f"{reverse('models')}?tab=installed")
 
 
 # Download Trigger

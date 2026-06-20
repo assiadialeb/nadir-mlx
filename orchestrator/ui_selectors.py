@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from django.db.models import Count
+
 from orchestrator.model_registry import resolve_model_registry_profile
 from orchestrator.model_utils import get_model_capabilities
+from orchestrator.models import InferenceInstance
 from orchestrator.server_types import SERVER_TYPES
 
 
@@ -14,9 +17,15 @@ def list_installed_models() -> list[dict[str, Any]]:
     """Return downloaded models enriched with capability flags."""
     from orchestrator.server_manager import get_downloaded_models
 
+    instance_counts = {
+        row["model_name"]: row["count"]
+        for row in InferenceInstance.objects.values("model_name").annotate(count=Count("id"))
+    }
+
     return [
         {
             "name": model_name,
+            "instance_count": instance_counts.get(model_name, 0),
             **get_model_capabilities(model_name),
             "registry": resolve_model_registry_profile(
                 model_name,
