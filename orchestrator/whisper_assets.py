@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from orchestrator.model_utils import CONFIG_JSON
+
 WHISPER_ASSET_FILENAMES: tuple[str, ...] = (
     "preprocessor_config.json",
     "tokenizer.json",
@@ -28,7 +30,7 @@ def is_legacy_mlx_whisper_checkpoint(model_path: Path) -> bool:
         return False
     if (model_path / "model.safetensors.index.json").is_file():
         return False
-    config = model_path / "config.json"
+    config = model_path / CONFIG_JSON
     if not config.is_file():
         return False
     return True
@@ -104,7 +106,7 @@ def ensure_whisper_hf_assets(model_path: os.PathLike[str] | str) -> None:
 def is_stt_servable(model_path: os.PathLike[str] | str) -> bool:
     """Return True when mlx-audio can transcribe with this local folder."""
     path = Path(model_path)
-    if not path.is_dir() or not (path / "config.json").is_file():
+    if not path.is_dir() or not (path / CONFIG_JSON).is_file():
         return False
     if not (
         (path / "model.safetensors").is_file()
@@ -116,7 +118,7 @@ def is_stt_servable(model_path: os.PathLike[str] | str) -> bool:
     try:
         import json
 
-        config = json.loads((path / "config.json").read_text(encoding="utf-8"))
+        config = json.loads((path / CONFIG_JSON).read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return False
 

@@ -9,6 +9,9 @@ from django.conf import settings
 
 LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
 
+CONFIG_JSON = "config.json"
+CONFIG_JSON_ORIG = "config.json.orig"
+
 EMBEDDING_NAME_PATTERN = re.compile(
     r"(embedding|embed|e5|bge|nomic|gte|retrieval)",
     re.IGNORECASE,
@@ -80,8 +83,8 @@ def get_model_path(folder_name: str) -> Path:
 
 def _read_model_config(model_path: Path) -> dict[str, Any]:
     """Read config.json, preferring the original backup when available."""
-    backup_path = model_path / "config.json.orig"
-    config_path = backup_path if backup_path.is_file() else model_path / "config.json"
+    backup_path = model_path / CONFIG_JSON_ORIG
+    config_path = backup_path if backup_path.is_file() else model_path / CONFIG_JSON
     if not config_path.is_file():
         return {}
     try:
@@ -116,7 +119,7 @@ def is_model_complete(model_path: os.PathLike[str] | str) -> bool:
     if _looks_like_image_model_folder(path.name):
         return _has_diffusion_weights(path)
 
-    config_path = path / "config.json"
+    config_path = path / CONFIG_JSON
     if not config_path.is_file():
         return False
 
@@ -324,7 +327,7 @@ def get_model_capabilities(folder_name: str) -> dict[str, bool]:
 def prepare_model_for_text_inference(model_path: os.PathLike[str] | str) -> None:
     """Patch configs that mlx_lm cannot load natively (e.g. gemma4_unified)."""
     path = Path(model_path)
-    config_path = path / "config.json"
+    config_path = path / CONFIG_JSON
     if not config_path.is_file():
         return
 
@@ -333,7 +336,7 @@ def prepare_model_for_text_inference(model_path: os.PathLike[str] | str) -> None
     if model_type != "gemma4_unified":
         return
 
-    backup_path = path / "config.json.orig"
+    backup_path = path / CONFIG_JSON_ORIG
     if not backup_path.is_file():
         shutil.copy2(config_path, backup_path)
 
@@ -344,15 +347,15 @@ def prepare_model_for_text_inference(model_path: os.PathLike[str] | str) -> None
 def prepare_model_for_multimodal_inference(model_path: os.PathLike[str] | str) -> None:
     """Restore the original unified config required by mlx_vlm."""
     path = Path(model_path)
-    backup_path = path / "config.json.orig"
-    config_path = path / "config.json"
+    backup_path = path / CONFIG_JSON_ORIG
+    config_path = path / CONFIG_JSON
     if backup_path.is_file():
         shutil.copy2(backup_path, config_path)
 
 
 def requires_relaxed_weight_loading(model_path: os.PathLike[str] | str) -> bool:
     """Return True when mlx_lm must ignore extra weight tensors."""
-    backup_path = Path(model_path) / "config.json.orig"
+    backup_path = Path(model_path) / CONFIG_JSON_ORIG
     if backup_path.is_file():
         return True
     return get_model_type(model_path) == "gemma4_unified"

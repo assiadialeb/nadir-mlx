@@ -206,31 +206,51 @@ def build_default_server_config(launch_mode: str) -> dict[str, Any]:
     return config
 
 
+def _coerce_checkbox(raw_value: Any) -> bool:
+    if isinstance(raw_value, bool):
+        return raw_value
+    return str(raw_value).lower() in ("1", "true", "on", "yes")
+
+
+def _coerce_number(field: ConfigFieldSpec, raw_value: Any) -> int | float:
+    if isinstance(raw_value, (int, float)):
+        number = raw_value
+    else:
+        text = str(raw_value).strip()
+        number = float(text) if "." in text else int(text)
+    if field.min_value is not None and number < field.min_value:
+        raise ValueError(f"{field.label}: minimum {field.min_value}.")
+    if field.max_value is not None and number > field.max_value:
+        raise ValueError(f"{field.label}: maximum {field.max_value}.")
+    if field.name not in ("speaking_rate", "chunk_duration") and isinstance(number, float):
+        return int(number)
+    return number
+
+
+def _coerce_select(field: ConfigFieldSpec, raw_value: Any) -> str:
+    value = str(raw_value).strip()
+    allowed = {choice[0] for choice in field.choices}
+    if value not in allowed:
+        raise ValueError(f"{field.label}: valeur invalide '{value}'.")
+    return value
+
+
+def _coerce_required_text(field: ConfigFieldSpec, raw_value: Any) -> str:
+    value = str(raw_value).strip()
+    if not value:
+        raise ValueError(f"{field.label} ne peut pas être vide.")
+    return value
+
+
 def _coerce_field_value(field: ConfigFieldSpec, raw_value: Any) -> Any:
     if field.widget == "checkbox":
-        if isinstance(raw_value, bool):
-            return raw_value
-        return str(raw_value).lower() in ("1", "true", "on", "yes")
+        return _coerce_checkbox(raw_value)
 
     if field.widget == "number":
-        if isinstance(raw_value, (int, float)):
-            number = raw_value
-        else:
-            number = float(str(raw_value).strip()) if "." in str(raw_value) else int(str(raw_value).strip())
-        if field.min_value is not None and number < field.min_value:
-            raise ValueError(f"{field.label}: minimum {field.min_value}.")
-        if field.max_value is not None and number > field.max_value:
-            raise ValueError(f"{field.label}: maximum {field.max_value}.")
-        if field.widget == "number" and field.name not in ("speaking_rate", "chunk_duration") and isinstance(number, float):
-            number = int(number)
-        return number
+        return _coerce_number(field, raw_value)
 
     if field.widget == "select":
-        value = str(raw_value).strip()
-        allowed = {choice[0] for choice in field.choices}
-        if value not in allowed:
-            raise ValueError(f"{field.label}: valeur invalide '{value}'.")
-        return value
+        return _coerce_select(field, raw_value)
 
     if field.widget == "resource":
         value = str(raw_value).strip()
@@ -238,10 +258,7 @@ def _coerce_field_value(field: ConfigFieldSpec, raw_value: Any) -> Any:
             raise ValueError(f"{field.label} est requis.")
         return value
 
-    value = str(raw_value).strip()
-    if not value:
-        raise ValueError(f"{field.label} ne peut pas être vide.")
-    return value
+    return _coerce_required_text(field, raw_value)
 
 
 def _validate_advanced(launch_mode: str, advanced: Any) -> dict[str, Any]:

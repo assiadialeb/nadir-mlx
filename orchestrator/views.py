@@ -64,43 +64,49 @@ def logout_view(request):
 
 
 # Model parsing helper
+def _extract_param_size(name: str) -> float | None:
+    param_match = re.search(r"(\d+(?:\.\d+)?)[Bb]", name)
+    return float(param_match.group(1)) if param_match else None
+
+
+def _extract_quantization_bits(name: str) -> int:
+    quant_match = re.search(r"(\d+)bit", name)
+    if quant_match:
+        return int(quant_match.group(1))
+
+    lowered = name.lower()
+    if "fp16" in lowered or "f16" in lowered:
+        return 16
+    if "fp32" in lowered:
+        return 32
+    if "q4" in lowered:
+        return 4
+    if "q8" in lowered:
+        return 8
+    return 16
+
+
+def _detect_use_case(name: str, tags: list[str] | None) -> str:
+    is_chat = "instruct" in name.lower() or "chat" in name.lower() or "it" in name.lower().split("-")
+    if tags:
+        is_chat = is_chat or any(t.lower() in ["conversational", "text-generation"] for t in tags)
+    return "Chat / Instruct" if is_chat else "Text Generation"
+
+
+def _estimate_ram_gb(param_size: float | None, bits: int) -> str:
+    if param_size is None:
+        return "Unknown"
+    ram_est = param_size * (bits / 8.0) * 1.2
+    return f"{ram_est:.1f} GB"
+
+
 def parse_hf_model(repo_id, tags=None):
     name = repo_id.split('/')[-1]
-    
-    # 1. Size parameter extraction (e.g. 8B, 70B, 1.5B)
-    param_match = re.search(r'(\d+(?:\.\d+)?)[Bb]', name)
-    param_size = float(param_match.group(1)) if param_match else None
-    
-    # 2. Quantization extraction (e.g. 4bit, 8bit)
-    quant_match = re.search(r'(\d+)bit', name)
-    if quant_match:
-        bits = int(quant_match.group(1))
-    else:
-        # Common fallbacks
-        if 'fp16' in name.lower() or 'f16' in name.lower():
-            bits = 16
-        elif 'fp32' in name.lower():
-            bits = 32
-        elif 'q4' in name.lower():
-            bits = 4
-        elif 'q8' in name.lower():
-            bits = 8
-        else:
-            bits = 16
+    param_size = _extract_param_size(name)
+    bits = _extract_quantization_bits(name)
+    use_case = _detect_use_case(name, tags)
+    ram_str = _estimate_ram_gb(param_size, bits)
 
-    # 3. Use case extraction
-    is_chat = 'instruct' in name.lower() or 'chat' in name.lower() or 'it' in name.lower().split('-')
-    if tags:
-        is_chat = is_chat or any(t.lower() in ['conversational', 'text-generation'] for t in tags)
-    use_case = "Chat / Instruct" if is_chat else "Text Generation"
-    
-    # 4. RAM estimation calculation
-    if param_size:
-        ram_est = param_size * (bits / 8.0) * 1.2
-        ram_str = f"{ram_est:.1f} GB"
-    else:
-        ram_str = "Unknown"
-        
     return {
         'repo_id': repo_id,
         'name': name,

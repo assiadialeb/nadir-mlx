@@ -99,53 +99,35 @@ def list_voices() -> dict[str, object]:
     }
 
 
-@app.post("/v1/audio/speech")
-def create_speech(body: SpeechRequest) -> Response:
-    model = _state.get("model")
-    if model is None:
-        raise HTTPException(status_code=503, detail="TTS model not loaded.")
-
-    text = body.input.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="input must not be empty.")
-
-    if body.voice:
-        raw_voice = body.voice.strip()
-        if (
-            not is_kokoro_voice_id(raw_voice)
-            and raw_voice.lower() not in OPENAI_TTS_VOICES
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Unknown voice '{raw_voice}'. Use a Kokoro id (e.g. ff_siwis) "
-                    "or an OpenAI voice name (alloy, nova, …)."
-                ),
-            )
-
-    defaults = _defaults()
-    lang_code = resolve_lang_code(
-        body.lang_code,
-        body.language,
-        str(defaults.get("lang_code") or "f"),
+def _validate_speech_voice(raw_voice: str) -> None:
+    if is_kokoro_voice_id(raw_voice):
+        return
+    if raw_voice.lower() in OPENAI_TTS_VOICES:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Unknown voice '{raw_voice}'. Use a Kokoro id (e.g. ff_siwis) "
+            "or an OpenAI voice name (alloy, nova, …)."
+        ),
     )
-    voice, remap_note = resolve_kokoro_voice(
-        body.voice,
-        lang_code,
-        str(defaults.get("voice_id") or "") or None,
-    )
-    if remap_note:
-        logger.info(remap_note)
 
-    speed = body.speed if body.speed is not None else defaults.get("speaking_rate", 1.0)
 
+def _synthesize_speech(
+    model: object,
+    *,
+    text: str,
+    voice: str,
+    speed: float,
+    lang_code: str,
+) -> tuple[np.ndarray, int]:
     audio_chunks: list[np.ndarray] = []
     sample_rate: int | None = None
     try:
         for result in model.generate(
             text,
             voice=voice,
-            speed=float(speed),
+            speed=speed,
             lang_code=lang_code,
         ):
             audio_chunks.append(np.asarray(result.audio))
@@ -165,18 +147,62 @@ def create_speech(body: SpeechRequest) -> Response:
 
     if not audio_chunks or sample_rate is None:
         raise HTTPException(status_code=400, detail="No audio generated.")
+    return np.concatenate(audio_chunks), sample_rate
 
-    concatenated = np.concatenate(audio_chunks)
+
+def _speech_audio_response(
+    audio: np.ndarray,
+    sample_rate: int,
+    response_format: Literal["wav", "mp3"],
+) -> Response:
     buffer = io.BytesIO()
     from mlx_audio.audio_io import write as audio_write
 
-    audio_write(buffer, concatenated, sample_rate, format=body.response_format)
-    media_type = "audio/wav" if body.response_format == "wav" else "audio/mpeg"
+    audio_write(buffer, audio, sample_rate, format=response_format)
+    media_type = "audio/wav" if response_format == "wav" else "audio/mpeg"
     return Response(
         content=buffer.getvalue(),
         media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename=speech.{body.response_format}"},
+        headers={"Content-Disposition": f"attachment; filename=speech.{response_format}"},
     )
+
+
+@app.post("/v1/audio/speech")
+def create_speech(body: SpeechRequest) -> Response:
+    model = _state.get("model")
+    if model is None:
+        raise HTTPException(status_code=503, detail="TTS model not loaded.")
+
+    text = body.input.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="input must not be empty.")
+
+    if body.voice:
+        _validate_speech_voice(body.voice.strip())
+
+    defaults = _defaults()
+    lang_code = resolve_lang_code(
+        body.lang_code,
+        body.language,
+        str(defaults.get("lang_code") or "f"),
+    )
+    voice, remap_note = resolve_kokoro_voice(
+        body.voice,
+        lang_code,
+        str(defaults.get("voice_id") or "") or None,
+    )
+    if remap_note:
+        logger.info(remap_note)
+
+    speed = body.speed if body.speed is not None else defaults.get("speaking_rate", 1.0)
+    audio, sample_rate = _synthesize_speech(
+        model,
+        text=text,
+        voice=voice,
+        speed=float(speed),
+        lang_code=lang_code,
+    )
+    return _speech_audio_response(audio, sample_rate, body.response_format)
 
 
 def _verify_kokoro_dependencies() -> None:

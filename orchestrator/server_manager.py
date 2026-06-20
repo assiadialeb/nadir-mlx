@@ -474,33 +474,31 @@ def _build_launch_command(
     return command
 
 
+_MODE_SUPPORT_CHECKS: dict[
+    LaunchMode,
+    tuple[Any, str],
+] = {
+    "MULTIMODAL": (supports_multimodal_mode, "This model does not support multimodal inference."),
+    "EMBEDDING": (supports_embedding_mode, "This model does not support embedding inference."),
+    "RERANKER": (supports_rerank_mode, "This model does not support rerank inference."),
+    "IMAGE": (supports_image_mode, "This model does not support image generation."),
+    "TTS": (supports_tts_mode, "This model does not support TTS inference."),
+    "STT": (supports_stt_mode, "This model does not support STT inference."),
+}
+
+
 def _prepare_model_for_launch(model_path: str, launch_mode: LaunchMode) -> None:
+    check = _MODE_SUPPORT_CHECKS.get(launch_mode)
+    if check is None:
+        prepare_model_for_text_inference(model_path)
+        return
+
+    supports_fn, error_message = check
+    if not supports_fn(model_path):
+        raise ValueError(error_message)
+
     if launch_mode == "MULTIMODAL":
-        if not supports_multimodal_mode(model_path):
-            raise ValueError("This model does not support multimodal inference.")
         prepare_model_for_multimodal_inference(model_path)
-        return
-    if launch_mode == "EMBEDDING":
-        if not supports_embedding_mode(model_path):
-            raise ValueError("This model does not support embedding inference.")
-        return
-    if launch_mode == "RERANKER":
-        if not supports_rerank_mode(model_path):
-            raise ValueError("This model does not support rerank inference.")
-        return
-    if launch_mode == "IMAGE":
-        if not supports_image_mode(model_path):
-            raise ValueError("This model does not support image generation.")
-        return
-    if launch_mode == "TTS":
-        if not supports_tts_mode(model_path):
-            raise ValueError("This model does not support TTS inference.")
-        return
-    if launch_mode == "STT":
-        if not supports_stt_mode(model_path):
-            raise ValueError("This model does not support STT inference.")
-        return
-    prepare_model_for_text_inference(model_path)
 
 
 def _get_launch_env(

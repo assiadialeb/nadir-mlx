@@ -149,6 +149,53 @@ class BenchmarkResult:
 # ---------------------------------------------------------------------------
 # 核心基準測試邏輯
 # ---------------------------------------------------------------------------
+async def _stream_chat_completion(
+    client: httpx.AsyncClient,
+    base_url: str,
+    payload: dict[str, object],
+    t0: float,
+) -> tuple[int, int, float]:
+    prompt_tokens = 0
+    completion_tokens = 0
+    ttft_ms = 0.0
+    async with client.stream(
+        "POST", f"{base_url}/v1/chat/completions",
+        json=payload, timeout=120,
+    ) as resp:
+        resp.raise_for_status()
+        first_chunk = True
+        async for line in resp.aiter_lines():
+            if not line.startswith("data: ") or line == "data: [DONE]":
+                continue
+            if first_chunk:
+                ttft_ms = (time.perf_counter() - t0) * 1000
+                first_chunk = False
+            chunk = json.loads(line[6:])
+            if chunk.get("choices"):
+                delta = chunk["choices"][0]["delta"].get("content", "")
+                if delta:
+                    completion_tokens += 1
+            usage = chunk.get("usage") or {}
+            if usage.get("completion_tokens"):
+                prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+                completion_tokens = usage["completion_tokens"]
+    return prompt_tokens, completion_tokens, ttft_ms
+
+
+async def _blocking_chat_completion(
+    client: httpx.AsyncClient,
+    base_url: str,
+    payload: dict[str, object],
+) -> tuple[int, int]:
+    resp = await client.post(
+        f"{base_url}/v1/chat/completions",
+        json=payload, timeout=120,
+    )
+    resp.raise_for_status()
+    usage = resp.json().get("usage", {})
+    return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+
+
 async def single_request(
     client: httpx.AsyncClient,
     base_url: str,
@@ -175,46 +222,16 @@ async def single_request(
 
     t0 = time.perf_counter()
     ttft_ms = 0.0
-    prompt_tokens = 0
-    completion_tokens = 0
 
     try:
         if stream:
-            # 串流模式：逐行讀取 Server-Sent Events（SSE）
-            async with client.stream(
-                "POST", f"{base_url}/v1/chat/completions",
-                json=payload, timeout=120,
-            ) as resp:
-                resp.raise_for_status()
-                first_chunk = True
-                async for line in resp.aiter_lines():
-                    if line.startswith("data: ") and line != "data: [DONE]":
-                        # 記錄首個 token 到達時間（TTFT）
-                        if first_chunk:
-                            ttft_ms = (time.perf_counter() - t0) * 1000
-                            first_chunk = False
-                        chunk = json.loads(line[6:])
-                        # 從 choices delta 累計 token（備用計數，若 usage 未回傳）
-                        if chunk.get("choices"):
-                            delta = chunk["choices"][0]["delta"].get("content", "")
-                            if delta:
-                                completion_tokens += 1
-                        # 優先使用伺服器回傳的精確 usage 數值（串流結尾附加）
-                        usage = chunk.get("usage") or {}
-                        if usage.get("completion_tokens"):
-                            prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
-                            completion_tokens = usage["completion_tokens"]
-        else:
-            # 非串流模式：等待完整 JSON 回應
-            resp = await client.post(
-                f"{base_url}/v1/chat/completions",
-                json=payload, timeout=120,
+            prompt_tokens, completion_tokens, ttft_ms = await _stream_chat_completion(
+                client, base_url, payload, t0,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            usage = data.get("usage", {})
-            prompt_tokens     = usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("completion_tokens", 0)
+        else:
+            prompt_tokens, completion_tokens = await _blocking_chat_completion(
+                client, base_url, payload,
+            )
 
         total_ms = (time.perf_counter() - t0) * 1000
         return RequestResult(

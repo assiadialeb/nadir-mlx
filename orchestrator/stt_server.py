@@ -79,6 +79,40 @@ def _decode_uploaded_audio(audio_bytes: bytes) -> np.ndarray:
     return np.asarray(waveform, dtype=np.float32)
 
 
+def _transcription_payload_from_result(result: object) -> dict[str, object]:
+    if hasattr(result, "text"):
+        return {
+            "text": result.text,
+            "language": getattr(result, "language", None),
+        }
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "__iter__") and not isinstance(result, str):
+        chunks = list(result)
+        if chunks and hasattr(chunks[-1], "text"):
+            return {"text": chunks[-1].text}
+        return {"text": "".join(str(chunk) for chunk in chunks)}
+    return {"text": str(result)}
+
+
+def _run_transcription(
+    stt_model: object,
+    waveform: np.ndarray,
+    *,
+    effective_language: Optional[str],
+    effective_chunk: float,
+) -> dict[str, object]:
+    generate_kwargs: dict[str, object] = {
+        "chunk_duration": effective_chunk,
+        "stream": False,
+    }
+    if effective_language:
+        generate_kwargs["language"] = effective_language
+
+    result = stt_model.generate(waveform, **generate_kwargs)
+    return _transcription_payload_from_result(result)
+
+
 @app.post("/v1/audio/transcriptions", response_model=None)
 async def create_transcription(
     file: UploadFile = File(...),
@@ -101,30 +135,12 @@ async def create_transcription(
 
     try:
         waveform = _decode_uploaded_audio(audio_bytes)
-
-        generate_kwargs: dict[str, object] = {
-            "chunk_duration": effective_chunk,
-            "stream": False,
-        }
-        if effective_language:
-            generate_kwargs["language"] = effective_language
-
-        result = stt_model.generate(waveform, **generate_kwargs)
-        if hasattr(result, "text"):
-            payload = {
-                "text": result.text,
-                "language": getattr(result, "language", None),
-            }
-        elif isinstance(result, dict):
-            payload = result
-        elif hasattr(result, "__iter__") and not isinstance(result, str):
-            chunks = list(result)
-            if chunks and hasattr(chunks[-1], "text"):
-                payload = {"text": chunks[-1].text}
-            else:
-                payload = {"text": "".join(str(chunk) for chunk in chunks)}
-        else:
-            payload = {"text": str(result)}
+        payload = _run_transcription(
+            stt_model,
+            waveform,
+            effective_language=effective_language,
+            effective_chunk=effective_chunk,
+        )
     except HTTPException:
         raise
     except Exception as exc:
