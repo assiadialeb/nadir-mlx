@@ -2,7 +2,7 @@
 
 **Local-first orchestrator for Apple Silicon MLX inference.**
 
-MLX Server is a Django web application that downloads Hugging Face models, launches OpenAI-compatible inference endpoints on your Mac, and benchmarks them — all without sending data to the cloud. Think of it as a lightweight control plane for your on-device LLM, VLM, embedding, and reranker stack.
+MLX Server is a Django web application that downloads Hugging Face models, launches OpenAI-compatible inference endpoints on your Mac, and benchmarks them — all without sending data to the cloud. Think of it as a lightweight control plane for your on-device LLM, VLM, embedding, reranker, and image-generation stack.
 
 Built for developers who want **privacy**, **predictable ports**, and a **single UI** to manage multiple MLX backends at once.
 
@@ -28,7 +28,7 @@ Everything runs on your machine. Model weights, logs, and SQLite state stay loca
 |------------|-------------|
 | **Model hub browser** | Search Hugging Face, estimate RAM from quantization, download in the background |
 | **Multi-instance** | Run several models in parallel on different ports |
-| **Smart detection** | Auto-detect text, multimodal, embedding, and reranker capabilities from `config.json` |
+| **Smart detection** | Auto-detect text, multimodal, embedding, reranker, and image-generation capabilities |
 | **Reliable lifecycle** | Process-group shutdown + port verification on stop (no ghost listeners) |
 | **Benchmarks** | Presets (quick / standard / full) against running instances or custom endpoints |
 | **Auth** | Django session login to protect the dashboard |
@@ -37,7 +37,7 @@ Everything runs on your machine. Model weights, logs, and SQLite state stay loca
 
 ## Launch modes
 
-MLX Server supports four inference backends, each exposing standard HTTP APIs:
+MLX Server supports five inference backends, each exposing standard HTTP APIs:
 
 | Mode | Backend | API |
 |------|---------|-----|
@@ -45,11 +45,21 @@ MLX Server supports four inference backends, each exposing standard HTTP APIs:
 | **MULTIMODAL** | [mlx-vlm](https://github.com/ml-explore/mlx-vlm) | `POST /v1/chat/completions` (vision) |
 | **EMBEDDING** | [mlx-embeddings](https://github.com/Blaizzy/mlx-embeddings) | `POST /v1/embeddings` |
 | **RERANKER** | local-reranker + custom Jina server | `POST /v1/rerank` |
+| **IMAGE** | [mflux](https://github.com/filipstrand/mflux) | `POST /v1/images/generations` |
 
 Reranker routing is automatic:
 
 - **`jinaai/jina-reranker-v3-mlx`** style models → [local-reranker](https://github.com/olafgeibig/local-reranker)
 - **`JinaForRanking`** mlx-community models (e.g. mxfp4) → built-in `reranker_server.py`
+
+Image routing is automatic from the model folder name:
+
+- **FLUX.1** (`flux`, `schnell`, `dev`, `krea`) → `Flux1` via mflux
+- **Z-Image Turbo** → `ZImageTurbo`
+- **FLUX.2 Klein** → `Flux2Klein`
+- **Qwen-Image** → `QwenImage`
+
+Quantization (`4bit`, `8bit`, …) is inferred from the folder name when present.
 
 ---
 
@@ -74,6 +84,7 @@ flowchart TB
         VLM[mlx-vlm]
         EMB[embedding_server]
         RR[reranker_server]
+        IMG[image_server]
     end
 
     Models[(./models/)]
@@ -83,7 +94,7 @@ flowchart TB
     Dashboard --> SM
     Search --> DL
     DL --> Models
-    SM --> TEXT & VLM & EMB & RR
+    SM --> TEXT & VLM & EMB & RR & IMG
     SM --> Logs
     UI --> DB
     Benchmark --> Instances
@@ -95,7 +106,7 @@ flowchart TB
 
 - **Hardware**: Apple Silicon Mac (M1 / M2 / M3 / M4)
 - **OS**: macOS 14+
-- **Python**: 3.12+ (3.14 supported; see note below)
+- **Python**: 3.12+ (recommended; compatible with mflux and local-reranker)
 - **Disk**: Depends on models (plan for tens of GB per large checkpoint)
 
 ---
@@ -184,6 +195,22 @@ curl http://127.0.0.1:11439/v1/rerank \
   }'
 ```
 
+### Image generation (IMAGE mode)
+
+```bash
+curl http://127.0.0.1:11440/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "A luxury food photograph, studio lighting",
+    "size": "1024x1024",
+    "n": 1,
+    "response_format": "b64_json",
+    "num_inference_steps": 4
+  }'
+```
+
+Response images are returned as base64 PNG in `data[].b64_json`. First launch may take 20–30s while mflux loads weights.
+
 ### LiteLLM proxy
 
 Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
@@ -208,6 +235,8 @@ mlx-server/
 │   ├── model_utils.py        # Capability detection
 │   ├── embedding_server.py   # OpenAI-compatible embeddings
 │   ├── reranker_server.py    # JinaForRanking rerank API
+│   ├── image_server.py       # OpenAI-compatible image generation (mflux)
+│   ├── image_model_loader.py # mflux model routing & inference helpers
 │   ├── mlx_*_launcher.py     # Subprocess entrypoints
 │   ├── benchmark_service.py  # llmbenchmark integration
 │   └── vendor/llmbench.py    # Vendored benchmark CLI

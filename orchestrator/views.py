@@ -221,6 +221,7 @@ def start_instance_view(request):
                 "MULTIMODAL": "Multimodal (mlx_vlm)",
                 "EMBEDDING": "Embeddings (mlx-embeddings)",
                 "RERANKER": "Rerank (local-reranker)",
+                "IMAGE": "Image (mflux)",
             }
             mode_label = mode_labels.get(instance.launch_mode, "Texte (mlx_lm)")
             messages.success(

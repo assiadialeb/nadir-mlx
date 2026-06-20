@@ -29,6 +29,7 @@ class InferenceInstance(models.Model):
         ('MULTIMODAL', 'Multimodal'),
         ('EMBEDDING', 'Embedding'),
         ('RERANKER', 'Reranker'),
+        ('IMAGE', 'Image'),
     ]
 
     model_name = models.CharField(max_length=255)

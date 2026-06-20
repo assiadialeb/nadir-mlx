@@ -1,0 +1,139 @@
+"""OpenAI-compatible image generation server powered by mflux."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import random
+import time
+from pathlib import Path
+from typing import Literal, Optional
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from orchestrator.image_model_loader import (
+    generate_image_bytes,
+    load_image_model,
+    resolve_image_model_spec,
+)
+
+app = FastAPI(title="MLX Image Server")
+_state: dict[str, object] = {}
+
+
+class ImageGenerationRequest(BaseModel):
+    prompt: str
+    model: str = "default_model"
+    n: int = Field(default=1, ge=1, le=4)
+    size: str = "1024x1024"
+    response_format: Literal["url", "b64_json"] = "b64_json"
+    user: Optional[str] = None
+    seed: Optional[int] = None
+    num_inference_steps: Optional[int] = None
+    guidance: Optional[float] = None
+    negative_prompt: Optional[str] = None
+
+
+def _parse_size(size: str) -> tuple[int, int]:
+    try:
+        width_str, height_str = size.lower().split("x", maxsplit=1)
+        width, height = int(width_str), int(height_str)
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="size must be WIDTHxHEIGHT.") from exc
+
+    if width < 256 or height < 256 or width > 2048 or height > 2048:
+        raise HTTPException(status_code=400, detail="size must be between 256 and 2048.")
+    return width, height
+
+
+@app.get("/health")
+def health_check() -> dict[str, str]:
+    return {"status": "ok", "model": str(_state.get("model_id", ""))}
+
+
+@app.get("/v1/models")
+def list_models() -> dict[str, object]:
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": _state.get("model_id", "default_model"),
+                "object": "model",
+                "created": int(_state.get("created", time.time())),
+            }
+        ],
+    }
+
+
+@app.post("/v1/images/generations")
+def create_images(body: ImageGenerationRequest) -> dict[str, object]:
+    model = _state.get("model")
+    spec = _state.get("spec")
+    if model is None or spec is None:
+        raise HTTPException(status_code=503, detail="Model not loaded.")
+
+    if not body.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt must not be empty.")
+    if body.response_format == "url":
+        raise HTTPException(
+            status_code=400,
+            detail="url response_format is not supported; use b64_json.",
+        )
+
+    width, height = _parse_size(body.size)
+    steps = body.num_inference_steps or spec.default_steps  # type: ignore[union-attr]
+    guidance = body.guidance if body.guidance is not None else spec.default_guidance  # type: ignore[union-attr]
+
+    data: list[dict[str, str]] = []
+    try:
+        for _ in range(body.n):
+            seed = body.seed if body.seed is not None else random.randint(0, 2**31 - 1)
+            png_bytes = generate_image_bytes(
+                model,
+                prompt=body.prompt,
+                seed=seed,
+                num_inference_steps=steps,
+                width=width,
+                height=height,
+                guidance=guidance,
+                negative_prompt=body.negative_prompt,
+            )
+            data.append({"b64_json": base64.b64encode(png_bytes).decode("ascii")})
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"created": int(time.time()), "data": data}
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="MLX image generation server")
+    parser.add_argument("--model", required=True, help="Local path to the image model")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=11400)
+    parser.add_argument("--model-id", default=None, help="Model ID exposed via /v1/models")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    model_path = Path(args.model).resolve()
+    if not model_path.is_dir():
+        raise SystemExit(f"Model path not found: {model_path}")
+
+    spec = resolve_image_model_spec(model_path)
+    print(f"Loading image model ({spec.family}/{spec.config_attr}) from {model_path} ...")
+    model = load_image_model(model_path, spec)
+
+    _state["model"] = model
+    _state["spec"] = spec
+    _state["model_id"] = args.model_id or model_path.name
+    _state["created"] = time.time()
+
+    print(f"MLX image server ready on http://{args.host}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

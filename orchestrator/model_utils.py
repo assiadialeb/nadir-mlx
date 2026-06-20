@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional
 
 from django.conf import settings
 
-LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER"]
+LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE"]
 
 EMBEDDING_NAME_PATTERN = re.compile(
     r"(embedding|embed|e5|bge|nomic|gte|retrieval)",
@@ -16,6 +16,11 @@ EMBEDDING_NAME_PATTERN = re.compile(
 
 RERANK_NAME_PATTERN = re.compile(
     r"(rerank|reranker|jina-reranker|bge-reranker)",
+    re.IGNORECASE,
+)
+
+IMAGE_NAME_PATTERN = re.compile(
+    r"(flux|schnell|z-image|z_image|qwen-image|qwen_image|klein|fibo|text-to-image)",
     re.IGNORECASE,
 )
 
@@ -81,9 +86,18 @@ def _read_model_config(model_path: Path) -> dict[str, Any]:
         return {}
 
 
+def _has_diffusion_weights(path: Path) -> bool:
+    """Return True when a diffusion checkpoint contains usable safetensors."""
+    safetensors = list(path.rglob("*.safetensors"))
+    return bool(safetensors) and any(file.stat().st_size > 0 for file in safetensors)
+
+
 def is_model_complete(model_path: os.PathLike[str] | str) -> bool:
     """Check whether a model directory contains all required weight files."""
     path = Path(model_path)
+    if _looks_like_image_model_folder(path.name):
+        return _has_diffusion_weights(path)
+
     config_path = path / "config.json"
     if not config_path.is_file():
         return False
@@ -141,6 +155,23 @@ def _mlx_embeddings_supports_config(config: dict[str, Any]) -> bool:
         return True
     except Exception:
         return False
+
+
+def _looks_like_image_model_folder(folder_name: str) -> bool:
+    return bool(IMAGE_NAME_PATTERN.search(folder_name))
+
+
+def is_image_focused_model(model_path: os.PathLike[str] | str) -> bool:
+    """Return True when the model should be launched as image generation, not chat."""
+    path = Path(model_path)
+    if not _looks_like_image_model_folder(path.name):
+        return False
+    return _has_diffusion_weights(path)
+
+
+def supports_image_mode(model_path: os.PathLike[str] | str) -> bool:
+    """Return True when the model can be served with mflux."""
+    return is_image_focused_model(model_path)
 
 
 def is_rerank_focused_model(model_path: os.PathLike[str] | str) -> bool:
@@ -211,13 +242,17 @@ def get_model_capabilities(folder_name: str) -> dict[str, bool]:
     model_path = get_model_path(folder_name)
     embedding_focused = is_embedding_focused_model(model_path)
     rerank_focused = is_rerank_focused_model(model_path)
+    image_focused = is_image_focused_model(model_path)
     return {
         "supports_text": is_model_complete(model_path)
         and not embedding_focused
-        and not rerank_focused,
-        "supports_multimodal": supports_multimodal_mode(model_path),
+        and not rerank_focused
+        and not image_focused,
+        "supports_multimodal": supports_multimodal_mode(model_path)
+        and not image_focused,
         "supports_embedding": supports_embedding_mode(model_path),
         "supports_rerank": supports_rerank_mode(model_path),
+        "supports_image": supports_image_mode(model_path),
     }
 
 

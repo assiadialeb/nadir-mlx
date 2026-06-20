@@ -16,13 +16,20 @@ from .model_utils import (
     prepare_model_for_multimodal_inference,
     prepare_model_for_text_inference,
     supports_embedding_mode,
+    supports_image_mode,
     supports_multimodal_mode,
     supports_rerank_mode,
 )
 
-LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER"]
+LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE"]
 SERVER_HOST = "0.0.0.0"
-STARTUP_WAIT_SECONDS = {"TEXT": 2, "MULTIMODAL": 8, "EMBEDDING": 5, "RERANKER": 8}
+STARTUP_WAIT_SECONDS = {
+    "TEXT": 2,
+    "MULTIMODAL": 8,
+    "EMBEDDING": 5,
+    "RERANKER": 8,
+    "IMAGE": 25,
+}
 
 _LOG_FAILURE_PATTERNS = (
     re.compile(r"ValueError: Model type .+ not supported"),
@@ -33,6 +40,8 @@ _LOG_FAILURE_PATTERNS = (
     re.compile(r"Model path not found:"),
     re.compile(r"local-reranker is not installed"),
     re.compile(r"No module named 'local_reranker'"),
+    re.compile(r"No module named 'mflux'"),
+    re.compile(r"Unsupported image model folder"),
 )
 
 
@@ -57,8 +66,10 @@ def get_downloaded_models() -> list[str]:
 def parse_launch_mode(raw_mode: Optional[str]) -> LaunchMode:
     """Normalize and validate the requested launch mode."""
     mode = (raw_mode or "TEXT").upper()
-    if mode not in ("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER"):
-        raise ValueError("Launch mode must be TEXT, MULTIMODAL, EMBEDDING, or RERANKER.")
+    if mode not in ("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE"):
+        raise ValueError(
+            "Launch mode must be TEXT, MULTIMODAL, EMBEDDING, RERANKER, or IMAGE."
+        )
     return mode
 
 
@@ -192,6 +203,18 @@ def _build_launch_command(
             "--port",
             str(port),
         ]
+    if launch_mode == "IMAGE":
+        return [
+            python_bin,
+            "-m",
+            "orchestrator.mlx_image_launcher",
+            "--model",
+            model_path,
+            "--host",
+            SERVER_HOST,
+            "--port",
+            str(port),
+        ]
     return [
         python_bin,
         "-m",
@@ -218,6 +241,10 @@ def _prepare_model_for_launch(model_path: str, launch_mode: LaunchMode) -> None:
     if launch_mode == "RERANKER":
         if not supports_rerank_mode(model_path):
             raise ValueError("This model does not support rerank inference.")
+        return
+    if launch_mode == "IMAGE":
+        if not supports_image_mode(model_path):
+            raise ValueError("This model does not support image generation.")
         return
     prepare_model_for_text_inference(model_path)
 

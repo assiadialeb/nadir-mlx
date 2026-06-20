@@ -12,7 +12,8 @@
             <span class="text-emerald-600 font-semibold">mlx_lm</span> (texte),
             <span class="text-purple-600 font-semibold">mlx_vlm</span> (multimodal),
             <span class="text-sky-600 font-semibold">mlx-embeddings</span> (vecteurs) et
-            <span class="text-amber-600 font-semibold">local-reranker</span> (rerank).
+            <span class="text-amber-600 font-semibold">local-reranker</span> (rerank) et
+            <span class="text-rose-600 font-semibold">mflux</span> (image).
         </p>
     </div>
 
@@ -54,6 +55,11 @@
                                     Rerank
                                 </span>
                                 {% endif %}
+                                {% if model.supports_image %}
+                                <span class="text-xxs px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
+                                    Image Gen
+                                </span>
+                                {% endif %}
                             </div>
                         </div>
                         
@@ -79,6 +85,9 @@
                                     {% endif %}
                                     {% if model.supports_rerank %}
                                     <option value="RERANKER">Rerank — local-reranker (/v1/rerank)</option>
+                                    {% endif %}
+                                    {% if model.supports_image %}
+                                    <option value="IMAGE">Image — mflux (/v1/images/generations)</option>
                                     {% endif %}
                                 </select>
                             </div>
@@ -165,6 +174,8 @@
                                         <strong class="text-sky-700 font-semibold">Embeddings</strong>
                                         {% elif instance.launch_mode == 'RERANKER' %}
                                         <strong class="text-amber-700 font-semibold">Rerank</strong>
+                                        {% elif instance.launch_mode == 'IMAGE' %}
+                                        <strong class="text-rose-700 font-semibold">Image</strong>
                                         {% else %}
                                         <strong class="text-emerald-700 font-semibold">Texte</strong>
                                         {% endif %}
@@ -207,7 +218,7 @@
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                 <span>Voir les logs</span>
                             </a>
-                            {% if instance.status == 'RUNNING' and instance.launch_mode != 'EMBEDDING' and instance.launch_mode != 'RERANKER' %}
+                            {% if instance.status == 'RUNNING' and instance.launch_mode != 'EMBEDDING' and instance.launch_mode != 'RERANKER' and instance.launch_mode != 'IMAGE' %}
                             <a href="{% url 'benchmark' %}?instance_id={{ instance.id }}"
                                 class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-lg border border-indigo-200 transition-all flex items-center space-x-1">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
