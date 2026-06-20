@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Sovereign MLX Orchestrator{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Outfit', sans-serif;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-full flex flex-col selection:bg-indigo-200 selection:text-indigo-900">
+
+    {% if user.is_authenticated %}
+    <header class="border-b border-slate-200 bg-white/90 backdrop-blur-md sticky top-0 z-50 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-3">
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center shadow-md shadow-indigo-500/20">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                        </svg>
+                    </div>
+                    <span class="font-bold text-lg bg-gradient-to-r from-slate-900 via-slate-700 to-slate-500 bg-clip-text text-transparent">MLX Orchestrator</span>
+                </div>
+
+                <nav class="flex space-x-1 md:space-x-4">
+                    <a href="{% url 'dashboard' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'dashboard' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                        Instances & Serveurs
+                    </a>
+                    <a href="{% url 'search' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'search' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                        Recherche Hugging Face
+                    </a>
+                    <a href="{% url 'benchmark' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'benchmark' or request.resolver_match.url_name == 'benchmark_detail' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                        Benchmark
+                    </a>
+                </nav>
+
+                <div class="flex items-center space-x-4">
+                    <div class="hidden sm:flex flex-col text-right">
+                        <span class="text-xs text-slate-500">Connecté en tant que</span>
+                        <span class="text-sm font-medium text-slate-700">{{ user.username }}</span>
+                    </div>
+                    <a href="{% url 'logout' %}" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 transition-all">
+                        Déconnexion
+                    </a>
+                </div>
+            </div>
+        </div>
+    </header>
+    {% endif %}
+
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {% if messages %}
+        <div class="mb-6 space-y-3">
+            {% for message in messages %}
+            <div class="p-4 rounded-xl border {% if message.tags == 'success' %}bg-emerald-50 border-emerald-200 text-emerald-800{% else %}bg-rose-50 border-rose-200 text-rose-800{% endif %} flex items-start space-x-3 shadow-sm">
+                <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    {% if message.tags == 'success' %}
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    {% else %}
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    {% endif %}
+                </svg>
+                <div class="text-sm">{{ message }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto px-4">
+            MLX Local Server Orchestration Hub &bull; Apple Silicon Unified Memory Manager &bull; Host Souverain
+        </div>
+    </footer>
+
+</body>
+</html>

@@ -1,0 +1,306 @@
+{% extends 'orchestrator/base.html' %}
+
+{% block title %}Instances & Orchestration - MLX Orchestrator{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- Page Header -->
+    <div>
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900">Instances & Orchestration Local</h1>
+        <p class="text-sm text-slate-600 mt-1">
+            Gérez vos modèles locaux et orchestrez les instances de serveurs d'inférence
+            <span class="text-emerald-600 font-semibold">mlx_lm</span> (texte),
+            <span class="text-purple-600 font-semibold">mlx_vlm</span> (multimodal),
+            <span class="text-sky-600 font-semibold">mlx-embeddings</span> (vecteurs) et
+            <span class="text-amber-600 font-semibold">local-reranker</span> (rerank).
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <!-- LEFT COLUMN: Downloaded Models (span 5) -->
+        <div class="lg:col-span-5 space-y-6">
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div class="absolute -top-12 -left-12 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl"></div>
+                
+                <h2 class="text-lg font-bold text-slate-900 mb-4 flex items-center space-x-2 relative z-10">
+                    <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    <span>Modèles Disponibles (Sur disque)</span>
+                </h2>
+
+                {% if downloaded_models %}
+                <div class="space-y-4 relative z-10 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                    {% for model in downloaded_models %}
+                    <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 hover:border-slate-300 transition-all">
+                        <div class="flex items-start justify-between">
+                            <h3 class="text-sm font-bold text-slate-900 truncate w-10/12" title="{{ model.name }}">
+                                {{ model.name }}
+                            </h3>
+                            <div class="flex flex-col items-end gap-1">
+                                <span class="text-xxs px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    Prêt
+                                </span>
+                                {% if model.supports_multimodal %}
+                                <span class="text-xxs px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                                    Vision / Audio
+                                </span>
+                                {% endif %}
+                                {% if model.supports_embedding %}
+                                <span class="text-xxs px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">
+                                    Embeddings
+                                </span>
+                                {% endif %}
+                                {% if model.supports_rerank %}
+                                <span class="text-xxs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                    Rerank
+                                </span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <!-- Launch Form -->
+                        <form action="{% url 'start_instance' %}" method="POST" class="space-y-3 pt-2 border-t border-slate-100">
+                            {% csrf_token %}
+                            <input type="hidden" name="model_name" value="{{ model.name }}">
+
+                            <div>
+                                <label class="block text-xxs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                                    Mode de lancement
+                                </label>
+                                <select name="launch_mode"
+                                    class="w-full px-3 py-1.5 border border-slate-200 rounded-lg bg-white text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                    {% if model.supports_text %}
+                                    <option value="TEXT">Texte — mlx_lm (chat / completion)</option>
+                                    {% endif %}
+                                    {% if model.supports_multimodal %}
+                                    <option value="MULTIMODAL">Multimodal — mlx_vlm (texte + image + audio)</option>
+                                    {% endif %}
+                                    {% if model.supports_embedding %}
+                                    <option value="EMBEDDING">Embeddings — mlx-embeddings (/v1/embeddings)</option>
+                                    {% endif %}
+                                    {% if model.supports_rerank %}
+                                    <option value="RERANKER">Rerank — local-reranker (/v1/rerank)</option>
+                                    {% endif %}
+                                </select>
+                            </div>
+                            
+                            <div class="flex items-center space-x-2">
+                                <div class="flex-grow">
+                                    <label class="sr-only">Port</label>
+                                    <input type="number" name="port" min="1024" max="65535"
+                                        class="w-full px-3 py-1.5 border border-slate-200 rounded-lg bg-slate-50 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                        placeholder="Port (Optionnel, ex: 11400)">
+                                </div>
+                                <button type="submit"
+                                    class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-all active:scale-95 flex items-center justify-center space-x-1 whitespace-nowrap shadow-md shadow-indigo-600/10">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    <span>Lancer</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="p-8 text-center bg-slate-50 border border-slate-200 rounded-xl relative z-10">
+                    <p class="text-xs text-slate-500">Aucun modèle détecté dans le dossier <code class="text-slate-600">./models</code>.</p>
+                    <a href="{% url 'search' %}" class="mt-3 inline-block text-xs font-semibold text-indigo-600 hover:text-indigo-600">
+                        Aller télécharger des modèles &rarr;
+                    </a>
+                </div>
+                {% endif %}
+
+                {% if downloading_models %}
+                <div class="mt-6 pt-6 border-t border-slate-200 relative z-10">
+                    <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center space-x-2">
+                        <svg class="animate-spin h-3.5 w-3.5 text-amber-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span>Téléchargements en cours</span>
+                    </h3>
+                    <div class="space-y-2">
+                        {% for download in downloading_models %}
+                        <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+                            <div class="truncate w-8/12">
+                                <span class="font-medium text-slate-700 block truncate" title="{{ download.repo_id }}">{{ download.repo_id }}</span>
+                                <span class="text-slate-500 text-xxs">Lancé à {{ download.created_at|date:"H:i:s" }}</span>
+                            </div>
+                            <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                Récupération...
+                            </span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Running Instances (span 7) -->
+        <div class="lg:col-span-7 space-y-6">
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div class="absolute -top-12 -right-12 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl"></div>
+
+                <h2 class="text-lg font-bold text-slate-900 mb-4 flex items-center space-x-2 relative z-10">
+                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    <span>Instances & Orchestration Active</span>
+                </h2>
+
+                {% if instances %}
+                <div class="space-y-4 relative z-10 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
+                    {% for instance in instances %}
+                    <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 hover:border-slate-300 transition-all flex flex-col justify-between">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                            <div>
+                                <h3 class="text-sm font-bold text-slate-900 break-all" title="{{ instance.model_name }}">
+                                    {{ instance.model_name }}
+                                </h3>
+                                <div class="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500">
+                                    <span>Port: <strong class="text-slate-700 font-semibold">{{ instance.port }}</strong></span>
+                                    <span>&bull;</span>
+                                    <span>Mode:
+                                        {% if instance.launch_mode == 'MULTIMODAL' %}
+                                        <strong class="text-purple-700 font-semibold">Multimodal</strong>
+                                        {% elif instance.launch_mode == 'EMBEDDING' %}
+                                        <strong class="text-sky-700 font-semibold">Embeddings</strong>
+                                        {% elif instance.launch_mode == 'RERANKER' %}
+                                        <strong class="text-amber-700 font-semibold">Rerank</strong>
+                                        {% else %}
+                                        <strong class="text-emerald-700 font-semibold">Texte</strong>
+                                        {% endif %}
+                                    </span>
+                                    <span>&bull;</span>
+                                    <span>PID: <strong class="text-slate-700 font-semibold">{{ instance.pid|default:"N/A" }}</strong></span>
+                                    <span>&bull;</span>
+                                    <span>Lancé: {{ instance.created_at|date:"d/m H:i:s" }}</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Status Badges -->
+                            <div>
+                                {% if instance.status == 'RUNNING' %}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
+                                    Running
+                                </span>
+                                {% elif instance.status == 'LOADING' %}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 mr-1.5 animate-pulse"></span>
+                                    Loading
+                                </span>
+                                {% elif instance.status == 'STOPPED' %}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200">
+                                    Stopped
+                                </span>
+                                {% elif instance.status == 'FAILED' %}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                    Failed
+                                </span>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Actions Buttons -->
+                        <div class="flex items-center justify-between pt-3 border-t border-slate-100 gap-3">
+                            <a href="{% url 'view_logs' instance.model_name instance.port %}" target="_blank"
+                                class="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-lg border border-slate-200 transition-all flex items-center space-x-1">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                <span>Voir les logs</span>
+                            </a>
+                            {% if instance.status == 'RUNNING' and instance.launch_mode != 'EMBEDDING' and instance.launch_mode != 'RERANKER' %}
+                            <a href="{% url 'benchmark' %}?instance_id={{ instance.id }}"
+                                class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-lg border border-indigo-200 transition-all flex items-center space-x-1">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                <span>Benchmark</span>
+                            </a>
+                            {% endif %}
+
+                            <div class="flex items-center gap-2">
+                            {% if instance.status == 'RUNNING' or instance.status == 'LOADING' %}
+                            <form action="{% url 'stop_instance' instance.id %}" method="POST" onsubmit="return confirm('Arrêter cette instance de serveur d\'inférence ?');">
+                                {% csrf_token %}
+                                <button type="submit"
+                                    class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-semibold text-xs rounded-lg transition-all flex items-center space-x-1 active:scale-95">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path></svg>
+                                    <span>Arrêter</span>
+                                </button>
+                            </form>
+                            {% elif instance.status == 'STOPPED' or instance.status == 'FAILED' %}
+                            <form action="{% url 'start_instance' %}" method="POST">
+                                {% csrf_token %}
+                                <input type="hidden" name="model_name" value="{{ instance.model_name }}">
+                                <input type="hidden" name="port" value="{{ instance.port }}">
+                                <input type="hidden" name="launch_mode" value="{{ instance.launch_mode }}">
+                                <button type="submit"
+                                    class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-semibold text-xs rounded-lg transition-all flex items-center space-x-1 active:scale-95">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    <span>Relancer</span>
+                                </button>
+                            </form>
+                            {% endif %}
+
+                            <button type="button"
+                                class="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 hover:text-rose-600 font-semibold text-xs rounded-lg transition-all flex items-center space-x-1 active:scale-95"
+                                data-delete-url="{% url 'delete_instance' instance.id %}"
+                                data-model-name="{{ instance.model_name }}"
+                                data-port="{{ instance.port }}"
+                                onclick="openDeleteInstanceModal(this)">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                <span>Supprimer</span>
+                            </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="p-12 text-center bg-slate-50 border border-slate-200 rounded-xl relative z-10 text-slate-500">
+                    <svg class="mx-auto h-10 w-10 text-slate-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.071m7.071 0a5 5 0 010 7.071M12 11a1 1 0 110-2 1 1 0 010 2z"></path></svg>
+                    <p class="text-xs">Aucune instance n'est configurée ou lancée pour le moment.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="delete-instance-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+    <div class="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onclick="closeDeleteInstanceModal()"></div>
+    <div class="relative z-10 flex min-h-full items-center justify-center p-4">
+        <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-2xl">
+            <h3 class="text-lg font-bold text-slate-900">Supprimer l'instance</h3>
+            <p class="mt-3 text-sm text-slate-600">
+                Confirmer la suppression de
+                <strong id="delete-instance-label" class="text-slate-800"></strong>
+                ? Le processus sera arrêté si nécessaire. Les fichiers de logs seront conservés.
+            </p>
+            <form id="delete-instance-form" method="POST" class="mt-6 flex justify-end gap-3">
+                {% csrf_token %}
+                <button type="button" onclick="closeDeleteInstanceModal()"
+                    class="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 rounded-lg border border-slate-300 hover:border-slate-400 transition-all">
+                    Annuler
+                </button>
+                <button type="submit"
+                    class="px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-all">
+                    Supprimer
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function openDeleteInstanceModal(button) {
+    const modal = document.getElementById('delete-instance-modal');
+    const form = document.getElementById('delete-instance-form');
+    const label = document.getElementById('delete-instance-label');
+    form.action = button.dataset.deleteUrl;
+    label.textContent = `${button.dataset.modelName} (port ${button.dataset.port})`;
+    modal.classList.remove('hidden');
+}
+
+function closeDeleteInstanceModal() {
+    document.getElementById('delete-instance-modal').classList.add('hidden');
+}
+</script>
+{% endblock %}

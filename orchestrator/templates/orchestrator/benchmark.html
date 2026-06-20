@@ -1,0 +1,377 @@
+{% extends 'orchestrator/base.html' %}
+
+{% block title %}Benchmark - MLX Orchestrator{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <div>
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900">LLM Benchmark</h1>
+        <p class="text-sm text-slate-600 mt-1">
+            Measure TTFT, latency and throughput against a running MLX instance or any OpenAI-compatible endpoint (Ollama, LM Studio, etc.).
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div class="lg:col-span-5 space-y-6">
+            <!-- Preset configurations -->
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-bold text-slate-900 mb-1">Example configurations</h2>
+                <p class="text-xs text-slate-500 mb-4">Click a preset to fill the form. You can still tweak values before running.</p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button type="button" onclick="applyPreset('quick')"
+                        class="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 transition-all">
+                        <span class="block text-sm font-semibold text-slate-800">Quick smoke test</span>
+                        <span class="block text-xxs text-slate-500 mt-0.5">~1 min · medium · conc 1 · 5 req</span>
+                    </button>
+                    <button type="button" onclick="applyPreset('standard')"
+                        class="text-left px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 transition-all">
+                        <span class="block text-sm font-semibold text-indigo-900">Standard (recommended)</span>
+                        <span class="block text-xxs text-indigo-700/70 mt-0.5">~5 min · medium · conc 1,4 · 20 req</span>
+                    </button>
+                    <button type="button" onclick="applyPreset('full')"
+                        class="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 transition-all">
+                        <span class="block text-sm font-semibold text-slate-800">Full sweep</span>
+                        <span class="block text-xxs text-slate-500 mt-0.5">~20+ min · all prompts · conc 1,2,4,8</span>
+                    </button>
+                    <button type="button" onclick="applyPreset('ollama')"
+                        class="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:border-amber-200 transition-all">
+                        <span class="block text-sm font-semibold text-slate-800">Ollama compare</span>
+                        <span class="block text-xxs text-slate-500 mt-0.5">localhost:11434 · standard settings</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-bold text-slate-900 mb-4">New benchmark run</h2>
+
+                <form action="{% url 'start_benchmark' %}" method="POST" class="space-y-5" id="benchmark-form">
+                    {% csrf_token %}
+
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Target</label>
+                        <div class="space-y-2">
+                            <label class="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
+                                <input type="radio" name="target_type" value="INSTANCE" checked
+                                    class="text-indigo-600 focus:ring-indigo-500" onchange="toggleTargetFields()">
+                                <span>Running MLX instance</span>
+                            </label>
+                            <label class="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
+                                <input type="radio" name="target_type" value="ENDPOINT"
+                                    class="text-indigo-600 focus:ring-indigo-500" onchange="toggleTargetFields()">
+                                <span>Custom endpoint</span>
+                            </label>
+                        </div>
+                        <div class="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600 leading-relaxed">
+                            <strong class="text-slate-700">MLX instance</strong> — benchmarks a server already launched from the dashboard (mlx_lm or mlx_vlm).<br>
+                            <strong class="text-slate-700">Custom endpoint</strong> — compare against Ollama (<code class="text-slate-800">:11434</code>), LM Studio, vLLM, or any OpenAI-compatible API.
+                        </div>
+                    </div>
+
+                    <div id="instance-fields">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Instance</label>
+                        <select name="instance_id"
+                            class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                            <option value="">— Select instance —</option>
+                            {% for instance in running_instances %}
+                            <option value="{{ instance.id }}"
+                                {% if selected_instance_id == instance.id|stringformat:"s" %}selected{% endif %}>
+                                {{ instance.model_name }} (port {{ instance.port }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        {% if not running_instances %}
+                        <p class="text-xs text-amber-700 mt-2">No RUNNING instance. Start a server from the dashboard or use a custom endpoint.</p>
+                        {% endif %}
+                    </div>
+
+                    <div id="endpoint-fields" class="hidden space-y-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Host</label>
+                            <input type="text" name="endpoint_host" value="localhost"
+                                class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                placeholder="localhost">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Port</label>
+                            <input type="number" name="endpoint_port" min="1" max="65535" value="11434"
+                                class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                placeholder="11434 (Ollama)">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Model ID (optional)</label>
+                        <input type="text" name="model_id" id="field-model-id"
+                            class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            placeholder="Auto-resolved for MLX instances">
+                        <div class="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600 leading-relaxed">
+                            Model name sent in API requests. Leave empty to auto-detect via <code class="text-slate-800">/v1/models</code>, or use
+                            <code class="text-slate-800">default_model</code> for mlx_lm text servers.
+                            For Ollama, set the tag explicitly (e.g. <code class="text-slate-800">llama3.2</code>, <code class="text-slate-800">gemma3:4b</code>).
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Prompt categories</label>
+                        <div class="flex flex-wrap gap-3 text-sm" id="category-checkboxes">
+                            <label class="flex items-center space-x-1.5">
+                                <input type="checkbox" name="categories" value="short" class="rounded text-indigo-600 category-checkbox">
+                                <span>Short</span>
+                            </label>
+                            <label class="flex items-center space-x-1.5">
+                                <input type="checkbox" name="categories" value="medium" checked class="rounded text-indigo-600 category-checkbox">
+                                <span>Medium</span>
+                            </label>
+                            <label class="flex items-center space-x-1.5">
+                                <input type="checkbox" name="categories" value="long" class="rounded text-indigo-600 category-checkbox">
+                                <span>Long</span>
+                            </label>
+                        </div>
+                        <div class="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600 leading-relaxed">
+                            Each category uses fixed prompts and a max output size. Every selected category is tested at each concurrency level.
+                            <ul class="mt-2 space-y-1 list-disc list-inside text-slate-500">
+                                <li><strong class="text-slate-600">Short</strong> — ~20 output tokens (latency baseline)</li>
+                                <li><strong class="text-slate-600">Medium</strong> — ~100 tokens (typical chat turn)</li>
+                                <li><strong class="text-slate-600">Long</strong> — ~400 tokens (sustained generation stress)</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Concurrency</label>
+                            <input type="text" name="concurrency" id="field-concurrency" value="1,4"
+                                class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                placeholder="1,4,8">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Requests / scenario</label>
+                            <input type="number" name="num_requests" id="field-num-requests" min="1" max="100" value="5"
+                                class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                        </div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600 leading-relaxed -mt-2">
+                        <strong class="text-slate-700">Concurrency</strong> — max parallel requests per scenario.
+                        <code class="text-slate-800">1</code> = single user;
+                        <code class="text-slate-800">4</code> = four clients at once. Comma-separated values run separate scenarios (e.g. <code class="text-slate-800">1,4,8</code>).<br>
+                        <strong class="text-slate-700 mt-1 inline-block">Requests / scenario</strong> — total requests per (category × concurrency) pair. Use 20–50 for stable p95 estimates; 5 is fine for a quick check.
+                    </div>
+
+                    <button type="submit"
+                        class="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg transition-all active:scale-[0.98] shadow-md shadow-indigo-600/10">
+                        Run benchmark
+                    </button>
+                </form>
+            </div>
+
+            <!-- Metrics glossary -->
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-bold text-slate-900 mb-3">Result metrics</h2>
+                <dl class="space-y-3 text-xs text-slate-600">
+                    <div class="p-3 rounded-lg bg-indigo-50/50 border border-indigo-100">
+                        <dt class="font-semibold text-indigo-900">TTFT p50</dt>
+                        <dd class="mt-1 leading-relaxed">Time To First Token — delay until the first streamed token arrives. Lower is better for interactive UX.</dd>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-50 border border-slate-100">
+                        <dt class="font-semibold text-slate-800">Latency p50 / p95</dt>
+                        <dd class="mt-1 leading-relaxed">End-to-end time until the full response is received. p95 shows tail latency under load.</dd>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-50 border border-slate-100">
+                        <dt class="font-semibold text-slate-800">Tok/s (per request)</dt>
+                        <dd class="mt-1 leading-relaxed">Output tokens per second for a single request — useful to compare decoding speed in isolation.</dd>
+                    </div>
+                    <div class="p-3 rounded-lg bg-emerald-50/50 border border-emerald-100">
+                        <dt class="font-semibold text-emerald-900">Aggregate tok/s</dt>
+                        <dd class="mt-1 leading-relaxed">Total output tokens divided by wall time — best metric for server throughput under concurrency.</dd>
+                    </div>
+                </dl>
+            </div>
+        </div>
+
+        <div class="lg:col-span-7 space-y-6">
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-bold text-slate-900 mb-4">Recent runs</h2>
+
+                {% if runs %}
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
+                            <tr>
+                                <th class="py-2 pr-3">#</th>
+                                <th class="py-2 pr-3">Target</th>
+                                <th class="py-2 pr-3">Status</th>
+                                <th class="py-2 pr-3">Started</th>
+                                <th class="py-2">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            {% for run in runs %}
+                            <tr class="hover:bg-slate-50">
+                                <td class="py-3 pr-3 font-mono text-slate-700">{{ run.id }}</td>
+                                <td class="py-3 pr-3">
+                                    <div class="font-medium text-slate-900 truncate max-w-[200px]" title="{{ run.endpoint_url }}">
+                                        {{ run.endpoint_url }}
+                                    </div>
+                                    {% if run.instance %}
+                                    <div class="text-xxs text-slate-500">{{ run.instance.model_name }}</div>
+                                    {% endif %}
+                                </td>
+                                <td class="py-3 pr-3">
+                                    {% if run.status == 'COMPLETED' %}
+                                    <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Completed</span>
+                                    {% elif run.status == 'RUNNING' %}
+                                    <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-amber-50 text-amber-700 border border-amber-200">Running</span>
+                                    {% elif run.status == 'FAILED' %}
+                                    <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-rose-50 text-rose-700 border border-rose-200">Failed</span>
+                                    {% else %}
+                                    <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-slate-50 text-slate-600 border border-slate-200">{{ run.status }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="py-3 pr-3 text-xs text-slate-500">{{ run.created_at|date:"d/m H:i" }}</td>
+                                <td class="py-3">
+                                    <a href="{% url 'benchmark_detail' run.id %}"
+                                        class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">View</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-sm text-slate-500 py-8 text-center">No benchmark runs yet.</p>
+                {% endif %}
+            </div>
+
+            <!-- How scenarios combine -->
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-bold text-slate-900 mb-3">How scenarios combine</h2>
+                <p class="text-xs text-slate-600 leading-relaxed mb-4">
+                    Total runtime grows with every category × concurrency pair. Example with
+                    <strong>medium + long</strong> and <strong>1,4</strong> concurrency → 4 scenarios run sequentially.
+                </p>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-xs text-left border border-slate-200 rounded-lg overflow-hidden">
+                        <thead class="bg-slate-50 text-slate-500 uppercase">
+                            <tr>
+                                <th class="py-2 px-3">Preset</th>
+                                <th class="py-2 px-3">Categories</th>
+                                <th class="py-2 px-3">Concurrency</th>
+                                <th class="py-2 px-3">Req.</th>
+                                <th class="py-2 px-3">Scenarios</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 text-slate-700">
+                            <tr>
+                                <td class="py-2 px-3 font-medium">Quick smoke</td>
+                                <td class="py-2 px-3">medium</td>
+                                <td class="py-2 px-3">1</td>
+                                <td class="py-2 px-3">5</td>
+                                <td class="py-2 px-3">1</td>
+                            </tr>
+                            <tr class="bg-indigo-50/30">
+                                <td class="py-2 px-3 font-medium text-indigo-900">Standard</td>
+                                <td class="py-2 px-3">medium</td>
+                                <td class="py-2 px-3">1, 4</td>
+                                <td class="py-2 px-3">20</td>
+                                <td class="py-2 px-3">2</td>
+                            </tr>
+                            <tr>
+                                <td class="py-2 px-3 font-medium">Full sweep</td>
+                                <td class="py-2 px-3">short, medium, long</td>
+                                <td class="py-2 px-3">1, 2, 4, 8</td>
+                                <td class="py-2 px-3">20</td>
+                                <td class="py-2 px-3">12</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-xxs text-slate-500 mt-3">
+                    Tip: run the same preset on MLX and Ollama (custom endpoint) to compare TTFT and aggregate tok/s side by side.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="preset-toast" class="fixed bottom-6 right-6 hidden px-4 py-2 rounded-lg bg-slate-900 text-white text-sm shadow-lg z-50">
+    Preset applied
+</div>
+
+<script>
+const PRESETS = {
+    quick: {
+        target: 'INSTANCE',
+        categories: ['medium'],
+        concurrency: '1',
+        numRequests: 5,
+        modelId: '',
+        host: 'localhost',
+        port: '11434',
+    },
+    standard: {
+        target: 'INSTANCE',
+        categories: ['medium'],
+        concurrency: '1,4',
+        numRequests: 20,
+        modelId: '',
+        host: 'localhost',
+        port: '11434',
+    },
+    full: {
+        target: 'INSTANCE',
+        categories: ['short', 'medium', 'long'],
+        concurrency: '1,2,4,8',
+        numRequests: 20,
+        modelId: '',
+        host: 'localhost',
+        port: '11434',
+    },
+    ollama: {
+        target: 'ENDPOINT',
+        categories: ['medium'],
+        concurrency: '1,4',
+        numRequests: 20,
+        modelId: '',
+        host: 'localhost',
+        port: '11434',
+    },
+};
+
+function toggleTargetFields() {
+    const isInstance = document.querySelector('input[name="target_type"][value="INSTANCE"]').checked;
+    document.getElementById('instance-fields').classList.toggle('hidden', !isInstance);
+    document.getElementById('endpoint-fields').classList.toggle('hidden', isInstance);
+}
+
+function setCategories(values) {
+    document.querySelectorAll('.category-checkbox').forEach(box => {
+        box.checked = values.includes(box.value);
+    });
+}
+
+function showPresetToast() {
+    const toast = document.getElementById('preset-toast');
+    toast.classList.remove('hidden');
+    setTimeout(() => toast.classList.add('hidden'), 2000);
+}
+
+function applyPreset(name) {
+    const preset = PRESETS[name];
+    if (!preset) return;
+
+    document.querySelector(`input[name="target_type"][value="${preset.target}"]`).checked = true;
+    toggleTargetFields();
+
+    document.querySelector('[name="endpoint_host"]').value = preset.host;
+    document.querySelector('[name="endpoint_port"]').value = preset.port;
+    document.getElementById('field-concurrency').value = preset.concurrency;
+    document.getElementById('field-num-requests').value = preset.numRequests;
+    document.getElementById('field-model-id').value = preset.modelId;
+
+    setCategories(preset.categories);
+    showPresetToast();
+}
+
+document.addEventListener('DOMContentLoaded', toggleTargetFields);
+</script>
+{% endblock %}

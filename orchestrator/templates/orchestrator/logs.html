@@ -1,0 +1,96 @@
+{% extends 'orchestrator/base.html' %}
+
+{% block title %}Logs - {{ model_name }} ({{ port }}){% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900 flex items-center space-x-2">
+                <span class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Console Logs : {{ model_name }}</span>
+            </h1>
+            <p class="text-xs text-slate-600 mt-1 font-mono">
+                Port d'écoute: <strong class="text-slate-700">{{ port }}</strong> &bull; Fichier: logs/{{ model_name }}_{{ port }}.log
+            </p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <span class="inline-flex items-center px-2 py-1 rounded text-xxs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200" id="status-tag">
+                Auto-refresh : Active (2s)
+            </span>
+            <button onclick="fetchLogs()" 
+                class="p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 hover:text-indigo-700 transition-all shadow-sm active:scale-95" 
+                title="Rafraîchir manuellement">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.2M4 9h5v5"></path></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Terminal screen -->
+    <div class="relative">
+        <div class="absolute top-2 right-4 flex items-center space-x-1.5 z-10 select-none opacity-40">
+            <span class="w-3 h-3 rounded-full bg-rose-500"></span>
+            <span class="w-3 h-3 rounded-full bg-amber-500"></span>
+            <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
+        </div>
+        <pre id="log-terminal" 
+            class="bg-slate-900 text-slate-300 p-6 pt-10 font-mono text-xs leading-relaxed rounded-xl border border-slate-200 shadow-2xl h-[70vh] overflow-y-auto custom-scrollbar whitespace-pre-wrap select-text selection:bg-slate-800 selection:text-white"
+        >{{ logs }}</pre>
+    </div>
+</div>
+
+<script>
+    const terminal = document.getElementById('log-terminal');
+    
+    // Auto-scroll to bottom of the terminal on load
+    function scrollToBottom() {
+        terminal.scrollTop = terminal.scrollHeight;
+    }
+    
+    // Initial scroll
+    scrollToBottom();
+
+    // Fetch logs via AJAX
+    function fetchLogs() {
+        const statusTag = document.getElementById('status-tag');
+        statusTag.classList.remove('text-indigo-700', 'border-indigo-200', 'bg-indigo-50');
+        statusTag.classList.add('text-amber-700', 'border-amber-200', 'bg-amber-50');
+        statusTag.innerText = "Mise à jour...";
+        
+        fetch(window.location.pathname, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error("HTTP error " + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            const isScrolledToBottom = terminal.scrollHeight - terminal.clientHeight <= terminal.scrollTop + 50;
+            terminal.textContent = data.logs;
+            
+            if (isScrolledToBottom) {
+                scrollToBottom();
+            }
+            
+            // Reset status tag
+            statusTag.classList.remove('text-amber-700', 'border-amber-200', 'bg-amber-50');
+            statusTag.classList.add('text-indigo-700', 'border-indigo-200', 'bg-indigo-50');
+            statusTag.innerText = "Auto-refresh : Active (2s)";
+        })
+        .catch(err => {
+            console.error("Failed to fetch logs:", err);
+            statusTag.classList.remove('text-amber-700', 'border-amber-200', 'bg-amber-50');
+            statusTag.classList.add('text-rose-700', 'border-rose-200', 'bg-rose-50');
+            statusTag.innerText = "Erreur de connexion";
+        });
+    }
+
+    // Poll every 2 seconds
+    setInterval(fetchLogs, 2000);
+</script>
+{% endblock %}
