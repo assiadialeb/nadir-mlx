@@ -7,11 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from orchestrator.image_model_profiles import ImageModelProfile, resolve_image_profile
+from orchestrator.image_progress import register_progress_logger
 
 
 def resolve_image_model_spec(model_path: Path) -> ImageModelProfile:
     """Backward-compatible alias for profile resolution."""
     return resolve_image_profile(model_path)
+
+
+def _register_model_callbacks(model: Any) -> Any:
+    register_progress_logger(model)
+    return model
 
 
 def load_image_model(model_path: Path, profile: ImageModelProfile) -> Any:
@@ -30,10 +36,12 @@ def load_image_model(model_path: Path, profile: ImageModelProfile) -> Any:
             model_path.name,
             base_model=profile.flux_base_model,
         )
-        return Flux1(
-            quantize=profile.quantize,
-            model_path=path_str,
-            model_config=model_config,
+        return _register_model_callbacks(
+            Flux1(
+                quantize=profile.quantize,
+                model_path=path_str,
+                model_config=model_config,
+            )
         )
 
     model_config = getattr(ModelConfig, profile.config_attr)()
@@ -41,34 +49,42 @@ def load_image_model(model_path: Path, profile: ImageModelProfile) -> Any:
     if profile.family == "z_image":
         from mflux.models.z_image import ZImageTurbo
 
-        return ZImageTurbo(
-            quantize=profile.quantize,
-            model_path=path_str,
-            model_config=model_config,
+        return _register_model_callbacks(
+            ZImageTurbo(
+                quantize=profile.quantize,
+                model_path=path_str,
+                model_config=model_config,
+            )
         )
     if profile.family == "flux2":
         from mflux.models.flux2.variants import Flux2Klein
 
-        return Flux2Klein(
-            quantize=profile.quantize,
-            model_path=path_str,
-            model_config=model_config,
+        return _register_model_callbacks(
+            Flux2Klein(
+                quantize=profile.quantize,
+                model_path=path_str,
+                model_config=model_config,
+            )
         )
     if profile.family == "qwen_image":
         from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
 
-        return QwenImage(
-            quantize=profile.quantize,
-            model_path=path_str,
-            model_config=model_config,
+        return _register_model_callbacks(
+            QwenImage(
+                quantize=profile.quantize,
+                model_path=path_str,
+                model_config=model_config,
+            )
         )
     if profile.family == "fibo":
         from mflux.models.fibo.variants.txt2img.fibo import FIBO
 
-        return FIBO(
-            quantize=profile.quantize,
-            model_path=path_str,
-            model_config=model_config,
+        return _register_model_callbacks(
+            FIBO(
+                quantize=profile.quantize,
+                model_path=path_str,
+                model_config=model_config,
+            )
         )
 
     raise ValueError(f"Unknown image model family: {profile.family}")
@@ -101,6 +117,13 @@ def generate_image_bytes(
         kwargs["negative_prompt"] = negative_prompt
 
     generated = model.generate_image(**kwargs)
+    generation_time = getattr(generated, "generation_time", None)
+    if generation_time is not None:
+        print(
+            f"[image] inference finished in {generation_time:.1f}s "
+            f"({num_inference_steps} steps)",
+            flush=True,
+        )
     buffer = io.BytesIO()
     generated.image.save(buffer, format="PNG")
     return buffer.getvalue()

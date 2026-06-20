@@ -370,6 +370,7 @@ def _prepare_model_for_launch(model_path: str, launch_mode: LaunchMode) -> None:
 def _get_launch_env(launch_mode: LaunchMode) -> dict[str, str]:
     env = os.environ.copy()
     if launch_mode == "IMAGE":
+        # tqdm uses carriage returns; use ImageProgressLogger for log files instead.
         env["TQDM_DISABLE"] = "1"
     return env
 
