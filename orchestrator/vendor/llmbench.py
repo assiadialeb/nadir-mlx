@@ -380,6 +380,11 @@ def parse_args():
     return parser.parse_args()
 
 
+def _write_benchmark_output(path: str, meta: dict[str, object]) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(meta, handle, indent=2)
+
+
 async def main():
     args = parse_args()
     base_url = f"http://{args.host}:{args.port}"
@@ -458,8 +463,7 @@ async def main():
             },
             "results": all_raw,
         }
-        with open(args.output, "w") as f:
-            json.dump(meta, f, indent=2)
+        await asyncio.to_thread(_write_benchmark_output, args.output, meta)
         print(f"\n  結果已儲存 → {args.output}")
 
     print()

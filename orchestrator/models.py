@@ -10,7 +10,7 @@ class ModelDownload(models.Model):
     repo_id = models.CharField(max_length=255, unique=True)
     local_path = models.CharField(max_length=512)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DOWNLOADING')
-    error_message = models.TextField(null=True, blank=True)
+    error_message = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -76,7 +76,7 @@ class BenchmarkRun(models.Model):
     params = models.JSONField(default=dict)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
     results = models.JSONField(null=True, blank=True)
-    error_message = models.TextField(null=True, blank=True)
+    error_message = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 

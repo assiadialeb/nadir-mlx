@@ -127,7 +127,7 @@ function renderSummaries(summaries) {
     const body = document.getElementById('results-body');
     body.innerHTML = '';
     summaries.forEach(summary => {
-        const ttft = summary.ttft_p50_ms !== 'N/A' ? `${summary.ttft_p50_ms} ms` : 'N/A';
+        const ttft = summary.ttft_p50_ms === 'N/A' ? 'N/A' : `${summary.ttft_p50_ms} ms`;
         const row = document.createElement('tr');
         row.innerHTML = `
             <td class="py-3 pr-3 font-mono text-xs">${summary.scenario || ''}</td>

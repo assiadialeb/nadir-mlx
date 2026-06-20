@@ -366,11 +366,10 @@ def sync_model_download_status() -> None:
     from .models import ModelDownload
 
     for record in ModelDownload.objects.all():
-        if is_model_complete(record.local_path):
-            if record.status != "COMPLETED":
-                record.status = "COMPLETED"
-                record.error_message = None
-                record.save(update_fields=["status", "error_message"])
+        if is_model_complete(record.local_path) and record.status != "COMPLETED":
+            record.status = "COMPLETED"
+            record.error_message = ""
+            record.save(update_fields=["status", "error_message"])
 
 
 def reconcile_stale_downloads() -> None:
@@ -380,7 +379,7 @@ def reconcile_stale_downloads() -> None:
     for record in ModelDownload.objects.filter(status="DOWNLOADING"):
         if is_model_complete(record.local_path):
             record.status = "COMPLETED"
-            record.error_message = None
+            record.error_message = ""
             record.save(update_fields=["status", "error_message"])
             continue
 

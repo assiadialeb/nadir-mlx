@@ -19,23 +19,23 @@ class ImageProgressLogger:
 
     def call_before_loop(
         self,
-        seed: int,
-        prompt: str,
-        latents: mx.array,
-        config: Config,
-        canny_image: PIL.Image.Image | None = None,
-        depth_image: PIL.Image.Image | None = None,
+        _seed: int,
+        _prompt: str,
+        _latents: mx.array,
+        _config: Config,
+        _canny_image: PIL.Image.Image | None = None,
+        _depth_image: PIL.Image.Image | None = None,
     ) -> None:
         self._started_at = time.monotonic()
 
     def call_in_loop(
         self,
         t: int,
-        seed: int,
-        prompt: str,
-        latents: mx.array,
+        _seed: int,
+        _prompt: str,
+        _latents: mx.array,
         config: Config,
-        time_steps: Any = None,
+        _time_steps: Any = None,
     ) -> None:
         if self._started_at is None:
             self._started_at = time.monotonic()

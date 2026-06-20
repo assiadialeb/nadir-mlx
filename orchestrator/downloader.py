@@ -25,13 +25,13 @@ def _download_thread(repo_id: str, download_id: int) -> None:
             raise RuntimeError("Download finished but model files are incomplete.")
 
         record.status = "COMPLETED"
-        record.error_message = None
+        record.error_message = ""
         record.save(update_fields=["status", "error_message"])
     except Exception as exc:
         record.refresh_from_db()
         if is_model_complete(local_dir):
             record.status = "COMPLETED"
-            record.error_message = None
+            record.error_message = ""
         else:
             record.status = "FAILED"
             record.error_message = str(exc)
@@ -48,7 +48,7 @@ def start_model_download(repo_id: str) -> ModelDownload:
             defaults={
                 "local_path": local_dir,
                 "status": "COMPLETED",
-                "error_message": None,
+                "error_message": "",
             },
         )
         return record
@@ -58,7 +58,7 @@ def start_model_download(repo_id: str) -> ModelDownload:
         if record.status == "DOWNLOADING":
             return record
         record.status = "DOWNLOADING"
-        record.error_message = None
+        record.error_message = ""
         record.local_path = local_dir
         record.save(update_fields=["status", "error_message", "local_path"])
     else:

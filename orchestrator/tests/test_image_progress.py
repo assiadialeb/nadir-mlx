@@ -15,12 +15,12 @@ class ImageProgressLoggerTests(TestCase):
 
         with patch("builtins.print") as mock_print:
             logger.call_in_loop(
-                t=4,
-                seed=1,
-                prompt="test",
-                latents=MagicMock(),
-                config=config,
-                time_steps=None,
+                4,
+                1,
+                "test",
+                MagicMock(),
+                config,
+                None,
             )
 
         mock_print.assert_called_once()

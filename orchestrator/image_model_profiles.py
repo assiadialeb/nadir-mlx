@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from mflux.cli.defaults import defaults as mflux_defaults
 
@@ -387,7 +387,7 @@ def _apply_hints(profile: ImageModelProfile, hints: dict[str, Any]) -> ImageMode
 
     if updates:
         updates["source"] = hints.get("source", "merged")
-        return replace(profile, **updates)
+        return cast(ImageModelProfile, replace(profile, **updates))
     return profile
 
 

@@ -90,7 +90,7 @@ def _benchmark_thread(run_id: int) -> None:
             run.results = json.load(handle)
 
         run.status = "COMPLETED"
-        run.error_message = None
+        run.error_message = ""
         run.completed_at = timezone.now()
         run.save(update_fields=["results", "status", "error_message", "completed_at"])
     except subprocess.TimeoutExpired:

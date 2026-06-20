@@ -58,7 +58,7 @@
         statusTag.classList.add('text-amber-700', 'border-amber-200', 'bg-amber-50');
         statusTag.innerText = "Mise à jour...";
         
-        fetch(window.location.pathname, {
+        fetch(globalThis.location.pathname, {
             headers: {
                 'X-Requested-With': 'XMLHttpRequest'
             }

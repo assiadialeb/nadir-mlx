@@ -23,12 +23,12 @@ class AudioModeTests(TestCase):
     def test_build_default_server_config_tts(self) -> None:
         config = build_default_server_config("TTS")
         assert config["voice_id"] == "ff_siwis"
-        assert config["speaking_rate"] == 1.0
+        self.assertAlmostEqual(config["speaking_rate"], 1.0)
         assert config["lang_code"] == "f"
 
     def test_build_default_server_config_stt(self) -> None:
         config = build_default_server_config("STT")
-        assert config["chunk_duration"] == 30.0
+        self.assertAlmostEqual(config["chunk_duration"], 30.0)
 
     def test_validate_tts_config(self) -> None:
         config = validate_and_normalize_server_config(
@@ -37,7 +37,7 @@ class AudioModeTests(TestCase):
             "Kokoro-82M-bf16",
         )
         assert config["voice_id"] == "am_adam"
-        assert config["speaking_rate"] == 1.2
+        self.assertAlmostEqual(config["speaking_rate"], 1.2)
         assert config["model_id"] == "Kokoro-82M-bf16"
 
     def test_validate_stt_config_with_optional_language(self) -> None:
