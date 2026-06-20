@@ -35,7 +35,7 @@ class ImageModeTests(TestCase):
 
         hints = parse_readme_inference_hints(model_dir)
         self.assertEqual(hints["flux_base_model"], "dev")
-        self.assertEqual(hints["default_steps"], 50)
+        self.assertEqual(hints["quality_steps"], 50)
         self.assertEqual(hints["default_guidance"], 4.0)
         self.assertEqual(hints["quantize"], 4)
 
@@ -53,9 +53,14 @@ class ImageModeTests(TestCase):
         self.assertEqual(profile.family, "flux1")
         self.assertEqual(profile.flux_base_model, "dev")
         self.assertEqual(profile.quantize, 4)
-        self.assertEqual(profile.default_steps, 50)
+        self.assertEqual(profile.default_steps, 20)
+        self.assertEqual(profile.fast_steps, 12)
+        self.assertEqual(profile.quality_steps, 50)
         self.assertEqual(profile.default_guidance, 4.0)
         self.assertEqual(profile.source, "readme")
+        self.assertEqual(profile.resolve_steps("balanced"), 20)
+        self.assertEqual(profile.resolve_steps("quality"), 50)
+        self.assertEqual(profile.resolve_steps("fast"), 12)
 
     def test_resolve_image_model_spec_flux_schnell(self) -> None:
         profile = resolve_image_model_spec(Path("FLUX.1-schnell-4bit"))

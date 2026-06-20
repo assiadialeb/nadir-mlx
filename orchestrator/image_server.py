@@ -31,6 +31,7 @@ class ImageGenerationRequest(BaseModel):
     n: int = Field(default=1, ge=1, le=4)
     size: Optional[str] = None
     response_format: Literal["url", "b64_json"] = "b64_json"
+    quality: Literal["fast", "balanced", "quality"] = "balanced"
     user: Optional[str] = None
     seed: Optional[int] = None
     num_inference_steps: Optional[int] = None
@@ -108,7 +109,7 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
         )
 
     width, height = _parse_size(body.size, profile)
-    steps = body.num_inference_steps or profile.default_steps
+    steps = profile.resolve_steps(body.quality, body.num_inference_steps)
     guidance = profile.default_guidance if body.guidance is None else body.guidance
 
     data: list[dict[str, str]] = []

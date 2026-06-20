@@ -25,6 +25,8 @@ class ImageModelProfile:
     flux_base_model: str | None
     quantize: int | None
     default_steps: int
+    fast_steps: int
+    quality_steps: int
     default_guidance: float
     default_width: int
     default_height: int
@@ -36,6 +38,19 @@ class ImageModelProfile:
     def default_size(self) -> str:
         return f"{self.default_width}x{self.default_height}"
 
+    def resolve_steps(
+        self,
+        quality: str = "balanced",
+        override: int | None = None,
+    ) -> int:
+        if override is not None:
+            return override
+        if quality == "fast":
+            return self.fast_steps
+        if quality == "quality":
+            return self.quality_steps
+        return self.default_steps
+
     def as_api_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
@@ -44,6 +59,11 @@ class ImageModelProfile:
             "flux_base_model": self.flux_base_model,
             "quantize": self.quantize,
             "num_inference_steps": self.default_steps,
+            "quality_presets": {
+                "fast": self.fast_steps,
+                "balanced": self.default_steps,
+                "quality": self.quality_steps,
+            },
             "guidance": self.default_guidance if self.use_guidance else 0.0,
             "size": self.default_size,
             "scheduler": self.scheduler,
@@ -60,6 +80,8 @@ class _ProfileTemplate:
     default_steps: int
     default_guidance: float
     use_guidance: bool
+    fast_steps: int | None = None
+    quality_steps: int | None = None
     scheduler: str = "linear"
     default_width: int = 1024
     default_height: int = 1024
@@ -73,7 +95,9 @@ PROFILE_REGISTRY: tuple[_ProfileTemplate, ...] = (
         family="flux1",
         config_attr="dev",
         flux_base_model="dev",
-        default_steps=50,
+        default_steps=20,
+        fast_steps=12,
+        quality_steps=50,
         default_guidance=4.0,
         use_guidance=True,
         name_patterns=("lite", "flux"),
@@ -282,7 +306,7 @@ def parse_readme_inference_hints(model_path: Path) -> dict[str, Any]:
 
     steps = _parse_flag_int(command, "--steps")
     if steps is not None:
-        hints["default_steps"] = steps
+        hints["quality_steps"] = steps
 
     guidance = _parse_flag_float(command, "--guidance")
     if guidance is not None:
@@ -351,6 +375,8 @@ def _apply_hints(profile: ImageModelProfile, hints: dict[str, Any]) -> ImageMode
         "flux_base_model",
         "quantize",
         "default_steps",
+        "fast_steps",
+        "quality_steps",
         "default_guidance",
         "default_width",
         "default_height",
@@ -370,13 +396,21 @@ def _template_to_profile(template: _ProfileTemplate, folder_name: str) -> ImageM
     if template.profile_id == "flux_lite" and quantize is None:
         quantize = 4
 
+    balanced_steps = template.default_steps
+    fast_steps = template.fast_steps if template.fast_steps is not None else max(4, balanced_steps // 2)
+    quality_steps = (
+        template.quality_steps if template.quality_steps is not None else balanced_steps
+    )
+
     return ImageModelProfile(
         profile_id=template.profile_id,
         family=template.family,
         config_attr=template.config_attr,
         flux_base_model=template.flux_base_model,
         quantize=quantize,
-        default_steps=template.default_steps,
+        default_steps=balanced_steps,
+        fast_steps=fast_steps,
+        quality_steps=quality_steps,
         default_guidance=template.default_guidance,
         default_width=template.default_width,
         default_height=template.default_height,
