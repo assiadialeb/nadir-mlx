@@ -1,0 +1,308 @@
+# MLX Server
+
+**Local-first orchestrator for Apple Silicon MLX inference.**
+
+MLX Server is a Django web application that downloads Hugging Face models, launches OpenAI-compatible inference endpoints on your Mac, and benchmarks them — all without sending data to the cloud. Think of it as a lightweight control plane for your on-device LLM, VLM, embedding, and reranker stack.
+
+Built for developers who want **privacy**, **predictable ports**, and a **single UI** to manage multiple MLX backends at once.
+
+---
+
+## Why MLX Server?
+
+Running MLX models locally usually means juggling CLI commands, virtual environments, and ad-hoc scripts. MLX Server centralizes that workflow:
+
+- **Search & download** MLX models from Hugging Face into `./models/`
+- **Launch** one or more inference servers on dedicated ports (`11400–11500`)
+- **Monitor** live logs and instance status from the browser
+- **Benchmark** throughput and latency with integrated [llmbenchmark](https://github.com/tcs211/llmbenchmark)
+- **Integrate** with [LiteLLM](https://github.com/BerriAI/litellm), Open WebUI, or any OpenAI-compatible client
+
+Everything runs on your machine. Model weights, logs, and SQLite state stay local.
+
+---
+
+## Features
+
+| Capability | Description |
+|------------|-------------|
+| **Model hub browser** | Search Hugging Face, estimate RAM from quantization, download in the background |
+| **Multi-instance** | Run several models in parallel on different ports |
+| **Smart detection** | Auto-detect text, multimodal, embedding, and reranker capabilities from `config.json` |
+| **Reliable lifecycle** | Process-group shutdown + port verification on stop (no ghost listeners) |
+| **Benchmarks** | Presets (quick / standard / full) against running instances or custom endpoints |
+| **Auth** | Django session login to protect the dashboard |
+
+---
+
+## Launch modes
+
+MLX Server supports four inference backends, each exposing standard HTTP APIs:
+
+| Mode | Backend | API |
+|------|---------|-----|
+| **TEXT** | [mlx-lm](https://github.com/ml-explore/mlx-lm) | `POST /v1/chat/completions` |
+| **MULTIMODAL** | [mlx-vlm](https://github.com/ml-explore/mlx-vlm) | `POST /v1/chat/completions` (vision) |
+| **EMBEDDING** | [mlx-embeddings](https://github.com/Blaizzy/mlx-embeddings) | `POST /v1/embeddings` |
+| **RERANKER** | local-reranker + custom Jina server | `POST /v1/rerank` |
+
+Reranker routing is automatic:
+
+- **`jinaai/jina-reranker-v3-mlx`** style models → [local-reranker](https://github.com/olafgeibig/local-reranker)
+- **`JinaForRanking`** mlx-community models (e.g. mxfp4) → built-in `reranker_server.py`
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph UI["Django UI :8000"]
+        Dashboard[Dashboard]
+        Search[HF Search]
+        Benchmark[Benchmarks]
+    end
+
+    subgraph Orchestrator["orchestrator/"]
+        SM[server_manager]
+        DL[downloader]
+        MU[model_utils]
+    end
+
+    subgraph Instances["Inference instances :11400-11500"]
+        TEXT[mlx-lm]
+        VLM[mlx-vlm]
+        EMB[embedding_server]
+        RR[reranker_server]
+    end
+
+    Models[(./models/)]
+    Logs[(./logs/)]
+    DB[(db.sqlite3)]
+
+    Dashboard --> SM
+    Search --> DL
+    DL --> Models
+    SM --> TEXT & VLM & EMB & RR
+    SM --> Logs
+    UI --> DB
+    Benchmark --> Instances
+```
+
+---
+
+## Requirements
+
+- **Hardware**: Apple Silicon Mac (M1 / M2 / M3 / M4)
+- **OS**: macOS 14+
+- **Python**: 3.12+ (3.14 supported; see note below)
+- **Disk**: Depends on models (plan for tens of GB per large checkpoint)
+
+---
+
+## Quick start
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/assiadialeb/mlx-server.git
+cd mlx-server
+
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+> **Note — Python 3.14 + local-reranker**  
+> `local-reranker` officially requires Python `<3.14`. If install fails, run:
+> ```bash
+> pip install -r requirements.txt --ignore-requires-python
+> ```
+
+### 2. Initialize the database
+
+```bash
+python manage.py migrate
+python manage.py createsuperuser
+```
+
+### 3. Run the orchestrator
+
+```bash
+python manage.py runserver
+```
+
+Open **http://127.0.0.1:8000** and sign in with your superuser account.
+
+### 4. Download and launch a model
+
+1. Go to **Search** and find a model (e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit`)
+2. Click **Download** — files land in `./models/<model-name>/`
+3. On the **Dashboard**, pick a launch mode and click **Start**
+4. Point your client at `http://127.0.0.1:<port>/v1`
+
+---
+
+## Usage examples
+
+### Chat completions (TEXT mode)
+
+```bash
+curl http://127.0.0.1:11437/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "default_model",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 128
+  }'
+```
+
+### Embeddings (EMBEDDING mode)
+
+```bash
+curl http://127.0.0.1:11438/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "default_model",
+    "input": ["Local embeddings on Apple Silicon"]
+  }'
+```
+
+### Rerank (RERANKER mode)
+
+```bash
+curl http://127.0.0.1:11439/v1/rerank \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is Python?",
+    "documents": [
+      "Python is a programming language.",
+      "The weather is sunny today."
+    ],
+    "top_n": 2,
+    "return_documents": true
+  }'
+```
+
+### LiteLLM proxy
+
+Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
+
+1. **Credentials** → provider **vLLM (Hosted vLLM)**
+2. **API Base**: `http://127.0.0.1:<port>/v1`
+3. **Add Model** → `hosted_vllm/your-model-name`, mode **Rerank**
+
+Then call LiteLLM's `/rerank` endpoint with your proxy model name.
+
+---
+
+## Project structure
+
+```
+mlx-server/
+├── manage.py                 # Django entrypoint
+├── mlx_orchestrator/         # Django project settings
+├── orchestrator/             # Main application
+│   ├── server_manager.py     # Start / stop / port management
+│   ├── downloader.py         # Hugging Face downloads
+│   ├── model_utils.py        # Capability detection
+│   ├── embedding_server.py   # OpenAI-compatible embeddings
+│   ├── reranker_server.py    # JinaForRanking rerank API
+│   ├── mlx_*_launcher.py     # Subprocess entrypoints
+│   ├── benchmark_service.py  # llmbenchmark integration
+│   └── vendor/llmbench.py    # Vendored benchmark CLI
+├── models/                   # Downloaded weights (gitignored)
+├── logs/                     # Instance & benchmark logs (gitignored)
+└── requirements.txt
+```
+
+---
+
+## Configuration
+
+| Path | Purpose |
+|------|---------|
+| `./models/` | Hugging Face model checkpoints |
+| `./logs/` | Server stdout and benchmark JSON results |
+| `./db.sqlite3` | Django ORM (downloads, instances, benchmarks) |
+| `./venv/` | Python virtual environment |
+
+Port range for inference instances defaults to **11400–11500**. The orchestrator UI runs on **8000** by default.
+
+---
+
+## Benchmarks
+
+From the dashboard, start a benchmark against any **RUNNING** TEXT or MULTIMODAL instance:
+
+- **Quick** — smoke test (~1 min)
+- **Standard** — balanced profile
+- **Full** — exhaustive run
+- **Ollama-compatible** — preset aligned with Ollama bench conventions
+
+Results are stored in `logs/benchmarks/` and displayed with TTFT, tokens/sec, and latency percentiles.
+
+---
+
+## Privacy & security
+
+- **No telemetry** — MLX Server does not phone home
+- **Local processing** — inference never leaves your Mac (except Hugging Face downloads you trigger)
+- **Session auth** — protect the dashboard with Django users; inference ports are bound to `0.0.0.0` by default (restrict with firewall or bind to `127.0.0.1` in launchers for air-gapped setups)
+
+---
+
+## Troubleshooting
+
+**Port still in use after stop**
+
+```bash
+lsof -nP -iTCP:<PORT> -sTCP:LISTEN
+kill -9 <PID>
+```
+
+The UI now verifies port release before marking an instance as stopped.
+
+**Model download stuck**
+
+Check `./logs/` and the Downloads section on the dashboard. Incomplete folders in `./models/` are detected automatically on restart.
+
+**Reranker fails to load**
+
+- `jina-reranker-v3-mlx` → needs separate `projector.safetensors`
+- `JinaForRanking` mxfp4 models → handled by `reranker_server.py` (projector extracted from bundled weights)
+
+---
+
+## Roadmap
+
+- [ ] Docker Compose deployment (web + worker split)
+- [ ] Hugging Face search filters for embedding / rerank models
+- [ ] Health checks and auto-restart for crashed instances
+- [ ] API key auth on inference endpoints
+
+---
+
+## License
+
+See repository license file. Third-party components retain their own licenses (`mlx-lm`, `mlx-vlm`, `local-reranker`, etc.).
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome on [GitHub](https://github.com/assiadialeb/mlx-server).
+
+```bash
+# Run migrations after pulling
+python manage.py migrate
+
+# Create a branch
+git checkout -b feat/my-feature
+```
+
+---
+
+<p align="center">
+  <sub>Built for Apple Silicon · Privacy-first · OpenAI-compatible APIs</sub>
+</p>
