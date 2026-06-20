@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import random
 import time
 from pathlib import Path
@@ -16,8 +17,9 @@ from pydantic import BaseModel, Field
 from orchestrator.image_model_loader import (
     generate_image_bytes,
     load_image_model,
-    resolve_image_model_spec,
+    resolve_image_profile,
 )
+from orchestrator.image_model_profiles import ImageModelProfile
 
 app = FastAPI(title="MLX Image Server")
 _state: dict[str, object] = {}
@@ -27,7 +29,7 @@ class ImageGenerationRequest(BaseModel):
     prompt: str
     model: str = "default_model"
     n: int = Field(default=1, ge=1, le=4)
-    size: str = "1024x1024"
+    size: Optional[str] = None
     response_format: Literal["url", "b64_json"] = "b64_json"
     user: Optional[str] = None
     seed: Optional[int] = None
@@ -36,7 +38,17 @@ class ImageGenerationRequest(BaseModel):
     negative_prompt: Optional[str] = None
 
 
-def _parse_size(size: str) -> tuple[int, int]:
+def _get_profile() -> ImageModelProfile:
+    profile = _state.get("profile")
+    if profile is None:
+        raise HTTPException(status_code=503, detail="Model not loaded.")
+    return profile  # type: ignore[return-value]
+
+
+def _parse_size(size: str | None, profile: ImageModelProfile) -> tuple[int, int]:
+    if not size:
+        return profile.default_width, profile.default_height
+
     try:
         width_str, height_str = size.lower().split("x", maxsplit=1)
         width, height = int(width_str), int(height_str)
@@ -53,8 +65,20 @@ def health_check() -> dict[str, str]:
     return {"status": "ok", "model": str(_state.get("model_id", ""))}
 
 
+@app.get("/v1/image/defaults")
+def image_defaults() -> dict[str, object]:
+    """Return recommended inference parameters for the loaded checkpoint."""
+    profile = _get_profile()
+    return {"object": "image_generation_defaults", **profile.as_api_dict()}
+
+
 @app.get("/v1/models")
 def list_models() -> dict[str, object]:
+    profile = _state.get("profile")
+    metadata: dict[str, object] = {}
+    if isinstance(profile, ImageModelProfile):
+        metadata["image_defaults"] = profile.as_api_dict()
+
     return {
         "object": "list",
         "data": [
@@ -62,6 +86,7 @@ def list_models() -> dict[str, object]:
                 "id": _state.get("model_id", "default_model"),
                 "object": "model",
                 "created": int(_state.get("created", time.time())),
+                **metadata,
             }
         ],
     }
@@ -70,8 +95,8 @@ def list_models() -> dict[str, object]:
 @app.post("/v1/images/generations")
 def create_images(body: ImageGenerationRequest) -> dict[str, object]:
     model = _state.get("model")
-    spec = _state.get("spec")
-    if model is None or spec is None:
+    profile = _get_profile()
+    if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded.")
 
     if not body.prompt.strip():
@@ -82,9 +107,9 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
             detail="url response_format is not supported; use b64_json.",
         )
 
-    width, height = _parse_size(body.size)
-    steps = body.num_inference_steps or spec.default_steps  # type: ignore[union-attr]
-    guidance = body.guidance if body.guidance is not None else spec.default_guidance  # type: ignore[union-attr]
+    width, height = _parse_size(body.size, profile)
+    steps = body.num_inference_steps or profile.default_steps
+    guidance = profile.default_guidance if body.guidance is None else body.guidance
 
     data: list[dict[str, str]] = []
     try:
@@ -92,6 +117,7 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
             seed = body.seed if body.seed is not None else random.randint(0, 2**31 - 1)
             png_bytes = generate_image_bytes(
                 model,
+                profile,
                 prompt=body.prompt,
                 seed=seed,
                 num_inference_steps=steps,
@@ -122,12 +148,13 @@ def main() -> None:
     if not model_path.is_dir():
         raise SystemExit(f"Model path not found: {model_path}")
 
-    spec = resolve_image_model_spec(model_path)
-    print(f"Loading image model ({spec.family}/{spec.config_attr}) from {model_path} ...")
-    model = load_image_model(model_path, spec)
+    profile = resolve_image_profile(model_path)
+    print(f"Resolved image profile: {json.dumps(profile.as_api_dict(), indent=2)}")
+    print(f"Loading image model ({profile.family}/{profile.config_attr}) from {model_path} ...")
+    model = load_image_model(model_path, profile)
 
     _state["model"] = model
-    _state["spec"] = spec
+    _state["profile"] = profile
     _state["model_id"] = args.model_id or model_path.name
     _state["created"] = time.time()
 
