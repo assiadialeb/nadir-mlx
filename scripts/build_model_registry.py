@@ -65,6 +65,11 @@ def _parse_args() -> argparse.Namespace:
         help="Also download upstream README.md (extra network calls).",
     )
     parser.add_argument(
+        "--fresh-models",
+        action="store_true",
+        help="Replace the models section entirely instead of merging into existing entries.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Fetch and merge but do not write the output file.",
@@ -91,6 +96,7 @@ def main() -> int:
         models_dir=args.models_dir,
         include_local=args.include_local,
         fetch_upstream_readme=args.fetch_upstream_readme,
+        fresh_models=args.fresh_models,
         dry_run=args.dry_run,
     )
 

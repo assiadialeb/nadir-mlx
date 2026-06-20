@@ -11,7 +11,7 @@ from typing import Any
 import requests
 
 from orchestrator.image_model_profiles import parse_readme_inference_hints_from_text
-from orchestrator.model_registry import REGISTRY_PATH, load_model_registry, resolve_registry_family
+from orchestrator.model_registry import REGISTRY_PATH, load_model_registry
 from orchestrator.model_utils import get_folder_name
 
 HF_API_URL = "https://huggingface.co/api/models"
@@ -19,23 +19,65 @@ HF_RAW_README_URL = "https://huggingface.co/{repo_id}/resolve/main/README.md"
 
 PIPELINE_FAMILY_FALLBACK: dict[str, str] = {
     "text-to-speech": "kokoro_tts",
-    "automatic-speech-recognition": "whisper_stt",
-    "image-text-to-text": "gemma4_vlm",
-    "text-generation": "qwen_text",
-    "feature-extraction": "qwen3_embedding",
     "text-ranking": "jina_reranker",
+    "feature-extraction": "qwen3_embedding",
     "text-to-image": "flux_lite",
+    "any-to-any": "gemma4_vlm",
 }
 
-BASE_MODEL_LINE = re.compile(r"^base_model:\s*(.+)$", re.MULTILINE)
+EXTRA_FAMILIES: dict[str, dict[str, Any]] = {
+    "llama_text": {
+        "launch_modes": ["TEXT"],
+        "server_config": {"max_tokens": 512},
+        "sources": ["registry:mlx_lm"],
+    },
+    "parakeet_stt": {
+        "launch_modes": ["STT"],
+        "server_config": {"chunk_duration": 30.0},
+        "sources": ["registry:mlx-audio"],
+    },
+    "gemma3_vlm": {
+        "launch_modes": ["MULTIMODAL"],
+        "server_config": {"max_tokens": 512, "max_kv_size": 8192},
+        "sources": ["registry:mlx_vlm"],
+    },
+    "gemma3_text": {
+        "launch_modes": ["TEXT"],
+        "server_config": {"max_tokens": 512},
+        "sources": ["registry:mlx_lm"],
+    },
+}
+
+EXTRA_PATTERNS: list[dict[str, Any]] = [
+    {"match": "llama", "family": "llama_text"},
+    {"match": "meta-llama", "family": "llama_text"},
+    {"match": "parakeet", "family": "parakeet_stt"},
+    {"match": "gemma-3", "family": "gemma3_vlm"},
+    {"match": "gemma-2", "family": "gemma3_text"},
+]
+
 ORIGINAL_MODEL_LINK = re.compile(
     r"Original Model Link\s*:\s*\[[^\]]+\]\((https://huggingface.co/([^)]+))\)",
     re.IGNORECASE,
 )
-CONVERTED_FROM_LINK = re.compile(
+CONVERTED_FROM_URL = re.compile(
+    r"converted (?:to MLX format )?from\s+\[[^\]]+\]\((https://huggingface.co/([^)]+))\)",
+    re.IGNORECASE,
+)
+CONVERTED_FROM_BACKTICK = re.compile(
+    r"from\s+\[`([^`]+)`\]",
+    re.IGNORECASE,
+)
+CONVERTED_FROM_PLAIN = re.compile(
     r"converted (?:to MLX format )?from [`\[]?(?:<)?(?:https://huggingface.co/)?([^`\]\)>]+)",
     re.IGNORECASE,
 )
+BASE_MODEL_LINE = re.compile(r"^base_model:\s*(.+)$", re.MULTILINE)
+BASE_MODEL_LIST_BLOCK = re.compile(
+    r"^base_model:\s*\n((?:[ \t]*-\s+.+\n?)+)",
+    re.MULTILINE,
+)
+BASE_MODEL_LIST_ITEM = re.compile(r"^[ \t]*-\s*(.+)$", re.MULTILINE)
 
 
 def fetch_top_mlx_models(limit: int = 50) -> list[dict[str, Any]]:
@@ -79,66 +121,241 @@ def fetch_readme_text(repo_id: str) -> str:
 def _normalize_repo_reference(value: str) -> str:
     cleaned = value.strip().strip("`[]<>\"'")
     cleaned = cleaned.removeprefix("https://huggingface.co/")
+    cleaned = cleaned.lstrip("-").strip()
     cleaned = cleaned.rstrip("/")
-    if cleaned.startswith("datasets/"):
+    if cleaned.startswith("datasets/") or not cleaned:
+        return ""
+    if cleaned.startswith(("/", "~")):
+        return ""
+    if len(cleaned) >= 2 and cleaned[1] == ":" and cleaned[0].isalpha():
+        return ""
+    if cleaned.count("/") != 1:
         return ""
     return cleaned
+
+
+def _is_canonical_mlx_repo(repo_id: str | None) -> bool:
+    return bool(repo_id) and str(repo_id).startswith("mlx-community/")
+
+
+def _parse_yaml_base_models(readme_text: str) -> list[str]:
+    block = BASE_MODEL_LIST_BLOCK.search(readme_text)
+    if block:
+        return [
+            ref
+            for item in BASE_MODEL_LIST_ITEM.findall(block.group(1))
+            if (ref := _normalize_repo_reference(item))
+        ]
+
+    match = BASE_MODEL_LINE.search(readme_text)
+    if match:
+        ref = _normalize_repo_reference(match.group(1))
+        return [ref] if ref else []
+    return []
+
+
+def _parse_card_base_models(card: dict[str, Any]) -> list[str]:
+    card_data = card.get("cardData") or {}
+    base_model = card_data.get("base_model") or card.get("base_model")
+    if isinstance(base_model, list):
+        return [
+            ref
+            for item in base_model
+            if (ref := _normalize_repo_reference(str(item)))
+        ]
+    if isinstance(base_model, str) and base_model.strip():
+        ref = _normalize_repo_reference(base_model)
+        return [ref] if ref else []
+    return []
+
+
+def _collect_upstream_candidates(card: dict[str, Any], readme_text: str) -> list[str]:
+    """Collect valid upstream refs in README/card priority order."""
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    def add(value: str) -> None:
+        ref = _normalize_repo_reference(value)
+        if ref and ref not in seen:
+            seen.add(ref)
+            candidates.append(ref)
+
+    for match in ORIGINAL_MODEL_LINK.finditer(readme_text):
+        add(match.group(2))
+
+    converted_url = CONVERTED_FROM_URL.search(readme_text)
+    if converted_url:
+        add(converted_url.group(2))
+
+    converted_backtick = CONVERTED_FROM_BACKTICK.search(readme_text)
+    if converted_backtick:
+        add(converted_backtick.group(1))
+
+    converted_plain = CONVERTED_FROM_PLAIN.search(readme_text)
+    if converted_plain:
+        add(converted_plain.group(1))
+
+    for ref in _parse_card_base_models(card):
+        add(ref)
+
+    for ref in _parse_yaml_base_models(readme_text):
+        add(ref)
+
+    return candidates
+
+
+def _infer_upstream_from_folder(folder_name: str, family_id: str) -> list[str]:
+    """Guess likely Google/Qwen upstream ids from MLX folder naming."""
+    name = folder_name.lower()
+    inferred: list[str] = []
+
+    qat_match = re.match(r"gemma-(\d+)-([\d.]+b)-it-qat-4bit", name)
+    if qat_match and family_id.startswith("gemma3"):
+        version, size = qat_match.groups()
+        inferred.extend(
+            [
+                f"google/gemma-{version}-{size}-it-qat-q4_0-unquantized",
+                f"google/gemma-{version}-{size}-it-qat-q4_0",
+            ]
+        )
+
+    gemma4_match = re.match(r"gemma-4-([\w-]+)-it(?:-[\w-]+)?", name)
+    if gemma4_match and family_id.startswith("gemma4"):
+        suffix = gemma4_match.group(1)
+        inferred.append(f"google/gemma-4-{suffix}-it")
+
+    return inferred
+
+
+def _score_upstream_match(folder_name: str, family_id: str, candidate: str) -> int:
+    folder = folder_name.lower()
+    candidate_lower = candidate.lower()
+    candidate_name = candidate_lower.split("/", 1)[-1]
+
+    folder_tokens = {token for token in re.split(r"[^a-z0-9]+", folder) if len(token) >= 2}
+    candidate_tokens = {
+        token for token in re.split(r"[^a-z0-9]+", candidate_name) if len(token) >= 2
+    }
+    score = len(folder_tokens & candidate_tokens) * 2
+
+    if "gemma" in folder and "gemma" in candidate_name:
+        score += 6
+    if "gemma" in folder and "internvl" in candidate_name:
+        score -= 12
+    if "llama" in folder and "llama" in candidate_name:
+        score += 6
+    if "qwen" in folder and "qwen" in candidate_name:
+        score += 6
+    if "kokoro" in folder and "kokoro" in candidate_name:
+        score += 6
+    if "parakeet" in folder and "parakeet" in candidate_name:
+        score += 6
+
+    org = candidate_lower.split("/", 1)[0]
+    if family_id.startswith("gemma") and org == "google":
+        score += 4
+    if family_id == "llama_text" and org in {"meta-llama", "mlx-community"}:
+        score += 3
+    if family_id.startswith("qwen") and org == "qwen":
+        score += 4
+
+    return score
 
 
 def extract_upstream_repo(
     card: dict[str, Any],
     readme_text: str,
+    *,
+    folder_name: str = "",
+    family_id: str = "",
 ) -> str:
-    """Resolve upstream repo id from card metadata or README links."""
-    card_data = card.get("cardData") or {}
-    base_model = card_data.get("base_model") or card.get("base_model")
-    if isinstance(base_model, list) and base_model:
-        return _normalize_repo_reference(str(base_model[0]))
-    if isinstance(base_model, str) and base_model.strip():
-        return _normalize_repo_reference(base_model)
+    """Resolve upstream repo id; prefer README links, then best folder match."""
+    candidates = _collect_upstream_candidates(card, readme_text)
+    for ref in _infer_upstream_from_folder(folder_name, family_id):
+        if ref not in candidates:
+            candidates.append(ref)
 
-    for match in ORIGINAL_MODEL_LINK.finditer(readme_text):
-        return _normalize_repo_reference(match.group(2))
+    if not candidates:
+        return ""
+    if not folder_name:
+        return candidates[0]
 
-    converted = CONVERTED_FROM_LINK.search(readme_text)
-    if converted:
-        return _normalize_repo_reference(converted.group(1))
+    return max(
+        candidates,
+        key=lambda candidate: (
+            _score_upstream_match(folder_name, family_id, candidate),
+            -candidates.index(candidate),
+        ),
+    )
 
-    yaml_match = BASE_MODEL_LINE.search(readme_text)
-    if yaml_match:
-        return _normalize_repo_reference(yaml_match.group(1))
 
-    return ""
+def _match_pattern_rules(folder_name: str, patterns: list[dict[str, Any]]) -> str | None:
+    name = folder_name.lower()
+    best_family = ""
+    best_score = 0
+    for rule in patterns:
+        match_token = str(rule.get("match", "")).lower()
+        if not match_token or match_token not in name:
+            continue
+        required = rule.get("requires") or []
+        if required and not all(str(token).lower() in name for token in required):
+            continue
+        score = len(match_token)
+        if score > best_score:
+            best_score = score
+            best_family = str(rule.get("family") or "")
+    return best_family or None
 
 
 def infer_family_id(
     folder_name: str,
     pipeline_tag: str,
+    patterns: list[dict[str, Any]] | None = None,
 ) -> str | None:
-    """Map a model folder name and pipeline tag to a registry family."""
-    family = resolve_registry_family(folder_name)
-    if family:
-        return family
-
-    pipeline = (pipeline_tag or "").strip().lower()
-    if pipeline in PIPELINE_FAMILY_FALLBACK:
-        return PIPELINE_FAMILY_FALLBACK[pipeline]
-
+    """Map folder name and pipeline tag to a registry family (builder logic)."""
     lowered = folder_name.lower()
-    if "schnell" in lowered:
-        return "flux_schnell"
+    pipeline = (pipeline_tag or "").strip().lower()
+
     if "kokoro" in lowered:
         return "kokoro_tts"
+    if "parakeet" in lowered:
+        return "parakeet_stt"
     if "whisper" in lowered:
         return "whisper_stt"
     if "reranker" in lowered:
         return "jina_reranker"
     if "embedding" in lowered:
         return "qwen3_embedding"
-    if "gemma-4" in lowered or "gemma4" in lowered:
-        return "gemma4_vlm"
+    if "llama" in lowered or "meta-llama" in lowered:
+        return "llama_text"
+    if "schnell" in lowered:
+        return "flux_schnell"
     if "flux" in lowered and "lite" in lowered:
         return "flux_lite"
+    if "z-image-turbo" in lowered or "z_image_turbo" in lowered:
+        return "z_image_turbo"
+
+    if "gemma-4" in lowered or "gemma4" in lowered or pipeline == "any-to-any":
+        return "gemma4_vlm"
+    if "gemma-3" in lowered or "gemma3" in lowered:
+        if pipeline in {"image-text-to-text", "any-to-any"}:
+            return "gemma3_vlm"
+        return "gemma3_text"
+    if "gemma-2" in lowered or "gemma2" in lowered:
+        return "gemma3_text"
+
+    if "qwen" in lowered and pipeline == "text-generation":
+        return "qwen_text"
+
+    if pipeline == "automatic-speech-recognition":
+        return "parakeet_stt" if "parakeet" in lowered else "whisper_stt"
+
+    if pipeline in PIPELINE_FAMILY_FALLBACK:
+        return PIPELINE_FAMILY_FALLBACK[pipeline]
+
+    if patterns:
+        return _match_pattern_rules(folder_name, patterns)
+
     return None
 
 
@@ -147,24 +364,32 @@ def build_model_entry(
     card: dict[str, Any],
     mlx_readme: str,
     upstream_readme: str = "",
+    *,
+    patterns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Build one registry model entry from HF metadata."""
-    folder_name = get_folder_name(repo_id)
+    folder_name = get_folder_name(repo_id) if "/" in repo_id else repo_id
     pipeline_tag = str(card.get("pipeline_tag") or "")
-    family_id = infer_family_id(folder_name, pipeline_tag)
+    family_id = infer_family_id(folder_name, pipeline_tag, patterns)
     if not family_id:
         return None
 
-    upstream = extract_upstream_repo(card, mlx_readme)
+    upstream = extract_upstream_repo(
+        card,
+        mlx_readme,
+        folder_name=folder_name,
+        family_id=family_id,
+    )
     sources = ["hf:api"]
     if mlx_readme.strip():
         sources.append("readme:mlx")
     if upstream:
         sources.append(f"upstream:{upstream}")
 
+    canonical_repo_id = repo_id if _is_canonical_mlx_repo(repo_id) else ""
     entry: dict[str, Any] = {
         "family": family_id,
-        "repo_id": repo_id,
+        "repo_id": canonical_repo_id or repo_id,
         "sources": sources,
     }
     if upstream:
@@ -186,9 +411,31 @@ def build_model_entry(
     return entry
 
 
+def merge_model_entry(
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge model entries without downgrading canonical repo ids or upstream refs."""
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if key == "repo_id":
+            if _is_canonical_mlx_repo(merged.get("repo_id")) and not _is_canonical_mlx_repo(value):
+                continue
+        if key == "upstream" and merged.get("upstream") and not value:
+            continue
+        if key == "sources":
+            merged[key] = sorted(set(list(merged.get(key) or []) + list(value or [])))
+            continue
+        if key == "readme_hints" and merged.get(key) and not value:
+            continue
+        merged[key] = value
+    return merged
+
+
 def collect_registry_models(
     limit: int,
     *,
+    patterns: list[dict[str, Any]] | None = None,
     fetch_upstream_readme: bool = False,
     sleep_seconds: float = 0.2,
 ) -> dict[str, dict[str, Any]]:
@@ -205,16 +452,29 @@ def collect_registry_models(
         try:
             card = fetch_model_card(repo_id)
             mlx_readme = fetch_readme_text(repo_id)
-            upstream = extract_upstream_repo(card, mlx_readme)
+            entry = build_model_entry(
+                repo_id,
+                card,
+                mlx_readme,
+                patterns=patterns,
+            )
+            if entry is None:
+                skipped += 1
+                continue
+
+            upstream = str(entry.get("upstream") or "")
             upstream_readme = ""
             if fetch_upstream_readme and upstream:
                 upstream_readme = fetch_readme_text(upstream)
                 time.sleep(sleep_seconds)
-
-            entry = build_model_entry(repo_id, card, mlx_readme, upstream_readme)
-            if entry is None:
-                skipped += 1
-                continue
+                if upstream_readme.strip():
+                    entry = build_model_entry(
+                        repo_id,
+                        card,
+                        mlx_readme,
+                        upstream_readme,
+                        patterns=patterns,
+                    ) or entry
             models[folder_name] = entry
         except Exception:
             skipped += 1
@@ -227,7 +487,11 @@ def collect_registry_models(
     return models
 
 
-def collect_local_model_entries(models_dir: Path) -> dict[str, dict[str, Any]]:
+def collect_local_model_entries(
+    models_dir: Path,
+    *,
+    patterns: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Build entries from locally installed model folders."""
     entries: dict[str, dict[str, Any]] = {}
     if not models_dir.is_dir():
@@ -242,42 +506,63 @@ def collect_local_model_entries(models_dir: Path) -> dict[str, dict[str, Any]]:
             readme_text = readme_path.read_text(encoding="utf-8", errors="replace")
 
         card: dict[str, Any] = {}
-        if readme_text:
-            yaml_match = BASE_MODEL_LINE.search(readme_text)
-            if yaml_match:
-                card["base_model"] = yaml_match.group(1).strip()
-
         pipeline_match = re.search(r"^pipeline_tag:\s*(.+)$", readme_text, re.MULTILINE)
         if pipeline_match:
             card["pipeline_tag"] = pipeline_match.group(1).strip()
 
-        repo_match = re.search(r"^#\s*mlx-community/([^\s]+)", readme_text, re.MULTILINE)
+        repo_match = re.search(
+            r"mlx-community/([A-Za-z0-9._-]+)",
+            readme_text,
+        )
         repo_id = f"mlx-community/{repo_match.group(1)}" if repo_match else ""
 
-        entry = build_model_entry(repo_id or f"local/{folder.name}", card, readme_text)
-        if entry:
-            if repo_id:
-                entry["repo_id"] = repo_id
-            entries[folder.name] = entry
+        entry = build_model_entry(
+            repo_id or folder.name,
+            card,
+            readme_text,
+            patterns=patterns,
+        )
+        if not entry:
+            continue
+        if repo_id:
+            entry["repo_id"] = repo_id
+        entries[folder.name] = entry
     return entries
+
+
+def _ensure_extended_families(families: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(families)
+    merged.update(EXTRA_FAMILIES)
+    return merged
+
+
+def _ensure_extended_patterns(patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    existing = {json.dumps(rule, sort_keys=True) for rule in patterns}
+    merged = list(patterns)
+    for rule in EXTRA_PATTERNS:
+        key = json.dumps(rule, sort_keys=True)
+        if key not in existing:
+            merged.append(rule)
+    return merged
 
 
 def merge_registry(
     existing: dict[str, Any],
     generated_models: dict[str, dict[str, Any]],
+    *,
+    fresh_models: bool = False,
 ) -> dict[str, Any]:
     """Merge generated model entries into an existing registry payload."""
     merged = {
         "version": existing.get("version", 1),
-        "families": dict(existing.get("families") or {}),
-        "models": dict(existing.get("models") or {}),
-        "patterns": list(existing.get("patterns") or []),
+        "families": _ensure_extended_families(dict(existing.get("families") or {})),
+        "models": {} if fresh_models else dict(existing.get("models") or {}),
+        "patterns": _ensure_extended_patterns(list(existing.get("patterns") or [])),
     }
 
     for folder_name, entry in generated_models.items():
         current = dict(merged["models"].get(folder_name) or {})
-        current.update(entry)
-        merged["models"][folder_name] = current
+        merged["models"][folder_name] = merge_model_entry(current, entry)
     return merged
 
 
@@ -296,20 +581,29 @@ def build_registry_file(
     models_dir: Path | None = None,
     include_local: bool = True,
     fetch_upstream_readme: bool = False,
+    fresh_models: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Fetch HF models, merge with existing registry, and optionally write output."""
     target = output_path or REGISTRY_PATH
     existing = load_model_registry()
+    patterns = _ensure_extended_patterns(list(existing.get("patterns") or []))
 
     generated = collect_registry_models(
         limit,
+        patterns=patterns,
         fetch_upstream_readme=fetch_upstream_readme,
     )
     if include_local and models_dir is not None:
-        generated.update(collect_local_model_entries(models_dir))
+        local_entries = collect_local_model_entries(models_dir, patterns=patterns)
+        for folder_name, entry in local_entries.items():
+            if folder_name in generated:
+                generated[folder_name] = merge_model_entry(generated[folder_name], entry)
+            else:
+                generated[folder_name] = entry
 
-    merged = merge_registry(existing, generated)
+    merged = merge_registry(existing, generated, fresh_models=fresh_models)
     if not dry_run:
         write_registry(merged, target)
+        load_model_registry.cache_clear()
     return merged

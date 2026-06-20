@@ -118,106 +118,56 @@
       "sources": [
         "registry:generic"
       ]
+    },
+    "llama_text": {
+      "launch_modes": [
+        "TEXT"
+      ],
+      "server_config": {
+        "max_tokens": 512
+      },
+      "sources": [
+        "registry:mlx_lm"
+      ]
+    },
+    "parakeet_stt": {
+      "launch_modes": [
+        "STT"
+      ],
+      "server_config": {
+        "chunk_duration": 30.0
+      },
+      "sources": [
+        "registry:mlx-audio"
+      ]
+    },
+    "gemma3_vlm": {
+      "launch_modes": [
+        "MULTIMODAL"
+      ],
+      "server_config": {
+        "max_tokens": 512,
+        "max_kv_size": 8192
+      },
+      "sources": [
+        "registry:mlx_vlm"
+      ]
+    },
+    "gemma3_text": {
+      "launch_modes": [
+        "TEXT"
+      ],
+      "server_config": {
+        "max_tokens": 512
+      },
+      "sources": [
+        "registry:mlx_lm"
+      ]
     }
   },
   "models": {
-    "Flux-1.lite-8B-MLX-Q4": {
-      "family": "flux_lite",
-      "repo_id": "local/Flux-1.lite-8B-MLX-Q4",
-      "upstream": "Freepik/flux.1-lite-8B",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:Freepik/flux.1-lite-8B"
-      ],
-      "pipeline_tag": "text-to-image",
-      "readme_hints": {
-        "source": "readme",
-        "flux_base_model": "dev",
-        "quality_steps": 50,
-        "default_guidance": 4.0,
-        "use_guidance": true,
-        "quantize": 4,
-        "default_width": 1024,
-        "default_height": 1024
-      }
-    },
-    "Kokoro-82M-6bit": {
-      "family": "kokoro_tts",
-      "repo_id": "mlx-community/Kokoro-82M-6bit",
-      "upstream": "- yl4579/StyleTTS2-LJSpeech",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:- yl4579/StyleTTS2-LJSpeech"
-      ],
-      "pipeline_tag": "text-to-speech"
-    },
-    "whisper-small-mlx": {
-      "family": "whisper_stt",
-      "repo_id": "local/whisper-small-mlx",
-      "upstream": "openai/whisper-small",
-      "sources": [
-        "hf:api",
-        "readme:mlx"
-      ],
-      "pipeline_tag": "automatic-speech-recognition"
-    },
-    "gemma-4-31b-it-4bit": {
-      "family": "gemma4_vlm",
-      "repo_id": "mlx-community/gemma-4-31b-it-4bit",
-      "upstream": "google/gemma-4-31b-it",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:google/gemma-4-31b-it"
-      ],
-      "pipeline_tag": "image-text-to-text"
-    },
-    "gemma-4-12B-it-4bit": {
-      "family": "gemma4_vlm",
-      "repo_id": "local/gemma-4-12B-it-4bit",
-      "upstream": "google/gemma-4-12b-it",
-      "sources": [
-        "hf:api",
-        "readme:mlx"
-      ],
-      "pipeline_tag": "image-text-to-text"
-    },
-    "jina-reranker-v3-4bit-mxfp4": {
-      "family": "jina_reranker",
-      "repo_id": "mlx-community/jina-reranker-v3-4bit-mxfp4",
-      "upstream": "- Qwen/Qwen3-0.6B",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:- Qwen/Qwen3-0.6B"
-      ],
-      "pipeline_tag": "text-ranking"
-    },
-    "Qwen3-Embedding-0.6B-4bit-DWQ": {
-      "family": "qwen3_embedding",
-      "repo_id": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
-      "upstream": "Qwen/Qwen3-Embedding-0.6B",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:Qwen/Qwen3-Embedding-0.6B"
-      ],
-      "pipeline_tag": "text-generation"
-    },
-    "Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit": {
-      "family": "qwen_text",
-      "repo_id": "local/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
-      ],
-      "upstream": "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
-    },
     "parakeet-tdt-0.6b-v3": {
-      "family": "whisper_stt",
+      "family": "parakeet_stt",
       "repo_id": "mlx-community/parakeet-tdt-0.6b-v3",
       "sources": [
         "hf:api",
@@ -228,7 +178,7 @@
       "pipeline_tag": "automatic-speech-recognition"
     },
     "parakeet-tdt-0.6b-v2": {
-      "family": "whisper_stt",
+      "family": "parakeet_stt",
       "repo_id": "mlx-community/parakeet-tdt-0.6b-v2",
       "sources": [
         "hf:api",
@@ -238,30 +188,8 @@
       "upstream": "nvidia/parakeet-tdt-0.6b-v2",
       "pipeline_tag": "automatic-speech-recognition"
     },
-    "gpt-oss-20b-MXFP4-Q8": {
-      "family": "qwen_text",
-      "repo_id": "mlx-community/gpt-oss-20b-MXFP4-Q8",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:openai/gpt-oss-20b"
-      ],
-      "upstream": "openai/gpt-oss-20b",
-      "pipeline_tag": "text-generation"
-    },
-    "Kimi-K2.5": {
-      "family": "qwen_text",
-      "repo_id": "mlx-community/Kimi-K2.5",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:moonshotai/Kimi-K2.5"
-      ],
-      "upstream": "moonshotai/Kimi-K2.5",
-      "pipeline_tag": "text-generation"
-    },
     "parakeet-tdt_ctc-110m": {
-      "family": "whisper_stt",
+      "family": "parakeet_stt",
       "repo_id": "mlx-community/parakeet-tdt_ctc-110m",
       "sources": [
         "hf:api",
@@ -270,17 +198,6 @@
       ],
       "upstream": "nvidia/parakeet-tdt_ctc-110m",
       "pipeline_tag": "automatic-speech-recognition"
-    },
-    "Devstral-Small-2505-4bit": {
-      "family": "qwen_text",
-      "repo_id": "mlx-community/Devstral-Small-2505-4bit",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:mistralai/Devstral-Small-2505"
-      ],
-      "upstream": "mistralai/Devstral-Small-2505",
-      "pipeline_tag": "text-generation"
     },
     "whisper-large-v3-mlx": {
       "family": "whisper_stt",
@@ -297,53 +214,31 @@
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:Qwen/Qwen2.5-14B"
+        "upstream:Qwen/Qwen2.5-14B-Instruct"
       ],
-      "upstream": "Qwen/Qwen2.5-14B",
+      "upstream": "Qwen/Qwen2.5-14B-Instruct",
       "pipeline_tag": "text-generation"
     },
     "gemma-3-4b-it-qat-4bit": {
-      "family": "gemma4_vlm",
+      "family": "gemma3_vlm",
       "repo_id": "mlx-community/gemma-3-4b-it-qat-4bit",
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:OpenGVLab/InternVL3-1B-Instruct"
+        "upstream:google/gemma-3-4b-it-qat-q4_0-unquantized"
       ],
-      "upstream": "OpenGVLab/InternVL3-1B-Instruct",
-      "pipeline_tag": "image-text-to-text"
-    },
-    "Kimi-K2.6-mlx-DQ3_K_M-q8": {
-      "family": "qwen_text",
-      "repo_id": "mlx-community/Kimi-K2.6-mlx-DQ3_K_M-q8",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:moonshotai/Kimi-K2.6"
-      ],
-      "upstream": "moonshotai/Kimi-K2.6",
-      "pipeline_tag": "text-generation"
-    },
-    "Qwen3.6-35B-A3B-4bit": {
-      "family": "gemma4_vlm",
-      "repo_id": "mlx-community/Qwen3.6-35B-A3B-4bit",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:Qwen/Qwen3.6-35B-A3B"
-      ],
-      "upstream": "Qwen/Qwen3.6-35B-A3B",
+      "upstream": "google/gemma-3-4b-it-qat-q4_0-unquantized",
       "pipeline_tag": "image-text-to-text"
     },
     "gemma-3-12b-it-qat-4bit": {
-      "family": "gemma4_vlm",
+      "family": "gemma3_vlm",
       "repo_id": "mlx-community/gemma-3-12b-it-qat-4bit",
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:OpenGVLab/InternVL3-1B-Instruct"
+        "upstream:google/gemma-3-12b-it-qat-q4_0-unquantized"
       ],
-      "upstream": "OpenGVLab/InternVL3-1B-Instruct",
+      "upstream": "google/gemma-3-12b-it-qat-q4_0-unquantized",
       "pipeline_tag": "image-text-to-text"
     },
     "gemma-4-e2b-it-4bit": {
@@ -362,12 +257,14 @@
       "repo_id": "mlx-community/gemma-4-12B-it-8bit",
       "sources": [
         "hf:api",
-        "readme:mlx"
+        "readme:mlx",
+        "upstream:google/gemma-4-12b-it"
       ],
+      "upstream": "google/gemma-4-12b-it",
       "pipeline_tag": "image-text-to-text"
     },
     "Llama-3.2-1B-Instruct-4bit": {
-      "family": "qwen_text",
+      "family": "llama_text",
       "repo_id": "mlx-community/Llama-3.2-1B-Instruct-4bit",
       "sources": [
         "hf:api",
@@ -407,25 +304,25 @@
       "pipeline_tag": "automatic-speech-recognition"
     },
     "gemma-3-1b-it-qat-4bit": {
-      "family": "qwen_text",
+      "family": "gemma3_text",
       "repo_id": "mlx-community/gemma-3-1b-it-qat-4bit",
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:google/gemma-3-1b-it"
+        "upstream:google/gemma-3-1b-it-qat-q4_0"
       ],
-      "upstream": "google/gemma-3-1b-it",
+      "upstream": "google/gemma-3-1b-it-qat-q4_0",
       "pipeline_tag": "text-generation"
     },
     "gemma-3-27b-it-qat-4bit": {
-      "family": "gemma4_vlm",
+      "family": "gemma3_vlm",
       "repo_id": "mlx-community/gemma-3-27b-it-qat-4bit",
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:OpenGVLab/InternVL3-1B-Instruct"
+        "upstream:google/gemma-3-27b-it-qat-q4_0-unquantized"
       ],
-      "upstream": "OpenGVLab/InternVL3-1B-Instruct",
+      "upstream": "google/gemma-3-27b-it-qat-q4_0-unquantized",
       "pipeline_tag": "image-text-to-text"
     },
     "Qwen3.5-9B-OptiQ-4bit": {
@@ -439,15 +336,15 @@
       "upstream": "Qwen/Qwen3.5-9B",
       "pipeline_tag": "text-generation"
     },
-    "Qwen3.5-9B-MLX-4bit": {
+    "gemma-4-12B-it-4bit": {
       "family": "gemma4_vlm",
-      "repo_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+      "repo_id": "mlx-community/gemma-4-12B-it-4bit",
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:Qwen/Qwen3.5-9B"
+        "upstream:google/gemma-4-12b-it"
       ],
-      "upstream": "Qwen/Qwen3.5-9B",
+      "upstream": "google/gemma-4-12b-it",
       "pipeline_tag": "image-text-to-text"
     },
     "gemma-4-26b-a4b-it-4bit": {
@@ -462,7 +359,7 @@
       "pipeline_tag": "image-text-to-text"
     },
     "Llama-3.2-3B-Instruct-4bit": {
-      "family": "qwen_text",
+      "family": "llama_text",
       "repo_id": "mlx-community/Llama-3.2-3B-Instruct-4bit",
       "sources": [
         "hf:api",
@@ -472,16 +369,14 @@
       "upstream": "mlx-community/Llama-3.2-3B-Instruct",
       "pipeline_tag": "text-generation"
     },
-    "Qwen3.5-9B-4bit": {
-      "family": "gemma4_vlm",
-      "repo_id": "mlx-community/Qwen3.5-9B-4bit",
+    "whisper-small-mlx": {
+      "family": "whisper_stt",
+      "repo_id": "mlx-community/whisper-small-mlx",
       "sources": [
         "hf:api",
-        "readme:mlx",
-        "upstream:Qwen/Qwen3.5-9B-Base"
+        "readme:mlx"
       ],
-      "upstream": "Qwen/Qwen3.5-9B-Base",
-      "pipeline_tag": "image-text-to-text"
+      "pipeline_tag": "automatic-speech-recognition"
     },
     "Qwen3-8B-4bit": {
       "family": "qwen_text",
@@ -516,19 +411,19 @@
       "upstream": "Qwen/Qwen3-0.6B",
       "pipeline_tag": "text-generation"
     },
-    "Qwen3.6-27B-4bit": {
+    "gemma-4-31b-it-4bit": {
       "family": "gemma4_vlm",
-      "repo_id": "mlx-community/Qwen3.6-27B-4bit",
+      "repo_id": "mlx-community/gemma-4-31b-it-4bit",
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:Qwen/Qwen3.6-27B"
+        "upstream:google/gemma-4-31b-it"
       ],
-      "upstream": "Qwen/Qwen3.6-27B",
+      "upstream": "google/gemma-4-31b-it",
       "pipeline_tag": "image-text-to-text"
     },
     "gemma-2-9b-it-4bit": {
-      "family": "qwen_text",
+      "family": "gemma3_text",
       "repo_id": "mlx-community/gemma-2-9b-it-4bit",
       "sources": [
         "hf:api",
@@ -539,7 +434,7 @@
       "pipeline_tag": "text-generation"
     },
     "Meta-Llama-3.1-8B-Instruct-4bit": {
-      "family": "qwen_text",
+      "family": "llama_text",
       "repo_id": "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
       "sources": [
         "hf:api",
@@ -550,7 +445,7 @@
       "pipeline_tag": "text-generation"
     },
     "diffusiongemma-26B-A4B-it-4bit": {
-      "family": "gemma4_vlm",
+      "family": "gemma3_text",
       "repo_id": "mlx-community/diffusiongemma-26B-A4B-it-4bit",
       "sources": [
         "hf:api",
@@ -566,9 +461,9 @@
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:Qwen/Qwen2.5-3B"
+        "upstream:Qwen/Qwen2.5-3B-Instruct"
       ],
-      "upstream": "Qwen/Qwen2.5-3B",
+      "upstream": "Qwen/Qwen2.5-3B-Instruct",
       "pipeline_tag": "text-generation"
     },
     "Qwen2.5-0.5B-Instruct-bf16": {
@@ -577,9 +472,9 @@
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:Qwen/Qwen2.5-0.5B"
+        "upstream:Qwen/Qwen2.5-0.5B-Instruct"
       ],
-      "upstream": "Qwen/Qwen2.5-0.5B",
+      "upstream": "Qwen/Qwen2.5-0.5B-Instruct",
       "pipeline_tag": "text-generation"
     },
     "Qwen2.5-32B-Instruct-4bit": {
@@ -588,30 +483,10 @@
       "sources": [
         "hf:api",
         "readme:mlx",
-        "upstream:Qwen/Qwen2.5-32B"
+        "upstream:Qwen/Qwen2.5-32B-Instruct"
       ],
-      "upstream": "Qwen/Qwen2.5-32B",
+      "upstream": "Qwen/Qwen2.5-32B-Instruct",
       "pipeline_tag": "text-generation"
-    },
-    "DeepSeek-V4-Flash-2bit-DQ": {
-      "family": "qwen_text",
-      "repo_id": "mlx-community/DeepSeek-V4-Flash-2bit-DQ",
-      "sources": [
-        "hf:api",
-        "readme:mlx"
-      ],
-      "pipeline_tag": "text-generation"
-    },
-    "Qwen3.6-35B-A3B-8bit": {
-      "family": "gemma4_vlm",
-      "repo_id": "mlx-community/Qwen3.6-35B-A3B-8bit",
-      "sources": [
-        "hf:api",
-        "readme:mlx",
-        "upstream:Qwen/Qwen3.6-35B-A3B"
-      ],
-      "upstream": "Qwen/Qwen3.6-35B-A3B",
-      "pipeline_tag": "image-text-to-text"
     },
     "Qwen3-0.6B-4bit": {
       "family": "qwen_text",
@@ -640,9 +515,65 @@
       "repo_id": "mlx-community/gemma-4-12B-it-qat-4bit",
       "sources": [
         "hf:api",
-        "readme:mlx"
+        "readme:mlx",
+        "upstream:google/gemma-4-12b-it"
       ],
+      "upstream": "google/gemma-4-12b-it",
       "pipeline_tag": "image-text-to-text"
+    },
+    "Flux-1.lite-8B-MLX-Q4": {
+      "family": "flux_lite",
+      "repo_id": "mlx-community/flux.1-lite-8B-MLX-Q4",
+      "sources": [
+        "hf:api",
+        "readme:mlx",
+        "upstream:Freepik/flux.1-lite-8B"
+      ],
+      "upstream": "Freepik/flux.1-lite-8B",
+      "pipeline_tag": "text-to-image",
+      "readme_hints": {
+        "source": "readme",
+        "flux_base_model": "dev",
+        "quality_steps": 50,
+        "default_guidance": 4.0,
+        "use_guidance": true,
+        "quantize": 4,
+        "default_width": 1024,
+        "default_height": 1024
+      }
+    },
+    "Kokoro-82M-6bit": {
+      "family": "kokoro_tts",
+      "repo_id": "mlx-community/Kokoro-82M-6bit",
+      "sources": [
+        "hf:api",
+        "readme:mlx",
+        "upstream:hexagrad/Kokoro-82M"
+      ],
+      "upstream": "hexagrad/Kokoro-82M",
+      "pipeline_tag": "text-to-speech"
+    },
+    "Qwen3-Embedding-0.6B-4bit-DWQ": {
+      "family": "qwen3_embedding",
+      "repo_id": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
+      "sources": [
+        "hf:api",
+        "readme:mlx",
+        "upstream:Qwen/Qwen3-Embedding-0.6B"
+      ],
+      "upstream": "Qwen/Qwen3-Embedding-0.6B",
+      "pipeline_tag": "text-generation"
+    },
+    "jina-reranker-v3-4bit-mxfp4": {
+      "family": "jina_reranker",
+      "repo_id": "mlx-community/jina-reranker-v3-4bit-mxfp4",
+      "sources": [
+        "hf:api",
+        "readme:mlx",
+        "upstream:jinaai/jina-reranker-v3"
+      ],
+      "upstream": "jinaai/jina-reranker-v3",
+      "pipeline_tag": "text-ranking"
     }
   },
   "patterns": [
@@ -695,6 +626,26 @@
         "instruct"
       ],
       "family": "qwen_text"
+    },
+    {
+      "match": "llama",
+      "family": "llama_text"
+    },
+    {
+      "match": "meta-llama",
+      "family": "llama_text"
+    },
+    {
+      "match": "parakeet",
+      "family": "parakeet_stt"
+    },
+    {
+      "match": "gemma-3",
+      "family": "gemma3_vlm"
+    },
+    {
+      "match": "gemma-2",
+      "family": "gemma3_text"
     }
   ]
 }
