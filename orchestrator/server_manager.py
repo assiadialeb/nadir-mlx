@@ -132,20 +132,97 @@ def _find_orchestrator_launcher_pids(port: int) -> list[int]:
     return pids
 
 
-def _terminate_launchers_on_port(port: int) -> None:
-    """Stop orchestrator launcher processes and free the TCP port."""
-    target_pids = set(_find_orchestrator_launcher_pids(port))
-    target_pids.update(_find_listener_pids(port))
+def _is_process_alive(pid: int) -> bool:
+    """Return True when a PID still exists."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
-    for pid in target_pids:
+
+def _find_child_pids(parent_pid: int) -> list[int]:
+    """Return direct child PIDs for a parent process."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", str(parent_pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+    if result.returncode not in (0, 1):
+        return []
+
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        token = line.strip()
+        if token.isdigit():
+            pids.append(int(token))
+    return pids
+
+
+def _collect_descendant_pids(root_pid: int) -> set[int]:
+    """Collect a process and all of its descendants."""
+    collected: set[int] = set()
+    queue = [root_pid]
+    while queue:
+        pid = queue.pop()
+        if pid in collected or pid <= 0:
+            continue
+        collected.add(pid)
+        queue.extend(_find_child_pids(pid))
+    return collected
+
+
+def _collect_stop_targets(instance: InferenceInstance) -> set[int]:
+    """Gather every PID that should be stopped for an inference instance."""
+    targets = set(_find_orchestrator_launcher_pids(instance.port))
+    targets.update(_find_listener_pids(instance.port))
+    if instance.pid:
+        targets.update(_collect_descendant_pids(instance.pid))
+    return {pid for pid in targets if pid > 0}
+
+
+def _force_stop_pids(pids: set[int], grace_seconds: float = 2.0) -> set[int]:
+    """Terminate processes gracefully, then SIGKILL any survivors."""
+    if not pids:
+        return set()
+
+    for pid in pids:
         _terminate_pid(pid, signal.SIGTERM)
 
-    if not _wait_for_port_release(port, 3.0):
-        target_pids.update(_find_orchestrator_launcher_pids(port))
-        target_pids.update(_find_listener_pids(port))
-        for pid in target_pids:
+    deadline = time.time() + grace_seconds
+    while time.time() < deadline:
+        if not any(_is_process_alive(pid) for pid in pids):
+            return set()
+        time.sleep(0.2)
+
+    survivors = {pid for pid in pids if _is_process_alive(pid)}
+    for pid in survivors:
+        _terminate_pid(pid, signal.SIGKILL)
+
+    time.sleep(0.3)
+    return {pid for pid in survivors if _is_process_alive(pid)}
+
+
+def _terminate_launchers_on_port(port: int) -> None:
+    """Stop orchestrator launcher processes and free the TCP port."""
+    targets = set(_find_orchestrator_launcher_pids(port))
+    targets.update(_find_listener_pids(port))
+    survivors = _force_stop_pids(targets, grace_seconds=2.0)
+
+    if survivors:
+        for pid in survivors:
             _terminate_pid(pid, signal.SIGKILL)
-        _wait_for_port_release(port, 2.0)
+        time.sleep(0.3)
+
+    _wait_for_port_release(port, 2.0)
 
 
 def _terminate_pid(pid: int, sig: signal.Signals) -> None:
@@ -437,15 +514,28 @@ def check_instance_status(instance: InferenceInstance) -> str:
 
 
 def stop_instance(instance: InferenceInstance) -> None:
-    """Gracefully terminate or force-kill the server and free its port."""
+    """Terminate the inference server and ensure the port is released."""
+    targets = _collect_stop_targets(instance)
+    survivors = _force_stop_pids(targets, grace_seconds=2.0)
+
     _terminate_launchers_on_port(instance.port)
 
-    if not _wait_for_port_release(instance.port, 2.0):
-        remaining_pids = _find_listener_pids(instance.port)
+    remaining_launchers = set(_find_orchestrator_launcher_pids(instance.port))
+    remaining_listeners = set(_find_listener_pids(instance.port))
+    survivors = survivors | remaining_launchers | remaining_listeners
+    if survivors:
+        for pid in survivors:
+            _terminate_pid(pid, signal.SIGKILL)
+        time.sleep(0.5)
+
+    if _find_orchestrator_launcher_pids(instance.port) or not is_port_free(instance.port):
+        remaining_pids = (
+            _find_orchestrator_launcher_pids(instance.port) or _find_listener_pids(instance.port)
+        )
         pid_list = ", ".join(str(pid) for pid in remaining_pids) or "unknown"
         raise RuntimeError(
             f"Port {instance.port} is still in use (PID: {pid_list}). "
-            "Another process may be holding it."
+            "The server could not be stopped completely."
         )
 
     instance.pid = None
@@ -456,7 +546,7 @@ def stop_instance(instance: InferenceInstance) -> None:
 
 def delete_instance(instance: InferenceInstance) -> None:
     """Stop a running instance if needed, then remove its database record."""
-    if instance.status in ("RUNNING", "LOADING") and instance.pid:
+    if instance.status in ("RUNNING", "LOADING"):
         stop_instance(instance)
     instance.delete()
 
