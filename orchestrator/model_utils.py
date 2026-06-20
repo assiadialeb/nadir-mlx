@@ -372,6 +372,23 @@ def get_model_capabilities(folder_name: str) -> dict[str, bool]:
     }
 
 
+def get_model_folder_size_bytes(folder_name: str) -> int:
+    """Return total on-disk size for a model folder (bytes)."""
+    model_path = get_model_path(folder_name)
+    if not model_path.is_dir():
+        return 0
+
+    total = 0
+    for root, _dirs, files in os.walk(model_path):
+        for file_name in files:
+            file_path = Path(root) / file_name
+            try:
+                total += file_path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
 def prepare_model_for_text_inference(model_path: os.PathLike[str] | str) -> None:
     """Patch configs that mlx_lm cannot load natively (e.g. gemma4_unified)."""
     path = Path(model_path)

@@ -1,0 +1,57 @@
+<div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-lg space-y-4">
+    <form method="GET" action="{% url 'models' %}" class="flex flex-col lg:flex-row gap-3 lg:items-end">
+        <input type="hidden" name="tab" value="{{ filter_tab }}">
+        {% if filter_cap %}<input type="hidden" name="cap" value="{{ filter_cap }}">{% endif %}
+        <div class="flex-grow">
+            <label for="models-filter-q" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Rechercher</label>
+            <div class="relative">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </div>
+                <input type="text" name="q" id="models-filter-q" value="{{ filter_query }}"
+                    class="block w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="{{ filter_search_placeholder }}">
+            </div>
+        </div>
+        <div class="w-full lg:w-52">
+            <label for="models-filter-sort" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Tri</label>
+            <select name="sort" id="models-filter-sort"
+                class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                {% for sort_value, sort_label in sort_options %}
+                <option value="{{ sort_value }}" {% if filter_sort == sort_value %}selected{% endif %}>{{ sort_label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit"
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-all">
+            Appliquer
+        </button>
+    </form>
+
+    <div>
+        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Capability</p>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'models' %}?tab={{ filter_tab }}{% if filter_query %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_sort != 'name_asc' %}&sort={{ filter_sort }}{% endif %}"
+                class="px-2.5 py-1 rounded-full text-xxs font-semibold border transition-all {% if not filter_cap %}bg-indigo-50 text-indigo-700 border-indigo-200{% else %}bg-white text-slate-600 border-slate-200 hover:border-slate-300{% endif %}">
+                Tous
+            </a>
+            {% for cap in capability_filters %}
+            <a href="{% url 'models' %}?tab={{ filter_tab }}&cap={{ cap.id }}{% if filter_query %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_sort != 'name_asc' %}&sort={{ filter_sort }}{% endif %}"
+                class="px-2.5 py-1 rounded-full text-xxs font-semibold border transition-all {% if filter_cap == cap.id %}bg-indigo-50 text-indigo-700 border-indigo-200{% else %}bg-white text-slate-600 border-slate-200 hover:border-slate-300{% endif %}">
+                {{ cap.short_label }}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <p class="field-hint">
+        {% if filter_has_filters %}
+        {{ filter_count }} modèle{{ filter_count|pluralize }} sur {{ filter_total }}
+        {% else %}
+        {{ filter_total }} modèle{{ filter_total|pluralize }}{% if filter_tab == 'installed' %} installé{{ filter_total|pluralize:"s" }}{% endif %}
+        {% endif %}
+        {% if filter_tab == 'hub' and filter_fetch_limit %}
+        · affichage limité aux {{ filter_fetch_limit }} premiers résultats HF
+        {% endif %}
+    </p>
+</div>

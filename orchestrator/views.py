@@ -1,8 +1,6 @@
 import json
-import re
 from urllib.parse import urlencode
 
-import requests
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
@@ -34,7 +32,15 @@ from .server_config_schema import (
     config_fields_for_ui_json,
     resolve_server_config_from_request,
 )
-from .ui_selectors import list_installed_models, models_by_server_type_json
+from .ui_selectors import (
+    apply_installed_models_filters,
+    fetch_hf_models,
+    hf_fetch_limit_for_filters,
+    list_installed_models,
+    parse_installed_models_query,
+    models_by_server_type_json,
+    SORT_OPTIONS,
+)
 from .benchmark_service import parse_benchmark_form, start_benchmark
 
 _startup_reconciled = False
@@ -70,89 +76,7 @@ def logout_view(request):
     return redirect('login')
 
 
-# Model parsing helper
-def _extract_param_size(name: str) -> float | None:
-    param_match = re.search(r"(\d+(?:\.\d+)?)[Bb]", name)
-    return float(param_match.group(1)) if param_match else None
-
-
-def _extract_quantization_bits(name: str) -> int:
-    quant_match = re.search(r"(\d+)bit", name)
-    if quant_match:
-        return int(quant_match.group(1))
-
-    lowered = name.lower()
-    if "fp16" in lowered or "f16" in lowered:
-        return 16
-    if "fp32" in lowered:
-        return 32
-    if "q4" in lowered:
-        return 4
-    if "q8" in lowered:
-        return 8
-    return 16
-
-
-def _detect_use_case(name: str, tags: list[str] | None) -> str:
-    is_chat = "instruct" in name.lower() or "chat" in name.lower() or "it" in name.lower().split("-")
-    if tags:
-        is_chat = is_chat or any(t.lower() in ["conversational", "text-generation"] for t in tags)
-    return "Chat / Instruct" if is_chat else "Text Generation"
-
-
-def _estimate_ram_gb(param_size: float | None, bits: int) -> str:
-    if param_size is None:
-        return "Unknown"
-    ram_est = param_size * (bits / 8.0) * 1.2
-    return f"{ram_est:.1f} GB"
-
-
-def parse_hf_model(repo_id, tags=None):
-    name = repo_id.split('/')[-1]
-    param_size = _extract_param_size(name)
-    bits = _extract_quantization_bits(name)
-    use_case = _detect_use_case(name, tags)
-    ram_str = _estimate_ram_gb(param_size, bits)
-
-    return {
-        'repo_id': repo_id,
-        'name': name,
-        'param_size': f"{param_size}B" if param_size else "Unknown",
-        'bits': f"{bits}bit",
-        'use_case': use_case,
-        'ram_est': ram_str
-    }
-
-
-def _fetch_hf_models(query: str) -> list[dict]:
-    url = "https://huggingface.co/api/models"
-    params = {
-        'author': 'mlx-community',
-        'sort': 'downloads',
-        'direction': '-1',
-        'limit': 24,
-    }
-    if query:
-        params['search'] = query
-
-    response = requests.get(url, params=params, timeout=8)
-    response.raise_for_status()
-    parsed_models = []
-    for model_data in response.json():
-        repo_id = model_data.get('id', '')
-        if not repo_id:
-            continue
-        parsed = parse_hf_model(repo_id, model_data.get('tags', []))
-        parsed['downloads'] = model_data.get('downloads', 0)
-        parsed['likes'] = model_data.get('likes', 0)
-        download_record = ModelDownload.objects.filter(repo_id=repo_id).first()
-        if download_record:
-            parsed['download_status'] = download_record.status
-            parsed['error_message'] = download_record.error_message
-        else:
-            parsed['download_status'] = 'NOT_STARTED'
-        parsed_models.append(parsed)
-    return parsed_models
+# Model parsing helper — kept for legacy imports; HF parsing lives in ui_selectors.
 
 
 @login_required
@@ -173,23 +97,61 @@ def models_view(request):
     if active_tab not in ('installed', 'hub'):
         active_tab = 'installed'
 
-    installed_models = list_installed_models()
+    installed_models_all = list_installed_models()
+    filter_query = ""
+    filter_cap = ""
+    filter_sort = "name_asc"
+    filter_total = 0
+    filter_count = 0
+    filter_has_filters = False
+    filter_fetch_limit = 0
     downloading_models = ModelDownload.objects.filter(status='DOWNLOADING').order_by('-created_at')
-    query = request.GET.get('q', '')
-    hf_models = []
+    hf_models: list[dict] = []
+    installed_models = installed_models_all
 
-    if active_tab == 'hub':
+    if active_tab == 'installed':
+        filter_query, filter_cap, filter_sort = parse_installed_models_query(request.GET)
+        installed_models = apply_installed_models_filters(
+            installed_models_all,
+            query=filter_query,
+            capability=filter_cap,
+            sort=filter_sort,
+        )
+        filter_total = len(installed_models_all)
+        filter_count = len(installed_models)
+        filter_has_filters = bool(filter_query or filter_cap or filter_sort != 'name_asc')
+    elif active_tab == 'hub':
+        filter_query, filter_cap, filter_sort = parse_installed_models_query(request.GET)
+        filter_fetch_limit = hf_fetch_limit_for_filters(filter_query, filter_cap, filter_sort)
+        filter_has_filters = bool(filter_query or filter_cap or filter_sort != 'name_asc')
         try:
-            hf_models = _fetch_hf_models(query)
+            hf_models_all = fetch_hf_models(filter_query, limit=filter_fetch_limit)
+            hf_models = apply_installed_models_filters(
+                hf_models_all,
+                query=filter_query,
+                capability=filter_cap,
+                sort=filter_sort,
+            )
+            filter_total = len(hf_models_all)
+            filter_count = len(hf_models)
         except Exception as exc:
             messages.error(request, f"Impossible de contacter l'API Hugging Face : {exc}")
 
     return render(request, 'orchestrator/models.html', {
         'active_tab': active_tab,
         'installed_models': installed_models,
+        'installed_models_total': len(installed_models_all),
+        'filter_query': filter_query,
+        'filter_cap': filter_cap,
+        'filter_sort': filter_sort,
+        'filter_total': filter_total,
+        'filter_count': filter_count,
+        'filter_has_filters': filter_has_filters,
+        'filter_fetch_limit': filter_fetch_limit,
+        'sort_options': SORT_OPTIONS,
+        'capability_filters': SERVER_TYPES,
         'downloading_models': downloading_models,
         'models': hf_models,
-        'query': query,
     })
 
 
@@ -236,7 +198,12 @@ def download_model_view(request):
         else:
             messages.error(request, "Aucun identifiant de modèle spécifié.")
     tab = request.POST.get('tab', 'hub')
-    return redirect(f"{reverse('models')}?{urlencode({'tab': tab})}")
+    params: dict[str, str] = {'tab': tab}
+    for key in ('q', 'cap', 'sort'):
+        value = (request.POST.get(key) or '').strip()
+        if value:
+            params[key] = value
+    return redirect(f"{reverse('models')}?{urlencode(params)}")
 
 
 @login_required

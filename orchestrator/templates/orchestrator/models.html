@@ -17,11 +17,11 @@
         <a href="{% url 'models' %}?tab=installed"
             class="px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-all {% if active_tab == 'installed' %}bg-white border border-b-white border-slate-200 text-indigo-700 -mb-px{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
             Installés
-            {% if installed_models %}
-            <span class="ml-1 text-xxs px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">{{ installed_models|length }}</span>
+            {% if installed_models_total %}
+            <span class="ml-1 text-xxs px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">{{ installed_models_total }}</span>
             {% endif %}
         </a>
-        <a href="{% url 'models' %}?tab=hub{% if query %}&q={{ query|urlencode }}{% endif %}"
+        <a href="{% url 'models' %}?tab=hub{% if filter_query and active_tab == 'hub' %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_cap and active_tab == 'hub' %}&cap={{ filter_cap }}{% endif %}{% if filter_sort != 'name_asc' and active_tab == 'hub' %}&sort={{ filter_sort }}{% endif %}"
             class="px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-all {% if active_tab == 'hub' %}bg-white border border-b-white border-slate-200 text-indigo-700 -mb-px{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
             Hugging Face
         </a>
@@ -49,6 +49,10 @@
         </div>
         {% endif %}
 
+        {% if installed_models_total %}
+        {% include 'orchestrator/partials/models_filters.html' with filter_tab='installed' filter_search_placeholder='Filtrer par nom de dossier…' %}
+        {% endif %}
+
         {% if installed_models %}
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {% for model in installed_models %}
@@ -57,7 +61,7 @@
                     <h3 class="text-sm font-bold text-slate-900 break-all" title="{{ model.name }}">{{ model.name }}</h3>
                     <span class="text-xxs px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">Prêt</span>
                 </div>
-                <p class="text-xxs text-slate-500 mt-1 font-mono">./models/{{ model.name }}</p>
+                <p class="text-xxs text-slate-500 mt-1 font-mono">./models/{{ model.name }} · {{ model.disk_size_label }}</p>
                 <div class="flex flex-wrap gap-1.5 mt-3">
                     {% include 'orchestrator/partials/capability_badges.html' %}
                 </div>
@@ -82,6 +86,13 @@
             </div>
             {% endfor %}
         </div>
+        {% elif installed_models_total %}
+        <div class="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-500">
+            <p class="text-sm">Aucun modèle ne correspond aux filtres sélectionnés.</p>
+            <a href="{% url 'models' %}?tab=installed" class="mt-3 inline-block text-sm font-semibold text-indigo-600 hover:text-indigo-700">
+                Réinitialiser les filtres &rarr;
+            </a>
+        </div>
         {% else %}
         <div class="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-500">
             <p class="text-sm">Aucun modèle installé dans <code class="text-slate-600">./models</code>.</p>
@@ -94,25 +105,20 @@
     {% else %}
     <!-- Hugging Face tab -->
     <div class="space-y-6">
-        <div class="bg-white border border-slate-200 p-6 rounded-2xl shadow-xl">
-            <form method="GET" action="{% url 'models' %}" class="flex flex-col sm:flex-row gap-3">
-                <input type="hidden" name="tab" value="hub">
-                <div class="relative flex-grow">
-                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    </div>
-                    <input type="text" name="q" value="{{ query }}"
-                        class="block w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl bg-white text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                        placeholder="Rechercher (ex: llama, mistral, flux)...">
-                </div>
-                <button type="submit"
-                    class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white text-sm font-semibold rounded-xl shadow-lg active:scale-95">
-                    Rechercher
-                </button>
-            </form>
-        </div>
+        {% include 'orchestrator/partials/models_filters.html' with filter_tab='hub' filter_search_placeholder='Rechercher (ex: llama, flux, kokoro)…' %}
 
+        {% if models %}
         {% include 'orchestrator/partials/hf_model_grid.html' %}
+        {% elif filter_total %}
+        <div class="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-500">
+            <p class="text-sm">Aucun modèle Hugging Face ne correspond aux filtres sélectionnés.</p>
+            <a href="{% url 'models' %}?tab=hub" class="mt-3 inline-block text-sm font-semibold text-indigo-600 hover:text-indigo-700">
+                Réinitialiser les filtres &rarr;
+            </a>
+        </div>
+        {% else %}
+        {% include 'orchestrator/partials/hf_model_grid.html' %}
+        {% endif %}
     </div>
     {% endif %}
 </div>
