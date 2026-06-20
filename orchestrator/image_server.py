@@ -6,6 +6,7 @@ import argparse
 import base64
 import json
 import random
+import threading
 import time
 from pathlib import Path
 from typing import Literal, Optional
@@ -23,6 +24,7 @@ from orchestrator.image_model_profiles import ImageModelProfile
 
 app = FastAPI(title="MLX Image Server")
 _state: dict[str, object] = {}
+_generation_lock = threading.Lock()
 
 
 class ImageGenerationRequest(BaseModel):
@@ -113,23 +115,30 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
     guidance = profile.default_guidance if body.guidance is None else body.guidance
 
     data: list[dict[str, str]] = []
-    try:
-        for _ in range(body.n):
-            seed = body.seed if body.seed is not None else random.randint(0, 2**31 - 1)
-            png_bytes = generate_image_bytes(
-                model,
-                profile,
-                prompt=body.prompt,
-                seed=seed,
-                num_inference_steps=steps,
-                width=width,
-                height=height,
-                guidance=guidance,
-                negative_prompt=body.negative_prompt,
-            )
-            data.append({"b64_json": base64.b64encode(png_bytes).decode("ascii")})
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    with _generation_lock:
+        print(
+            f"[image] generation started: quality={body.quality} steps={steps} "
+            f"size={width}x{height} n={body.n}",
+            flush=True,
+        )
+        try:
+            for index in range(body.n):
+                seed = body.seed if body.seed is not None else random.randint(0, 2**31 - 1)
+                png_bytes = generate_image_bytes(
+                    model,
+                    profile,
+                    prompt=body.prompt,
+                    seed=seed,
+                    num_inference_steps=steps,
+                    width=width,
+                    height=height,
+                    guidance=guidance,
+                    negative_prompt=body.negative_prompt,
+                )
+                data.append({"b64_json": base64.b64encode(png_bytes).decode("ascii")})
+                print(f"[image] completed image {index + 1}/{body.n}", flush=True)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"created": int(time.time()), "data": data}
 
