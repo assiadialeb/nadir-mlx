@@ -107,6 +107,47 @@ def _find_listener_pids(port: int) -> list[int]:
     return pids
 
 
+def _find_orchestrator_launcher_pids(port: int) -> list[int]:
+    """Return PIDs for orchestrator launcher modules bound to a port."""
+    pattern = f"orchestrator\\.mlx_.*launcher.*--port {port}"
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", pattern],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+    if result.returncode not in (0, 1):
+        return []
+
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        token = line.strip()
+        if token.isdigit():
+            pids.append(int(token))
+    return pids
+
+
+def _terminate_launchers_on_port(port: int) -> None:
+    """Stop orchestrator launcher processes and free the TCP port."""
+    target_pids = set(_find_orchestrator_launcher_pids(port))
+    target_pids.update(_find_listener_pids(port))
+
+    for pid in target_pids:
+        _terminate_pid(pid, signal.SIGTERM)
+
+    if not _wait_for_port_release(port, 3.0):
+        target_pids.update(_find_orchestrator_launcher_pids(port))
+        target_pids.update(_find_listener_pids(port))
+        for pid in target_pids:
+            _terminate_pid(pid, signal.SIGKILL)
+        _wait_for_port_release(port, 2.0)
+
+
 def _terminate_pid(pid: int, sig: signal.Signals) -> None:
     """Send a signal to a process, preferring its entire process group."""
     try:
@@ -249,6 +290,13 @@ def _prepare_model_for_launch(model_path: str, launch_mode: LaunchMode) -> None:
     prepare_model_for_text_inference(model_path)
 
 
+def _get_launch_env(launch_mode: LaunchMode) -> dict[str, str]:
+    env = os.environ.copy()
+    if launch_mode == "IMAGE":
+        env["TQDM_DISABLE"] = "1"
+    return env
+
+
 def _get_or_create_instance(
     model_name: str,
     port: int,
@@ -296,8 +344,10 @@ def start_instance(
         port = get_free_port()
     else:
         port = int(port)
-        if not is_port_free(port):
-            raise ValueError(f"Port {port} is already in use.")
+
+    _terminate_launchers_on_port(port)
+    if not is_port_free(port):
+        raise ValueError(f"Port {port} is already in use.")
 
     os.makedirs(settings.LOGS_DIR, exist_ok=True)
     log_file_path = os.path.join(settings.LOGS_DIR, f"{model_name}_{port}.log")
@@ -312,6 +362,7 @@ def start_instance(
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=_get_launch_env(launch_mode),
         )
         instance.pid = process.pid
         instance.status = "LOADING"
@@ -387,19 +438,7 @@ def check_instance_status(instance: InferenceInstance) -> str:
 
 def stop_instance(instance: InferenceInstance) -> None:
     """Gracefully terminate or force-kill the server and free its port."""
-    target_pids: set[int] = set()
-    if instance.pid:
-        target_pids.add(instance.pid)
-    target_pids.update(_find_listener_pids(instance.port))
-
-    for pid in target_pids:
-        _terminate_pid(pid, signal.SIGTERM)
-
-    if not _wait_for_port_release(instance.port, 3.0):
-        target_pids.update(_find_listener_pids(instance.port))
-        for pid in target_pids:
-            _terminate_pid(pid, signal.SIGKILL)
-        _wait_for_port_release(instance.port, 2.0)
+    _terminate_launchers_on_port(instance.port)
 
     if not _wait_for_port_release(instance.port, 2.0):
         remaining_pids = _find_listener_pids(instance.port)

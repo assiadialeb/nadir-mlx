@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import random
 import threading
 import time
@@ -117,8 +118,8 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
     data: list[dict[str, str]] = []
     with _generation_lock:
         print(
-            f"[image] generation started: quality={body.quality} steps={steps} "
-            f"size={width}x{height} n={body.n}",
+            f"[image pid={os.getpid()}] generation started: quality={body.quality} "
+            f"steps={steps} size={width}x{height} n={body.n}",
             flush=True,
         )
         try:
@@ -153,6 +154,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    os.environ.setdefault("TQDM_DISABLE", "1")
     args = _parse_args()
     model_path = Path(args.model).resolve()
     if not model_path.is_dir():
@@ -168,7 +170,7 @@ def main() -> None:
     _state["model_id"] = args.model_id or model_path.name
     _state["created"] = time.time()
 
-    print(f"MLX image server ready on http://{args.host}:{args.port}")
+    print(f"MLX image server PID {os.getpid()} ready on http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
