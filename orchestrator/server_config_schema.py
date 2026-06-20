@@ -12,6 +12,7 @@ from orchestrator.kokoro_voices import (
     KOKORO_LANG_CODES,
     KOKORO_VOICES,
 )
+from orchestrator.model_registry import apply_registry_server_defaults
 
 LaunchModeId = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
 
@@ -198,11 +199,16 @@ def get_fields_for_mode(launch_mode: str) -> list[ConfigFieldSpec]:
     ]
 
 
-def build_default_server_config(launch_mode: str) -> dict[str, Any]:
+def build_default_server_config(
+    launch_mode: str,
+    model_name: str | None = None,
+) -> dict[str, Any]:
     config: dict[str, Any] = {"advanced": {}}
     for field in get_fields_for_mode(launch_mode):
         if field.default is not None:
             config[field.name] = field.default
+    if model_name:
+        config = apply_registry_server_defaults(launch_mode, model_name, config)
     return config
 
 
@@ -289,7 +295,7 @@ def validate_and_normalize_server_config(
     """Merge defaults, validate fields, and return a storable server_config dict."""
     raw = dict(raw_config or {})
     advanced_raw = raw.pop("advanced", {})
-    normalized = build_default_server_config(launch_mode)
+    normalized = build_default_server_config(launch_mode, model_name)
 
     for field in get_fields_for_mode(launch_mode):
         if field.name not in raw:

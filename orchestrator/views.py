@@ -22,6 +22,10 @@ from .server_manager import (
     get_instance_logs,
 )
 from .server_types import SERVER_TYPES
+from .model_registry import (
+    build_registry_defaults_json,
+    build_registry_metadata_json,
+)
 from .server_config_schema import (
     advanced_keys_for_ui_json,
     config_fields_for_ui_json,
@@ -213,6 +217,7 @@ def dashboard_view(request):
 def servers_view(request):
     _ensure_downloads_reconciled()
     installed_models = list_installed_models()
+    installed_names = [model["name"] for model in installed_models]
     instances = InferenceInstance.objects.all().order_by('-created_at')
     for instance in instances:
         check_instance_status(instance)
@@ -224,6 +229,8 @@ def servers_view(request):
         'models_by_mode_json': models_by_server_type_json(installed_models),
         'config_fields_json': config_fields_for_ui_json(),
         'advanced_keys_json': advanced_keys_for_ui_json(),
+        'registry_defaults_json': build_registry_defaults_json(installed_names),
+        'registry_metadata_json': build_registry_metadata_json(installed_names),
     })
 
 

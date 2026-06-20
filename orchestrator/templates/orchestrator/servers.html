@@ -50,6 +50,7 @@
                         Aucun modèle compatible installé.
                         <a href="{% url 'models' %}?tab=hub" class="underline font-semibold">Installer depuis Hugging Face</a>
                     </p>
+                    <p id="registry-hint" class="mt-1.5 text-xxs text-slate-500 hidden"></p>
                 </div>
 
                 <div>
@@ -241,6 +242,8 @@
 const modelsByMode = {{ models_by_mode_json|safe }};
 const configFieldsByMode = {{ config_fields_json|safe }};
 const advancedKeysByMode = {{ advanced_keys_json|safe }};
+const registryDefaultsByMode = {{ registry_defaults_json|safe }};
+const registryMetadata = {{ registry_metadata_json|safe }};
 
 function openDeleteInstanceModal(button) {
     const form = document.getElementById('delete-instance-form');
@@ -254,7 +257,40 @@ function closeDeleteInstanceModal() {
     document.getElementById('delete-instance-modal').classList.add('hidden');
 }
 
-function renderConfigFields(mode) {
+function applyRegistryDefaults(mode, modelName) {
+    const hint = document.getElementById('registry-hint');
+    if (!modelName) {
+        hint.classList.add('hidden');
+        hint.textContent = '';
+        return;
+    }
+
+    const defaults = (registryDefaultsByMode[mode] || {})[modelName] || {};
+    Object.entries(defaults).forEach(([key, value]) => {
+        const input = document.getElementById(`config_${key}`);
+        if (!input) return;
+        if (input.type === 'checkbox') {
+            input.checked = Boolean(value);
+            return;
+        }
+        input.value = value;
+    });
+
+    const meta = registryMetadata[modelName];
+    if (meta && (meta.upstream || meta.family_id)) {
+        const parts = [];
+        if (meta.family_id) parts.push(`Profil ${meta.family_id}`);
+        if (meta.upstream) parts.push(`upstream ${meta.upstream}`);
+        hint.textContent = `Defaults registry: ${parts.join(' · ')}`;
+        hint.classList.remove('hidden');
+        return;
+    }
+
+    hint.classList.add('hidden');
+    hint.textContent = '';
+}
+
+function renderConfigFields(mode, modelName = '') {
     const container = document.getElementById('config-fields');
     const hint = document.getElementById('advanced-keys-hint');
     const fields = configFieldsByMode[mode] || [];
@@ -313,6 +349,7 @@ function renderConfigFields(mode) {
         ? `Clés autorisées: ${allowed.join(', ')}`
         : 'Aucune option avancée pour ce type de serveur.';
     document.getElementById('config_advanced').value = '';
+    applyRegistryDefaults(mode, modelName);
 }
 
 function updateModelSelect() {
@@ -323,9 +360,10 @@ function updateModelSelect() {
     const hint = document.getElementById('server-type-hint');
     const mode = modeSelect.value;
     const compatible = modelsByMode[mode] || [];
+    const previousModel = modelSelect.value;
 
     hint.textContent = modeSelect.selectedOptions[0]?.dataset.api || '';
-    renderConfigFields(mode);
+    renderConfigFields(mode, previousModel);
 
     modelSelect.innerHTML = '<option value="">Sélectionnez un modèle</option>';
     compatible.forEach(name => {
@@ -338,7 +376,20 @@ function updateModelSelect() {
     const hasModels = compatible.length > 0;
     emptyHint.classList.toggle('hidden', hasModels);
     submitBtn.disabled = !hasModels;
+
+    if (previousModel && compatible.includes(previousModel)) {
+        modelSelect.value = previousModel;
+        applyRegistryDefaults(mode, previousModel);
+    } else {
+        applyRegistryDefaults(mode, '');
+    }
 }
+
+document.getElementById('launch_mode').addEventListener('change', updateModelSelect);
+document.getElementById('model_name').addEventListener('change', () => {
+    const mode = document.getElementById('launch_mode').value;
+    applyRegistryDefaults(mode, document.getElementById('model_name').value);
+});
 
 document.getElementById('toggle-config-panel').addEventListener('click', () => {
     const panel = document.getElementById('config-panel');
@@ -347,12 +398,12 @@ document.getElementById('toggle-config-panel').addEventListener('click', () => {
     chevron.classList.toggle('rotate-90');
 });
 
-document.getElementById('launch_mode').addEventListener('change', updateModelSelect);
 document.getElementById('create-server-form').addEventListener('submit', (e) => {
     if (!document.getElementById('model_name').value) {
         e.preventDefault();
     }
 });
+
 updateModelSelect();
 </script>
 {% endblock %}

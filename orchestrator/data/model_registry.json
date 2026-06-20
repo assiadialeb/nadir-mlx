@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "families": {
+    "flux_lite": {
+      "launch_modes": ["IMAGE"],
+      "image_profile_ref": "flux_lite",
+      "server_config": {
+        "default_quality": "balanced"
+      },
+      "sources": ["readme:mlx", "mflux:flux_lite"]
+    },
+    "flux_schnell": {
+      "launch_modes": ["IMAGE"],
+      "image_profile_ref": "flux_schnell",
+      "server_config": {
+        "default_quality": "fast"
+      },
+      "sources": ["registry:mflux"]
+    },
+    "z_image_turbo": {
+      "launch_modes": ["IMAGE"],
+      "image_profile_ref": "z_image_turbo",
+      "server_config": {
+        "default_quality": "fast"
+      },
+      "sources": ["registry:mflux"]
+    },
+    "kokoro_tts": {
+      "launch_modes": ["TTS"],
+      "server_config": {
+        "voice_id": "ff_siwis",
+        "lang_code": "f",
+        "speaking_rate": 1.0
+      },
+      "sources": ["manual:verified", "mlx-audio:defaults"]
+    },
+    "whisper_stt": {
+      "launch_modes": ["STT"],
+      "server_config": {
+        "chunk_duration": 30.0
+      },
+      "sources": ["manual:verified", "mlx-audio:whisper"]
+    },
+    "gemma4_vlm": {
+      "launch_modes": ["MULTIMODAL"],
+      "server_config": {
+        "max_tokens": 512,
+        "max_kv_size": 8192
+      },
+      "sources": ["readme:mlx", "upstream:google/gemma-4"]
+    },
+    "gemma4_text": {
+      "launch_modes": ["TEXT"],
+      "server_config": {
+        "max_tokens": 512
+      },
+      "sources": ["registry:mlx_lm"]
+    },
+    "qwen3_embedding": {
+      "launch_modes": ["EMBEDDING"],
+      "server_config": {},
+      "sources": ["registry:mlx-embeddings"]
+    },
+    "jina_reranker": {
+      "launch_modes": ["RERANKER"],
+      "server_config": {
+        "disable_batching": false
+      },
+      "sources": ["readme:mlx"]
+    },
+    "qwen_text": {
+      "launch_modes": ["TEXT"],
+      "server_config": {
+        "max_tokens": 512
+      },
+      "sources": ["registry:generic"]
+    }
+  },
+  "models": {
+    "Flux-1.lite-8B-MLX-Q4": {
+      "family": "flux_lite",
+      "repo_id": "mlx-community/flux.1-lite-8B-MLX-Q4",
+      "upstream": "Freepik/flux.1-lite-8B"
+    },
+    "Kokoro-82M-6bit": {
+      "family": "kokoro_tts",
+      "repo_id": "mlx-community/Kokoro-82M-6bit",
+      "upstream": "hexagrad/Kokoro-82M"
+    },
+    "whisper-small-mlx": {
+      "family": "whisper_stt",
+      "repo_id": "mlx-community/whisper-small-mlx",
+      "upstream": "openai/whisper-small"
+    },
+    "gemma-4-31b-it-4bit": {
+      "family": "gemma4_vlm",
+      "repo_id": "mlx-community/gemma-4-31b-it-4bit",
+      "upstream": "google/gemma-4-31b-it"
+    },
+    "gemma-4-12B-it-4bit": {
+      "family": "gemma4_vlm",
+      "repo_id": "mlx-community/gemma-4-12b-it-4bit",
+      "upstream": "google/gemma-4-12b-it"
+    },
+    "jina-reranker-v3-4bit-mxfp4": {
+      "family": "jina_reranker",
+      "repo_id": "mlx-community/jina-reranker-v3-4bit-mxfp4",
+      "upstream": "jinaai/jina-reranker-v3"
+    },
+    "Qwen3-Embedding-0.6B-4bit-DWQ": {
+      "family": "qwen3_embedding",
+      "repo_id": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
+      "upstream": "Qwen/Qwen3-Embedding-0.6B"
+    },
+    "Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit": {
+      "family": "qwen_text",
+      "repo_id": "mlx-community/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit"
+    }
+  },
+  "patterns": [
+    { "match": "flux", "requires": ["lite"], "family": "flux_lite" },
+    { "match": "schnell", "family": "flux_schnell" },
+    { "match": "z-image-turbo", "family": "z_image_turbo" },
+    { "match": "z_image_turbo", "family": "z_image_turbo" },
+    { "match": "kokoro", "family": "kokoro_tts" },
+    { "match": "whisper", "family": "whisper_stt" },
+    { "match": "gemma-4", "family": "gemma4_vlm" },
+    { "match": "gemma4", "family": "gemma4_vlm" },
+    { "match": "reranker", "family": "jina_reranker" },
+    { "match": "embedding", "family": "qwen3_embedding" },
+    { "match": "qwen3", "requires": ["instruct"], "family": "qwen_text" }
+  ]
+}
