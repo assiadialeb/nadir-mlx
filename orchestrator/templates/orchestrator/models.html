@@ -62,7 +62,7 @@
                     {% include 'orchestrator/partials/capability_badges.html' %}
                 </div>
                 {% if model.instance_count %}
-                <p class="mt-3 text-xxs text-amber-700">
+                <p class="mt-3 field-hint field-hint--warning">
                     {{ model.instance_count }} serveur{{ model.instance_count|pluralize }} lié{{ model.instance_count|pluralize:"s," }} — sera{{ model.instance_count|pluralize:"ont," }} arrêté{{ model.instance_count|pluralize:"s," }} et supprimé{{ model.instance_count|pluralize:"s," }}.
                 </p>
                 {% endif %}

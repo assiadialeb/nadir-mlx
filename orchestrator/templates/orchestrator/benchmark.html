@@ -21,22 +21,22 @@
                     <button type="button" onclick="applyPreset('quick')"
                         class="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 transition-all">
                         <span class="block text-sm font-semibold text-slate-800">Quick smoke test</span>
-                        <span class="block text-xxs text-slate-500 mt-0.5">~1 min · medium · conc 1 · 5 req</span>
+                        <span class="block field-hint mt-0.5">~1 min · medium · conc 1 · 5 req</span>
                     </button>
                     <button type="button" onclick="applyPreset('standard')"
                         class="text-left px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 transition-all">
                         <span class="block text-sm font-semibold text-indigo-900">Standard (recommended)</span>
-                        <span class="block text-xxs text-indigo-700/70 mt-0.5">~5 min · medium · conc 1,4 · 20 req</span>
+                        <span class="block field-hint mt-0.5">~5 min · medium · conc 1,4 · 20 req</span>
                     </button>
                     <button type="button" onclick="applyPreset('full')"
                         class="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 transition-all">
                         <span class="block text-sm font-semibold text-slate-800">Full sweep</span>
-                        <span class="block text-xxs text-slate-500 mt-0.5">~20+ min · all prompts · conc 1,2,4,8</span>
+                        <span class="block field-hint mt-0.5">~20+ min · all prompts · conc 1,2,4,8</span>
                     </button>
                     <button type="button" onclick="applyPreset('ollama')"
                         class="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:border-amber-200 transition-all">
                         <span class="block text-sm font-semibold text-slate-800">Ollama compare</span>
-                        <span class="block text-xxs text-slate-500 mt-0.5">localhost:11434 · standard settings</span>
+                        <span class="block field-hint mt-0.5">localhost:11434 · standard settings</span>
                     </button>
                 </div>
             </div>
@@ -285,7 +285,7 @@
                         </tbody>
                     </table>
                 </div>
-                <p class="text-xxs text-slate-500 mt-3">
+                <p class="field-hint mt-3">
                     Tip: run the same preset on MLX and Ollama (custom endpoint) to compare TTFT and aggregate tok/s side by side.
                 </p>
             </div>

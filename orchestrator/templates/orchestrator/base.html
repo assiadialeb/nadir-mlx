@@ -15,6 +15,9 @@
                     fontFamily: {
                         sans: ['Outfit', 'sans-serif'],
                     },
+                    fontSize: {
+                        xxs: ['0.625rem', { lineHeight: '1.45' }],
+                    },
                 }
             }
         }
@@ -23,6 +26,19 @@
         body {
             font-family: 'Outfit', sans-serif;
         }
+
+        /* Secondary hint text under form fields — smaller and lighter than labels (text-xs). */
+        .field-hint {
+            font-size: 0.625rem;
+            line-height: 1.45;
+            font-weight: 400;
+            color: #94a3b8;
+        }
+
+        .field-hint--warning {
+            color: #b45309;
+        }
+
         .custom-scrollbar::-webkit-scrollbar {
             width: 8px;
             height: 8px;
