@@ -11,6 +11,7 @@ from typing import Any, Literal, Optional
 from django.conf import settings
 from django.utils import timezone
 
+from .gateway_aliases import validate_gateway_alias_unique
 from .models import InferenceInstance
 from .server_config_schema import build_default_server_config, validate_and_normalize_server_config
 from .model_utils import (
@@ -301,12 +302,19 @@ def _resolve_server_config(
     launch_mode: LaunchMode,
     server_config: dict[str, Any] | None,
     model_name: str,
+    *,
+    exclude_instance_id: int | None = None,
 ) -> dict[str, Any]:
-    return validate_and_normalize_server_config(
+    normalized = validate_and_normalize_server_config(
         launch_mode,
         server_config or build_default_server_config(launch_mode),
         model_name,
     )
+    validate_gateway_alias_unique(
+        _config_model_id(normalized, model_name),
+        exclude_instance_id=exclude_instance_id,
+    )
+    return normalized
 
 
 def _config_host(server_config: dict[str, Any]) -> str:
@@ -355,6 +363,7 @@ def _build_launch_command(
             str(port),
         ]
         _append_cli_args(command, {
+            "model-id": model_id,
             "max-tokens": server_config.get("max_tokens"),
             "max-kv-size": server_config.get("max_kv_size"),
             "trust-remote-code": server_config.get("trust_remote_code"),
@@ -399,6 +408,7 @@ def _build_launch_command(
         ]
         if server_config.get("disable_batching"):
             command.append("--disable-batching")
+        command.extend(["--model-id", model_id])
         return command
 
     if launch_mode == "IMAGE":
@@ -467,6 +477,8 @@ def _build_launch_command(
         host,
         "--port",
         str(port),
+        "--model-id",
+        model_id,
     ]
     _append_cli_args(command, {
         "max-tokens": server_config.get("max_tokens"),
@@ -513,8 +525,12 @@ def _prepare_model_for_launch(model_path: str, launch_mode: LaunchMode) -> None:
 def _get_launch_env(
     launch_mode: LaunchMode,
     server_config: dict[str, Any],
+    *,
+    model_name: str = "",
 ) -> dict[str, str]:
     env = os.environ.copy()
+    if launch_mode in ("TEXT", "MULTIMODAL"):
+        env["NADIR_GATEWAY_ALIAS"] = _config_model_id(server_config, model_name)
     if launch_mode in ("IMAGE", "TTS", "STT"):
         env["TQDM_DISABLE"] = "1"
         if launch_mode == "IMAGE":
@@ -561,7 +577,6 @@ def start_instance(
 ) -> InferenceInstance:
     """Launch an inference server in the background."""
     launch_mode = parse_launch_mode(launch_mode)
-    normalized_config = _resolve_server_config(launch_mode, server_config, model_name)
     model_path = str(resolve_model_dir(model_name))
     if not os.path.isdir(model_path):
         raise ValueError(f"Model folder '{model_name}' was not found in ./models.")
@@ -576,6 +591,22 @@ def start_instance(
         port = get_free_port()
     else:
         port = int(port)
+
+    reusable = (
+        InferenceInstance.objects.filter(
+            model_name=model_name,
+            port=port,
+            status="STOPPED",
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    normalized_config = _resolve_server_config(
+        launch_mode,
+        server_config,
+        model_name,
+        exclude_instance_id=reusable.pk if reusable else None,
+    )
 
     _terminate_launchers_on_port(port)
     if not is_port_free(port):
@@ -594,7 +625,7 @@ def start_instance(
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            env=_get_launch_env(launch_mode, normalized_config),
+            env=_get_launch_env(launch_mode, normalized_config, model_name=model_name),
         )
         instance.pid = process.pid
         instance.status = "LOADING"
@@ -720,7 +751,12 @@ def update_stopped_instance(
     new_port = int(port) if port is not None else instance.port
     new_mode = parse_launch_mode(launch_mode) if launch_mode else instance.launch_mode
     if server_config is not None:
-        new_config = _resolve_server_config(new_mode, server_config, instance.model_name)
+        new_config = _resolve_server_config(
+            new_mode,
+            server_config,
+            instance.model_name,
+            exclude_instance_id=instance.pk,
+        )
     else:
         new_config = dict(instance.server_config or {})
 

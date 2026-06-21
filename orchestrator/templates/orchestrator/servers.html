@@ -138,10 +138,16 @@
                             <span>&bull;</span>
                             <span>Host: <strong class="text-slate-700">{{ instance.server_config.host }}</strong></span>
                             {% endif %}
-                            {% if instance.server_config.model_id and instance.server_config.model_id != instance.model_name %}
-                            <span>&bull;</span>
-                            <span>API ID: <strong class="text-slate-700">{{ instance.server_config.model_id }}</strong></span>
-                            {% endif %}
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 mt-1.5">
+                            <span class="text-xxs font-semibold uppercase tracking-wider text-slate-400">Alias gateway</span>
+                            <code class="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-0.5 text-indigo-700 gateway-alias-value">{{ instance.server_config.model_id|default:instance.model_name }}</code>
+                            <button type="button"
+                                class="copy-gateway-alias-btn px-2 py-0.5 text-xxs font-semibold rounded border border-slate-200 bg-white text-slate-600 hover:text-indigo-700 hover:border-indigo-200 transition-colors"
+                                data-alias="{{ instance.server_config.model_id|default:instance.model_name }}"
+                                title="Copier pour LiteLLM">
+                                Copier
+                            </button>
                         </div>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
@@ -302,6 +308,10 @@
     </div>
 </div>
 
+<div id="gateway-alias-toast" class="fixed bottom-6 right-6 hidden px-4 py-2 rounded-lg bg-slate-900 text-white text-sm shadow-lg z-50">
+    Alias copié dans le presse-papiers.
+</div>
+
 <script>
 const modelsByMode = {{ models_by_mode_json|safe }};
 const configFieldsByMode = {{ config_fields_json|safe }};
@@ -313,6 +323,34 @@ const instanceConfigsById = {
     "{{ instance.id }}": {{ instance.server_config_json|safe }}{% if not forloop.last %},{% endif %}
 {% endfor %}
 };
+
+let lastPrefilledGatewayAlias = '';
+
+function showGatewayAliasToast() {
+    const toast = document.getElementById('gateway-alias-toast');
+    toast.classList.remove('hidden');
+    setTimeout(() => toast.classList.add('hidden'), 2000);
+}
+
+function copyGatewayAlias(alias) {
+    navigator.clipboard.writeText(alias).then(showGatewayAliasToast).catch(() => {
+        window.prompt('Copiez l\'alias gateway :', alias);
+    });
+}
+
+document.querySelectorAll('.copy-gateway-alias-btn').forEach(button => {
+    button.addEventListener('click', () => copyGatewayAlias(button.dataset.alias || ''));
+});
+
+function applyGatewayAliasDefault(modelName, idPrefix = 'config') {
+    const input = document.getElementById(`${idPrefix}_model_id`);
+    if (!input || input.type === 'checkbox') return;
+    const current = input.value.trim();
+    if (!current || current === lastPrefilledGatewayAlias) {
+        input.value = modelName;
+        lastPrefilledGatewayAlias = modelName;
+    }
+}
 
 function openDeleteInstanceModal(button) {
     const form = document.getElementById('delete-instance-form');
@@ -443,6 +481,7 @@ function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfi
 
     if (idPrefix === 'config') {
         applyRegistryDefaults(mode, modelName);
+        applyGatewayAliasDefault(modelName, idPrefix);
     }
 }
 
@@ -492,7 +531,9 @@ function updateModelSelect() {
 document.getElementById('launch_mode').addEventListener('change', updateModelSelect);
 document.getElementById('model_name').addEventListener('change', () => {
     const mode = document.getElementById('launch_mode').value;
-    applyRegistryDefaults(mode, document.getElementById('model_name').value);
+    const modelName = document.getElementById('model_name').value;
+    applyRegistryDefaults(mode, modelName);
+    applyGatewayAliasDefault(modelName);
 });
 
 document.getElementById('toggle-config-panel').addEventListener('click', () => {

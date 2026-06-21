@@ -69,6 +69,7 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--model-id", default=None)
     parser.add_argument("--disable-batching", action="store_true")
     args = parser.parse_args()
 
@@ -77,20 +78,20 @@ def main() -> None:
         raise SystemExit(f"Model path not found: {model_path}")
 
     if _is_jina_for_ranking_model(model_path):
-        os.execv(
+        exec_args = [
             sys.executable,
-            [
-                sys.executable,
-                "-m",
-                "orchestrator.reranker_server",
-                "--model",
-                str(model_path),
-                "--host",
-                args.host,
-                "--port",
-                str(args.port),
-            ],
-        )
+            "-m",
+            "orchestrator.reranker_server",
+            "--model",
+            str(model_path),
+            "--host",
+            args.host,
+            "--port",
+            str(args.port),
+        ]
+        if args.model_id:
+            exec_args.extend(["--model-id", args.model_id])
+        os.execv(sys.executable, exec_args)
 
     _run_local_reranker(model_path, args.host, args.port, args.disable_batching)
 

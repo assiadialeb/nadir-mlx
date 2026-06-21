@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 
 
+def _parse_cli_arg(argv: list[str], flag: str) -> str | None:
+    for index, arg in enumerate(argv):
+        if arg == flag and index + 1 < len(argv):
+            value = argv[index + 1].strip()
+            return value or None
+    return None
+
+
 def _parse_model_path(argv: list[str]) -> Path | None:
     for index, arg in enumerate(argv):
         if arg == "--model" and index + 1 < len(argv):
@@ -15,7 +23,7 @@ def _parse_model_path(argv: list[str]) -> Path | None:
     return None
 
 
-def _install_model_alias_patch(local_model_path: Path) -> None:
+def _install_model_alias_patch(local_model_path: Path, api_model_id: str | None = None) -> None:
     """Map client-facing model names to the preloaded local directory."""
     resolved_path = str(local_model_path)
     folder_name = local_model_path.name
@@ -23,6 +31,8 @@ def _install_model_alias_patch(local_model_path: Path) -> None:
         "default_model": resolved_path,
         folder_name: resolved_path,
     }
+    if api_model_id:
+        aliases[api_model_id] = resolved_path
 
     app_module = importlib.import_module("mlx_vlm.server.app")
     original_get_cached_model = app_module.get_cached_model
@@ -58,18 +68,25 @@ def _install_model_alias_patch(local_model_path: Path) -> None:
 
 
 def main() -> None:
-    model_path = _parse_model_path(sys.argv[1:])
+    argv = sys.argv[1:]
+    model_path = _parse_model_path(argv)
     if model_path is None:
         raise SystemExit("Missing required argument: --model <local_model_path>")
 
     model_path = model_path.resolve()
+    api_model_id = (
+        _parse_cli_arg(argv, "--model-id")
+        or os.environ.get("NADIR_GATEWAY_ALIAS", "").strip()
+        or None
+    )
+
     for index, arg in enumerate(sys.argv[1:], start=1):
         if arg == "--model" and index + 1 < len(sys.argv):
             sys.argv[index + 1] = str(model_path)
             break
 
     os.environ["MLX_VLM_PRELOAD_MODEL"] = str(model_path)
-    _install_model_alias_patch(model_path)
+    _install_model_alias_patch(model_path, api_model_id)
 
     from mlx_vlm.server.cli import main as server_main
 

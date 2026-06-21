@@ -12,6 +12,7 @@ from orchestrator.kokoro_voices import (
     KOKORO_LANG_CODES,
     KOKORO_VOICES,
 )
+from orchestrator.gateway_aliases import normalize_gateway_alias, validate_gateway_alias_format
 from orchestrator.model_registry import apply_registry_server_defaults
 
 LaunchModeId = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
@@ -60,11 +61,11 @@ COMMON_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ),
     ConfigFieldSpec(
         name="model_id",
-        label="ID modèle (API)",
+        label="Alias gateway",
         widget="text",
         modes=("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"),
-        placeholder="Identique au dossier si vide",
-        help_text="Nom exposé via /v1/models (ex. pour LiteLLM ou clients OpenAI).",
+        placeholder="Prérempli avec le nom du modèle",
+        help_text="Valeur du champ model pour l'api",
     ),
 )
 
@@ -380,6 +381,9 @@ def validate_and_normalize_server_config(
 
     if not normalized.get("model_id"):
         normalized["model_id"] = model_name
+    else:
+        normalized["model_id"] = normalize_gateway_alias(str(normalized["model_id"]))
+    validate_gateway_alias_format(str(normalized["model_id"]))
 
     normalized["advanced"] = _validate_advanced(launch_mode, advanced_raw)
     return normalized

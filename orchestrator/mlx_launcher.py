@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
+
+
+def _parse_cli_arg(argv: list[str], flag: str) -> str | None:
+    for index, arg in enumerate(argv):
+        if arg == flag and index + 1 < len(argv):
+            value = argv[index + 1].strip()
+            return value or None
+    return None
 
 
 def _patch_tokenizer_config() -> None:
@@ -17,6 +27,48 @@ def _patch_tokenizer_config() -> None:
         self._tokenizer_config["fix_mistral_regex"] = True
 
     ModelProvider.__init__ = patched_init
+    return original_init
+
+
+def _install_gateway_alias_patch(
+    api_model_id: str,
+    local_model_path: Path,
+    *,
+    original_model_provider_init,
+) -> None:
+    """Map gateway alias names to the preloaded local model directory."""
+    resolved_path = str(local_model_path.resolve())
+    folder_name = local_model_path.name
+    alias_names = {api_model_id, folder_name, "default_model"}
+
+    from mlx_lm.server import APIHandler, ModelProvider
+
+    def patched_init(self, cli_args):
+        original_model_provider_init(self, cli_args)
+        for alias in alias_names:
+            if alias:
+                self._model_map[alias] = resolved_path
+
+    ModelProvider.__init__ = patched_init
+
+    if not api_model_id:
+        return
+
+    def patched_models_request(self):
+        self._set_completion_headers(200)
+        self.end_headers()
+        models = [
+            {
+                "id": api_model_id,
+                "object": "model",
+                "created": self.created,
+            }
+        ]
+        response = {"object": "list", "data": models}
+        self.wfile.write(json.dumps(response).encode())
+        self.wfile.flush()
+
+    APIHandler.handle_models_request = patched_models_request
 
 
 def _patch_load_model(model_path: Path) -> None:
@@ -42,17 +94,29 @@ def _patch_load_model(model_path: Path) -> None:
 
 
 def main() -> None:
-    model_path: Path | None = None
     argv = sys.argv[1:]
+    model_path: Path | None = None
     for index, arg in enumerate(argv):
         if arg == "--model" and index + 1 < len(argv):
             model_path = Path(argv[index + 1])
             break
 
-    if model_path is not None:
-        _patch_load_model(model_path)
+    api_model_id = (
+        _parse_cli_arg(argv, "--model-id")
+        or os.environ.get("NADIR_GATEWAY_ALIAS", "").strip()
+        or None
+    )
 
-    _patch_tokenizer_config()
+    original_init = _patch_tokenizer_config()
+    if model_path is not None:
+        model_path = model_path.resolve()
+        _patch_load_model(model_path)
+        if api_model_id:
+            _install_gateway_alias_patch(
+                api_model_id,
+                model_path,
+                original_model_provider_init=original_init,
+            )
 
     from mlx_lm.server import main as server_main
 
