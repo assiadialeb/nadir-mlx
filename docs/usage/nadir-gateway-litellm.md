@@ -281,3 +281,13 @@ See also [ADR 001 — Nadir Gateway](../adr/001-nadir-gateway.md).
 ## Direct instance ports (legacy)
 
 You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gateway** for LiteLLM and production clients so aliases stay stable and ports stay private.
+
+## Per-mode runbooks (E2E validation)
+
+| Launch mode | Runbook |
+|-------------|---------|
+| EMBEDDING | [gateway-runbooks/embedding.md](gateway-runbooks/embedding.md) |
+| RERANKER | [gateway-runbooks/reranker.md](gateway-runbooks/reranker.md) |
+| IMAGE | *(MLX-28)* |
+| TTS | *(MLX-29)* |
+| STT | *(MLX-30)* |

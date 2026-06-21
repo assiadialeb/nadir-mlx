@@ -80,6 +80,32 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         call_args = mock_client.post.await_args
         self.assertEqual(call_args.args[0], "http://127.0.0.1:11410/v1/embeddings")
+        upstream_body = call_args.kwargs["json"]
+        self.assertEqual(upstream_body["model"], "local-embed")
+        self.assertEqual(upstream_body["input"], "hello")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=EMBED_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    def test_embeddings_batch_input_preserved(
+        self,
+        mock_client_cls: MagicMock,
+        _mock_resolve: MagicMock,
+    ) -> None:
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.json.return_value = {"object": "list", "data": []}
+        upstream.headers = httpx.Headers({"content-type": "application/json"})
+        mock_client = _mock_buffered_client(mock_client_cls, upstream)
+
+        batch = ["first", "second"]
+        response = self.client.post(
+            "/v1/embeddings",
+            json={"model": "local-embed", "input": batch},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        upstream_body = mock_client.post.await_args.kwargs["json"]
+        self.assertEqual(upstream_body["input"], batch)
 
     @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
     def test_embeddings_rejects_text_instance(self, _mock_resolve: MagicMock) -> None:
@@ -144,6 +170,35 @@ class GatewayModeProxyTests(SimpleTestCase):
             mock_client.post.await_args.args[0],
             "http://127.0.0.1:11413/v1/rerank",
         )
+        upstream_body = mock_client.post.await_args.kwargs["json"]
+        self.assertEqual(upstream_body["model"], "rerank-local")
+        self.assertEqual(upstream_body["query"], "python")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    def test_rerank_rejects_text_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/rerank",
+            json={
+                "model": "llama-chat",
+                "query": "python",
+                "documents": ["Python is great"],
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=EMBED_TARGET)
+    def test_rerank_rejects_embedding_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/rerank",
+            json={
+                "model": "local-embed",
+                "query": "python",
+                "documents": ["Python is great"],
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
     @patch("orchestrator.gateway.selectors.resolve_gateway_target")
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")

@@ -30,6 +30,16 @@ VLM_TARGET = GatewayTarget(
     api_path=CHAT_COMPLETIONS_PATH,
 )
 
+EMBED_TARGET = GatewayTarget(
+    alias="local-embed",
+    instance_id=6,
+    launch_mode="EMBEDDING",
+    host="127.0.0.1",
+    port=11410,
+    upstream_model="local-embed",
+    api_path="/v1/embeddings",
+)
+
 
 def _mock_buffered_client(mock_client_cls: MagicMock, response: MagicMock) -> AsyncMock:
     mock_client = AsyncMock()
@@ -180,6 +190,18 @@ class GatewayChatProxyTests(SimpleTestCase):
         response = self.client.post(
             "/v1/completions",
             json={"model": "vlm-alias", "prompt": "Hello"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=EMBED_TARGET)
+    def test_chat_completions_rejects_embedding_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "local-embed",
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
