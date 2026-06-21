@@ -150,6 +150,17 @@
                         <td class="py-3 pr-3 font-semibold text-emerald-700 text-xs">{{ row.aggregate_tps|default:"—" }}</td>
                         <td class="py-3 whitespace-nowrap">
                             <a href="{% url 'benchmark_detail' row.id %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">View</a>
+                            {% if row.status == 'RUNNING' or row.status == 'PENDING' %}
+                            <span class="ml-3 text-xs font-semibold text-slate-300 cursor-not-allowed" title="Cannot delete while running">Delete</span>
+                            {% else %}
+                            <button type="button"
+                                class="ml-3 text-xs font-semibold text-rose-600 hover:text-rose-700"
+                                data-run-label="Benchmark #{{ row.id }}"
+                                data-delete-url="{% url 'delete_benchmark' row.id %}"
+                                onclick="openDeleteBenchmarkModal(this)">
+                                Delete
+                            </button>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -245,4 +256,5 @@ document.addEventListener('DOMContentLoaded', () => {
     buildLineChart('chart-latency-p95', 'Latency p95', ds.latency_p95_ms, '#b45309');
 });
 </script>
+{% include 'orchestrator/partials/benchmark_delete_modal.html' %}
 {% endblock %}

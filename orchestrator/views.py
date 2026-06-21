@@ -7,7 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
-from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from .models import InferenceInstance, BenchmarkRun, ModelDownload
 from .downloader import start_model_download
 from .model_lifecycle import delete_installed_model
@@ -41,7 +41,7 @@ from .ui_selectors import (
     models_by_server_type_json,
     SORT_OPTIONS,
 )
-from .benchmark_service import parse_benchmark_form, start_benchmark
+from .benchmark_service import parse_benchmark_form, start_benchmark, delete_benchmark_run
 from .benchmark_selectors import (
     benchmark_run_list_row,
     build_benchmark_history_query,
@@ -482,6 +482,32 @@ def benchmark_status_view(request, run_id: int):
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "summaries": run.summaries,
     })
+
+
+@login_required
+def delete_benchmark_view(request, run_id: int):
+    if request.method != "POST":
+        return redirect("benchmark_history")
+
+    try:
+        delete_benchmark_run(run_id)
+        messages.success(request, f"Benchmark #{run_id} deleted.")
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    except Exception:
+        messages.error(request, "Failed to delete benchmark run.")
+
+    return redirect(_safe_redirect_target(request, request.POST.get("next")))
+
+
+def _safe_redirect_target(request, raw_next: str | None) -> str:
+    if raw_next and url_has_allowed_host_and_scheme(
+        raw_next,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return raw_next
+    return reverse("benchmark_history")
 
 
 @login_required

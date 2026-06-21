@@ -1,0 +1,38 @@
+<div id="delete-benchmark-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+    <button type="button"
+        class="absolute inset-0 w-full h-full border-0 bg-slate-900/30 backdrop-blur-sm cursor-default p-0"
+        aria-label="Close delete benchmark confirmation dialog"
+        onclick="closeDeleteBenchmarkModal()"></button>
+    <div class="relative z-10 flex min-h-full items-center justify-center p-4">
+        <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-2xl">
+            <h3 class="text-lg font-bold text-slate-900">Delete benchmark run</h3>
+            <p class="mt-3 text-sm text-slate-600">
+                Confirm deletion of
+                <strong id="delete-benchmark-label" class="text-slate-800"></strong>
+                ? The database record and JSON artifact will be removed permanently.
+            </p>
+            <form id="delete-benchmark-form" method="POST" class="mt-6 flex justify-end gap-3">
+                {% csrf_token %}
+                <input type="hidden" name="next" id="delete-benchmark-next" value="">
+                <button type="button" onclick="closeDeleteBenchmarkModal()"
+                    class="px-4 py-2 text-sm font-semibold text-slate-600 rounded-lg border border-slate-300">Cancel</button>
+                <button type="submit"
+                    class="px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg">Delete</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function openDeleteBenchmarkModal(button) {
+    const form = document.getElementById('delete-benchmark-form');
+    document.getElementById('delete-benchmark-label').textContent = button.dataset.runLabel || '';
+    form.action = button.dataset.deleteUrl || '';
+    document.getElementById('delete-benchmark-next').value = window.location.pathname + window.location.search;
+    document.getElementById('delete-benchmark-modal').classList.remove('hidden');
+}
+
+function closeDeleteBenchmarkModal() {
+    document.getElementById('delete-benchmark-modal').classList.add('hidden');
+}
+</script>

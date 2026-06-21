@@ -26,6 +26,21 @@ def _benchmark_output_path(run_id: int) -> Path:
     return benchmarks_dir / f"bench_{run_id}.json"
 
 
+def _remove_benchmark_artifacts(run: BenchmarkRun) -> None:
+    _benchmark_output_path(run.id).unlink(missing_ok=True)
+
+
+def delete_benchmark_run(run_id: int) -> None:
+    """Delete a single benchmark run and its JSON artifact."""
+    run = BenchmarkRun.objects.filter(id=run_id).first()
+    if not run:
+        raise ValueError("Benchmark run not found.")
+    if run.status in ("PENDING", "RUNNING"):
+        raise ValueError("Cannot delete a benchmark while it is running.")
+    _remove_benchmark_artifacts(run)
+    run.delete()
+
+
 def delete_benchmark_runs_for_model(folder_name: str) -> int:
     """Delete benchmark DB rows and JSON artifacts linked to a model folder."""
     runs = BenchmarkRun.objects.filter(
@@ -33,7 +48,7 @@ def delete_benchmark_runs_for_model(folder_name: str) -> int:
     )
     removed = 0
     for run in runs:
-        _benchmark_output_path(run.id).unlink(missing_ok=True)
+        _remove_benchmark_artifacts(run)
         run.delete()
         removed += 1
     return removed

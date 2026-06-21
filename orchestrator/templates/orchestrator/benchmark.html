@@ -235,9 +235,20 @@
                                     {% endif %}
                                 </td>
                                 <td class="py-3 pr-3 text-xs text-slate-500">{{ run.created_at|date:"d/m H:i" }}</td>
-                                <td class="py-3">
+                                <td class="py-3 whitespace-nowrap">
                                     <a href="{% url 'benchmark_detail' run.id %}"
                                         class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">View</a>
+                                    {% if run.status == 'RUNNING' or run.status == 'PENDING' %}
+                                    <span class="ml-3 text-xs font-semibold text-slate-300 cursor-not-allowed" title="Cannot delete while running">Delete</span>
+                                    {% else %}
+                                    <button type="button"
+                                        class="ml-3 text-xs font-semibold text-rose-600 hover:text-rose-700"
+                                        data-run-label="Benchmark #{{ run.id }}"
+                                        data-delete-url="{% url 'delete_benchmark' run.id %}"
+                                        onclick="openDeleteBenchmarkModal(this)">
+                                        Delete
+                                    </button>
+                                    {% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -381,4 +392,5 @@ function applyPreset(name) {
 
 document.addEventListener('DOMContentLoaded', toggleTargetFields);
 </script>
+{% include 'orchestrator/partials/benchmark_delete_modal.html' %}
 {% endblock %}

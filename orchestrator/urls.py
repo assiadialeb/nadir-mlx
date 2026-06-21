@@ -26,6 +26,7 @@ urlpatterns = [
     path('benchmark/history/', views.benchmark_history_view, name='benchmark_history'),
     path('benchmark/compare/', views.benchmark_compare_view, name='benchmark_compare'),
     path('benchmark/compare/export/', views.benchmark_compare_export_view, name='benchmark_compare_export'),
+    path('benchmark/<int:run_id>/delete/', views.delete_benchmark_view, name='delete_benchmark'),
     path('benchmark/', views.benchmark_view, name='benchmark'),
     path('benchmark/start/', views.start_benchmark_view, name='start_benchmark'),
     path('benchmark/<int:run_id>/', views.benchmark_detail_view, name='benchmark_detail'),
