@@ -35,6 +35,26 @@ IMAGE_TARGET = GatewayTarget(
     api_path=IMAGES_PATH,
 )
 
+STT_TARGET = GatewayTarget(
+    alias="whispers",
+    instance_id=8,
+    launch_mode="STT",
+    host="127.0.0.1",
+    port=11445,
+    upstream_model="whispers",
+    api_path="/v1/audio/transcriptions",
+)
+
+TTS_TARGET = GatewayTarget(
+    alias="kokoro",
+    instance_id=9,
+    launch_mode="TTS",
+    host="127.0.0.1",
+    port=11444,
+    upstream_model="kokoro",
+    api_path="/v1/audio/speech",
+)
+
 TEXT_TARGET = GatewayTarget(
     alias="llama-chat",
     instance_id=3,
@@ -254,6 +274,54 @@ class GatewayModeProxyTests(SimpleTestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"RIFFaudio")
+        self.assertEqual(response.headers.get("content-type"), "audio/wav")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=STT_TARGET)
+    def test_audio_speech_rejects_stt_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/audio/speech",
+            json={"model": "whispers", "input": "Hello"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target")
+    @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
+    def test_audio_transcriptions_forwards_multipart_file(
+        self,
+        mock_client_cls: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = STT_TARGET
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.content = b'{"text":"hello"}'
+        upstream.headers = httpx.Headers({"content-type": "application/json"})
+        mock_client = _mock_buffered_client(mock_client_cls, upstream)
+
+        response = self.client.post(
+            "/v1/audio/transcriptions",
+            files={"file": ("sample.wav", b"RIFFtestdata", "audio/wav")},
+            data={"model": "whispers", "response_format": "json"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["text"], "hello")
+        call_kwargs = mock_client.post.await_args.kwargs
+        self.assertIn("files", call_kwargs)
+        file_field = call_kwargs["files"]["file"]
+        self.assertEqual(file_field[1], b"RIFFtestdata")
+        self.assertEqual(call_kwargs["data"]["model"], "whispers")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TTS_TARGET)
+    def test_audio_transcriptions_rejects_tts_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/audio/transcriptions",
+            files={"file": ("sample.wav", b"RIFF", "audio/wav")},
+            data={"model": "kokoro"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
     @patch("orchestrator.gateway.routes.models.list_running_gateway_models")
     def test_list_models_endpoint_returns_openai_format(

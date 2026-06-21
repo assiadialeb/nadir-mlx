@@ -50,6 +50,26 @@ IMAGE_TARGET = GatewayTarget(
     api_path="/v1/images/generations",
 )
 
+TTS_CHAT_TARGET = GatewayTarget(
+    alias="kokoro",
+    instance_id=9,
+    launch_mode="TTS",
+    host="127.0.0.1",
+    port=11444,
+    upstream_model="kokoro",
+    api_path="/v1/audio/speech",
+)
+
+STT_CHAT_TARGET = GatewayTarget(
+    alias="whispers",
+    instance_id=8,
+    launch_mode="STT",
+    host="127.0.0.1",
+    port=11445,
+    upstream_model="whispers",
+    api_path="/v1/audio/transcriptions",
+)
+
 
 def _mock_buffered_client(mock_client_cls: MagicMock, response: MagicMock) -> AsyncMock:
     mock_client = AsyncMock()
@@ -222,6 +242,30 @@ class GatewayChatProxyTests(SimpleTestCase):
             "/v1/chat/completions",
             json={
                 "model": "Flux-1",
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TTS_CHAT_TARGET)
+    def test_chat_completions_rejects_tts_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "kokoro",
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=STT_CHAT_TARGET)
+    def test_chat_completions_rejects_stt_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "whispers",
                 "messages": [{"role": "user", "content": "Hi"}],
             },
         )

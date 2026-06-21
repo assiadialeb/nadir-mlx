@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import Request, UploadFile
+from fastapi import Request
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.responses import Response
 
 from orchestrator.gateway.router import (
@@ -35,6 +36,10 @@ RERANKER_MODES = frozenset({"RERANKER"})
 IMAGE_MODES = frozenset({"IMAGE"})
 TTS_MODES = frozenset({"TTS"})
 STT_MODES = frozenset({"STT"})
+
+
+def _is_upload_file(value: object) -> bool:
+    return isinstance(value, (StarletteUploadFile,))
 
 
 async def proxy_embeddings(body: dict[str, Any], headers: Any) -> Response:
@@ -93,7 +98,7 @@ async def proxy_audio_transcriptions(request: Request) -> Response:
         if key == "model":
             multipart_data["model"] = target.upstream_model
             continue
-        if isinstance(value, UploadFile):
+        if _is_upload_file(value):
             multipart_files[key] = (
                 value.filename,
                 await value.read(),

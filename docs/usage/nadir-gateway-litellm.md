@@ -289,5 +289,5 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 | EMBEDDING | [gateway-runbooks/embedding.md](gateway-runbooks/embedding.md) |
 | RERANKER | [gateway-runbooks/reranker.md](gateway-runbooks/reranker.md) |
 | IMAGE | [gateway-runbooks/image.md](gateway-runbooks/image.md) |
-| TTS | *(MLX-29)* |
-| STT | *(MLX-30)* |
+| TTS | [gateway-runbooks/tts.md](gateway-runbooks/tts.md) |
+| STT | [gateway-runbooks/stt.md](gateway-runbooks/stt.md) |
