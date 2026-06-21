@@ -82,3 +82,5 @@ Port allocation policy:
 - MLX-19: gateway alias on `server_config.model_id`
 - MLX-20: gateway worker bootstrap
 - MLX-21: alias → instance router
+- MLX-22–24: chat proxy, multi-mode proxy, `/v1/models`
+- **Operator guide:** [Nadir Gateway & LiteLLM](../usage/nadir-gateway-litellm.md)

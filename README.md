@@ -176,16 +176,20 @@ In a **second terminal**, start the OpenAI-compatible gateway on port `11380`:
 
 ```bash
 source venv/bin/activate
-python -m orchestrator.gateway
+python manage.py run_gateway
+# equivalent: python -m orchestrator.gateway
 ```
+
+Full integration guide (all launch modes — chat, embeddings, rerank, image, TTS, STT): **[docs/usage/nadir-gateway-litellm.md](docs/usage/nadir-gateway-litellm.md)**.
 
 Health check:
 
 ```bash
 curl http://127.0.0.1:11380/health
+curl http://127.0.0.1:11380/v1/models
 ```
 
-Configure LiteLLM (or any OpenAI client) with `api_base: http://127.0.0.1:11380/v1` and `model: <gateway-alias>` (the alias shown on each server card in the UI).
+Configure LiteLLM with a **single** `api_base: http://127.0.0.1:11380/v1` (or `host.docker.internal` from Docker) and one `model_list` entry per **gateway alias** (shown on each server card in the UI). Instances must be **Running** before inference (no auto-wake yet).
 
 ```bash
 curl http://127.0.0.1:11380/v1/chat/completions \
@@ -197,14 +201,13 @@ curl http://127.0.0.1:11380/v1/chat/completions \
   }'
 ```
 
-Proxy routes for embeddings and other modes land in MLX-23; aggregated `/v1/models` in MLX-24.
-
 Environment variables (see `.env.example`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NADIR_GATEWAY_HOST` | `127.0.0.1` | Gateway bind address |
 | `NADIR_GATEWAY_PORT` | `11380` | Gateway port (must stay outside `11400–11500`) |
+| `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
 
 ### 5. Download and launch a model
 
@@ -311,9 +314,22 @@ curl http://127.0.0.1:11442/v1/audio/transcriptions \
   -F "response_format=json"
 ```
 
-### LiteLLM proxy
+### LiteLLM proxy (Nadir Gateway)
 
-#### Reranker
+**Recommended:** point every local MLX model at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
+
+See **[docs/usage/nadir-gateway-litellm.md](docs/usage/nadir-gateway-litellm.md)** for:
+
+- `config.yaml` examples per launch mode
+- curl samples via gateway (not per-instance ports)
+- Docker `host.docker.internal` notes
+- Troubleshooting (`404`, `503`, wrong route for mode)
+
+#### Legacy: direct instance port
+
+The sections below still work for debugging a single backend on its `:114xx` port. Prefer the gateway for LiteLLM and cluster routing.
+
+#### Reranker (direct port)
 
 Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
 
@@ -398,6 +414,7 @@ mlx-server/
 │   ├── stt_server.py         # OpenAI-compatible STT (Whisper / mlx-audio)
 │   ├── image_model_loader.py # mflux model routing & inference helpers
 │   ├── mlx_*_launcher.py     # Subprocess entrypoints
+│   ├── gateway/              # Nadir Gateway (FastAPI proxy)
 │   ├── benchmark_service.py  # llmbenchmark integration
 │   └── vendor/llmbench.py    # Vendored benchmark CLI
 ├── models/                   # Downloaded weights (gitignored)
@@ -416,7 +433,7 @@ mlx-server/
 | `./db.sqlite3` | Django ORM (downloads, instances, benchmarks) |
 | `./venv/` | Python virtual environment |
 
-Port range for inference instances defaults to **11400–11500**. The orchestrator UI runs on **8000** by default.
+Port range for inference instances defaults to **11400–11500**. The orchestrator UI runs on **8000** by default. The Nadir Gateway runs on **11380** (`NADIR_GATEWAY_PORT`).
 
 ---
 
