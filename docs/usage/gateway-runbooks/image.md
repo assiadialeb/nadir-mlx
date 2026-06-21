@@ -44,7 +44,8 @@ curl -s http://127.0.0.1:11400/v1/image/defaults | python3 -m json.tool
 Use `quality: fast` for a quicker first run:
 
 ```bash
-curl -s -w "\nHTTP:%{http_code}\n" http://127.0.0.1:11380/v1/images/generations \
+tmp=$(mktemp)
+code=$(curl -s -o "$tmp" -w "%{http_code}" http://127.0.0.1:11380/v1/images/generations \
   -H "Content-Type: application/json" \
   -d '{
     "model": "Flux-1",
@@ -52,26 +53,19 @@ curl -s -w "\nHTTP:%{http_code}\n" http://127.0.0.1:11380/v1/images/generations 
     "quality": "fast",
     "response_format": "b64_json",
     "n": 1
-  }' | python3 -c "
-import json, sys, base64
-raw = sys.stdin.read()
-if 'HTTP:' in raw:
-    body, _, status_line = raw.rpartition('\n')
-    http_code = status_line.replace('HTTP:', '').strip()
-else:
-    body, http_code = raw, '200'
-try:
-    payload = json.loads(body)
-except json.JSONDecodeError:
-    print('Invalid JSON:', body[:500], file=sys.stderr)
+  }')
+python3 - "$tmp" "$code" <<'PY'
+import base64, json, sys
+path, http_code = sys.argv[1], sys.argv[2]
+payload = json.loads(open(path, encoding="utf-8").read())
+if http_code != "200" or "data" not in payload:
+    print(json.dumps(payload, indent=2), file=sys.stderr)
     sys.exit(1)
-if http_code != '200' or 'error' in payload or 'detail' in payload:
-    print('Error response:', json.dumps(payload, indent=2), file=sys.stderr)
-    sys.exit(1)
-b64 = payload['data'][0]['b64_json']
-open('/tmp/nadir-gateway-flux-test.png', 'wb').write(base64.b64decode(b64))
-print('OK — saved /tmp/nadir-gateway-flux-test.png', len(b64), 'b64 chars')
-"
+b64 = payload["data"][0]["b64_json"]
+open("/tmp/nadir-gateway-flux-test.png", "wb").write(base64.b64decode(b64))
+print("OK — saved /tmp/nadir-gateway-flux-test.png", len(b64), "b64 chars")
+PY
+rm -f "$tmp"
 ```
 
 **Expected:** HTTP 200 within timeout, non-empty `b64_json`, PNG decodable.
