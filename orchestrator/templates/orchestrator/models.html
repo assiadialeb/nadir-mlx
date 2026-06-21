@@ -70,11 +70,17 @@
                     {{ model.instance_count }} serveur{{ model.instance_count|pluralize }} lié{{ model.instance_count|pluralize:"s," }} — sera{{ model.instance_count|pluralize:"ont," }} arrêté{{ model.instance_count|pluralize:"s," }} et supprimé{{ model.instance_count|pluralize:"s," }}.
                 </p>
                 {% endif %}
-                <div class="mt-4 flex items-center justify-between gap-3">
-                    <a href="{% url 'servers' %}"
-                        class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-                        Démarrer un serveur &rarr;
-                    </a>
+                <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex flex-wrap items-center gap-4">
+                        <a href="{% url 'servers' %}"
+                            class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                            Démarrer un serveur &rarr;
+                        </a>
+                        <a href="{% url 'benchmark_history' %}?model={{ model.name|urlencode }}"
+                            class="inline-flex items-center text-xs font-semibold text-slate-600 hover:text-indigo-700">
+                            Historique bench &rarr;
+                        </a>
+                    </div>
                     <button type="button"
                         class="text-xs font-semibold text-rose-600 hover:text-rose-700"
                         data-model-name="{{ model.name }}"

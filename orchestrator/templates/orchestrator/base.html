@@ -77,7 +77,7 @@
                     <a href="{% url 'models' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'models' or request.resolver_match.url_name == 'search' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
                         Modèles
                     </a>
-                    <a href="{% url 'benchmark' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'benchmark' or request.resolver_match.url_name == 'benchmark_detail' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                    <a href="{% url 'benchmark' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'benchmark' or request.resolver_match.url_name == 'benchmark_detail' or request.resolver_match.url_name == 'benchmark_history' or request.resolver_match.url_name == 'benchmark_compare' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
                         Benchmark
                     </a>
                 </nav>

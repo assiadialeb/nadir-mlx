@@ -9,6 +9,10 @@
         <p class="text-sm text-slate-600 mt-1">
             Measure TTFT, latency and throughput against a running MLX instance or any OpenAI-compatible endpoint (Ollama, LM Studio, etc.).
         </p>
+        <div class="flex flex-wrap gap-3 mt-3">
+            <a href="{% url 'benchmark_history' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Full history & charts &rarr;</a>
+            <a href="{% url 'benchmark_compare' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">MLX vs external compare &rarr;</a>
+        </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -190,7 +194,10 @@
 
         <div class="lg:col-span-7 space-y-6">
             <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
-                <h2 class="text-lg font-bold text-slate-900 mb-4">Recent runs</h2>
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <h2 class="text-lg font-bold text-slate-900">Recent runs</h2>
+                    <a href="{% url 'benchmark_history' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">View all &rarr;</a>
+                </div>
 
                 {% if runs %}
                 <div class="overflow-x-auto">

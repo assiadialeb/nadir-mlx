@@ -42,6 +42,20 @@ from .ui_selectors import (
     SORT_OPTIONS,
 )
 from .benchmark_service import parse_benchmark_form, start_benchmark
+from .benchmark_selectors import (
+    benchmark_run_list_row,
+    build_benchmark_history_query,
+    build_comparison_snapshot,
+    chart_series_for_runs,
+    comparison_rows,
+    filter_benchmark_runs,
+    find_comparison_candidates,
+    list_distinct_preset_keys,
+    list_filter_options,
+    paginate_benchmark_runs,
+    parse_benchmark_history_query,
+    runs_for_chart_filters,
+)
 
 _startup_reconciled = False
 
@@ -468,3 +482,116 @@ def benchmark_status_view(request, run_id: int):
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "summaries": run.summaries,
     })
+
+
+@login_required
+def benchmark_history_view(request):
+    filters = parse_benchmark_history_query(request.GET)
+    queryset = filter_benchmark_runs(filters)
+    runs, page_obj = paginate_benchmark_runs(queryset, filters["page"])
+    rows = [benchmark_run_list_row(run, filters["scenario"]) for run in runs]
+    chart_runs = runs_for_chart_filters(filters)
+    chart_data = chart_series_for_runs(chart_runs, scenario=filters["scenario"])
+
+    return render(request, "orchestrator/benchmark_history.html", {
+        "filters": filters,
+        "rows": rows,
+        "page_obj": page_obj,
+        "filter_options": list_filter_options(),
+        "preset_keys": list_distinct_preset_keys(BenchmarkRun.objects.all()),
+        "chart_data_json": json.dumps(chart_data),
+        "history_query": build_benchmark_history_query(
+            **{**filters, "page": None},
+        ),
+    })
+
+
+@login_required
+def benchmark_compare_view(request):
+    filters = parse_benchmark_history_query(request.GET)
+    preset_key = filters.get("preset_key") or None
+    completed = BenchmarkRun.objects.filter(status="COMPLETED").select_related("instance")
+    suggested_pairs = find_comparison_candidates(completed, preset_key=preset_key)
+
+    run_a_id = str(request.GET.get("run_a") or "").strip()
+    run_b_id = str(request.GET.get("run_b") or "").strip()
+    run_a = run_b = None
+    rows: list[dict] = []
+    chart_overlay_json = "{}"
+
+    if run_a_id.isdigit() and run_b_id.isdigit():
+        run_a = get_object_or_404(BenchmarkRun, id=int(run_a_id), status="COMPLETED")
+        run_b = get_object_or_404(BenchmarkRun, id=int(run_b_id), status="COMPLETED")
+        rows = comparison_rows(run_a, run_b)
+        chart_overlay_json = json.dumps(_comparison_chart_payload(run_a, run_b))
+
+    mlx_runs = list(completed.filter(target_type="INSTANCE").order_by("-completed_at")[:50])
+    external_runs = list(completed.filter(target_type="ENDPOINT").order_by("-completed_at")[:50])
+
+    return render(request, "orchestrator/benchmark_compare.html", {
+        "filters": filters,
+        "suggested_pairs": suggested_pairs,
+        "mlx_runs": mlx_runs,
+        "external_runs": external_runs,
+        "run_a": run_a,
+        "run_b": run_b,
+        "comparison_rows": rows,
+        "chart_overlay_json": chart_overlay_json,
+        "preset_keys": list_distinct_preset_keys(completed),
+    })
+
+
+@login_required
+def benchmark_compare_export_view(request):
+    run_a_id = str(request.GET.get("run_a") or "").strip()
+    run_b_id = str(request.GET.get("run_b") or "").strip()
+    if not run_a_id.isdigit() or not run_b_id.isdigit():
+        return JsonResponse({"error": "run_a and run_b are required."}, status=400)
+
+    run_a = get_object_or_404(BenchmarkRun, id=int(run_a_id))
+    run_b = get_object_or_404(BenchmarkRun, id=int(run_b_id))
+    snapshot = build_comparison_snapshot(run_a, run_b)
+    response = HttpResponse(
+        json.dumps(snapshot, indent=2),
+        content_type="application/json",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="bench_compare_{run_a.id}_vs_{run_b.id}.json"'
+    )
+    return response
+
+
+def _comparison_chart_payload(run_a: BenchmarkRun, run_b: BenchmarkRun) -> dict:
+    """Build grouped bar chart data for two benchmark runs."""
+    rows = comparison_rows(run_a, run_b)
+    labels = [row["scenario"] for row in rows]
+
+    def metric(row: dict | None, key: str) -> float | None:
+        if not row:
+            return None
+        raw = row.get(key)
+        if raw is None or raw == "N/A":
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "labels": labels,
+        "left_label": _run_chart_label(run_a),
+        "right_label": _run_chart_label(run_b),
+        "ttft_p50_ms": {
+            "left": [metric(row["left"], "ttft_p50_ms") for row in rows],
+            "right": [metric(row["right"], "ttft_p50_ms") for row in rows],
+        },
+        "aggregate_tps": {
+            "left": [metric(row["left"], "aggregate_tps") for row in rows],
+            "right": [metric(row["right"], "aggregate_tps") for row in rows],
+        },
+    }
+
+
+def _run_chart_label(run: BenchmarkRun) -> str:
+    model = run.instance.model_name if run.instance_id else (run.model_id or "endpoint")
+    return f"#{run.id} {run.target_type} · {model}"

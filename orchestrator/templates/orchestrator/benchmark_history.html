@@ -1,0 +1,248 @@
+{% extends 'orchestrator/base.html' %}
+{% load static %}
+
+{% block title %}Benchmark history - MLX Orchestrator{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+        <div>
+            <a href="{% url 'benchmark' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">&larr; Back to benchmark runner</a>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900 mt-2">Benchmark history</h1>
+            <p class="text-sm text-slate-600 mt-1">
+                Filter past runs by model, instance, launch mode, or preset. Charts show metric evolution when enough completed runs match.
+            </p>
+        </div>
+        <a href="{% url 'benchmark_compare' %}{% if history_query %}?{{ history_query }}{% endif %}"
+            class="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold bg-white border border-slate-200 text-slate-700 hover:border-indigo-200 hover:text-indigo-700 transition-all">
+            MLX vs external compare &rarr;
+        </a>
+    </div>
+
+    <form method="get" class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+                <label for="filter-model" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Model</label>
+                <input type="text" name="model" id="filter-model" value="{{ filters.model_name }}"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="Folder or model id">
+            </div>
+            <div>
+                <label for="filter-instance" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Instance</label>
+                <select name="instance_id" id="filter-instance"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="">All instances</option>
+                    {% for instance in filter_options.instances %}
+                    <option value="{{ instance.id }}" {% if filters.instance_id == instance.id %}selected{% endif %}>
+                        {{ instance.model_name }} (port {{ instance.port }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="filter-launch-mode" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Launch mode</label>
+                <select name="launch_mode" id="filter-launch-mode"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="">All modes</option>
+                    {% for mode in filter_options.launch_modes %}
+                    <option value="{{ mode }}" {% if filters.launch_mode == mode %}selected{% endif %}>{{ mode }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="filter-status" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Status</label>
+                <select name="status" id="filter-status"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="">All statuses</option>
+                    {% for status in filter_options.statuses %}
+                    <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="filter-target-type" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Target</label>
+                <select name="target_type" id="filter-target-type"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="">MLX + external</option>
+                    {% for target in filter_options.target_types %}
+                    <option value="{{ target }}" {% if filters.target_type == target %}selected{% endif %}>{{ target }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="filter-preset" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Bench preset</label>
+                <select name="preset" id="filter-preset"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="">All presets</option>
+                    {% for key, label in preset_keys %}
+                    <option value="{{ key }}" {% if filters.preset_key == key %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="filter-scenario" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Chart scenario</label>
+                <input type="text" name="scenario" id="filter-scenario" value="{{ filters.scenario }}"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="medium_conc4">
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <button type="submit"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-all">
+                Apply filters
+            </button>
+            <a href="{% url 'benchmark_history' %}"
+                class="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg">
+                Reset
+            </a>
+        </div>
+    </form>
+
+    <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+        <div class="flex items-center justify-between gap-4 mb-4">
+            <h2 class="text-lg font-bold text-slate-900">Runs</h2>
+            <span class="text-xs text-slate-500">{{ page_obj.paginator.count }} total</span>
+        </div>
+
+        {% if rows %}
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
+                    <tr>
+                        <th class="py-2 pr-3">#</th>
+                        <th class="py-2 pr-3">Date</th>
+                        <th class="py-2 pr-3">Model</th>
+                        <th class="py-2 pr-3">Mode</th>
+                        <th class="py-2 pr-3">Target</th>
+                        <th class="py-2 pr-3">Status</th>
+                        <th class="py-2 pr-3">TTFT p50</th>
+                        <th class="py-2 pr-3">Tok/s</th>
+                        <th class="py-2">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for row in rows %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="py-3 pr-3 font-mono text-slate-700">{{ row.id }}</td>
+                        <td class="py-3 pr-3 text-xs text-slate-500 whitespace-nowrap">
+                            {{ row.completed_at|default:row.created_at|date:"d/m/Y H:i" }}
+                        </td>
+                        <td class="py-3 pr-3">
+                            <div class="font-medium text-slate-900 truncate max-w-[160px]" title="{{ row.model_name }}">{{ row.model_name|default:"—" }}</div>
+                            <div class="field-hint">{{ row.preset_label }}</div>
+                        </td>
+                        <td class="py-3 pr-3 text-xs text-slate-600">{{ row.launch_mode|default:"—" }}</td>
+                        <td class="py-3 pr-3 text-xs text-slate-600">{{ row.target_type }}</td>
+                        <td class="py-3 pr-3">
+                            {% if row.status == 'COMPLETED' %}
+                            <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Completed</span>
+                            {% elif row.status == 'RUNNING' %}
+                            <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-amber-50 text-amber-700 border border-amber-200">Running</span>
+                            {% elif row.status == 'FAILED' %}
+                            <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-rose-50 text-rose-700 border border-rose-200">Failed</span>
+                            {% else %}
+                            <span class="px-2 py-0.5 rounded text-xxs font-semibold bg-slate-50 text-slate-600 border border-slate-200">{{ row.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-3 pr-3 font-semibold text-indigo-700 text-xs">
+                            {% if row.ttft_p50_ms != None and row.ttft_p50_ms != "N/A" %}{{ row.ttft_p50_ms }} ms{% else %}—{% endif %}
+                        </td>
+                        <td class="py-3 pr-3 font-semibold text-emerald-700 text-xs">{{ row.aggregate_tps|default:"—" }}</td>
+                        <td class="py-3 whitespace-nowrap">
+                            <a href="{% url 'benchmark_detail' row.id %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">View</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if page_obj.paginator.num_pages > 1 %}
+        <nav class="mt-6 flex items-center justify-center gap-2" aria-label="Pagination">
+            {% if page_obj.has_previous %}
+            <a href="?{% if history_query %}{{ history_query }}&{% endif %}page={{ page_obj.previous_page_number }}"
+                class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">Previous</a>
+            {% endif %}
+            <span class="text-xs text-slate-500">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+            {% if page_obj.has_next %}
+            <a href="?{% if history_query %}{{ history_query }}&{% endif %}page={{ page_obj.next_page_number }}"
+                class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">Next</a>
+            {% endif %}
+        </nav>
+        {% endif %}
+        {% else %}
+        <p class="text-sm text-slate-500 py-10 text-center">No benchmark runs match these filters.</p>
+        {% endif %}
+    </div>
+
+    <div id="charts-section" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl {% if not chart_data_json %}hidden{% endif %}">
+        <h2 class="text-lg font-bold text-slate-900 mb-1">Metric evolution</h2>
+        <p class="field-hint mb-6">Scenario <code class="text-slate-600">{{ filters.scenario }}</code> · up to 50 most recent completed runs matching filters</p>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div>
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">TTFT p50 (ms)</h3>
+                <div class="h-56"><canvas id="chart-ttft"></canvas></div>
+            </div>
+            <div>
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Aggregate tok/s</h3>
+                <div class="h-56"><canvas id="chart-tps"></canvas></div>
+            </div>
+            <div>
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Latency p50 (ms)</h3>
+                <div class="h-56"><canvas id="chart-latency-p50"></canvas></div>
+            </div>
+            <div>
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Latency p95 (ms)</h3>
+                <div class="h-56"><canvas id="chart-latency-p95"></canvas></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="{% static 'orchestrator/vendor/chart.umd.min.js' %}"></script>
+<script>
+const chartPayload = {{ chart_data_json|safe }};
+
+function buildLineChart(canvasId, label, values, color) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || !chartPayload.labels || chartPayload.labels.length < 2) {
+        document.getElementById('charts-section')?.classList.add('hidden');
+        return;
+    }
+    document.getElementById('charts-section')?.classList.remove('hidden');
+    new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: chartPayload.labels,
+            datasets: [{
+                label,
+                data: values,
+                borderColor: color,
+                backgroundColor: color + '33',
+                tension: 0.25,
+                spanGaps: true,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+                x: { grid: { display: false } },
+            },
+        },
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (!chartPayload.labels || chartPayload.labels.length < 2) return;
+    const ds = chartPayload.datasets || {};
+    buildLineChart('chart-ttft', 'TTFT p50', ds.ttft_p50_ms, '#4f46e5');
+    buildLineChart('chart-tps', 'Aggregate tok/s', ds.aggregate_tps, '#059669');
+    buildLineChart('chart-latency-p50', 'Latency p50', ds.latency_p50_ms, '#64748b');
+    buildLineChart('chart-latency-p95', 'Latency p95', ds.latency_p95_ms, '#b45309');
+});
+</script>
+{% endblock %}

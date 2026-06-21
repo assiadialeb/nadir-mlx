@@ -374,6 +374,35 @@ From the dashboard, start a benchmark against any **RUNNING** TEXT or MULTIMODAL
 
 Results are stored in `logs/benchmarks/` and displayed with TTFT, tokens/sec, and latency percentiles.
 
+### History & charts
+
+Open **Benchmark → Full history** (`/benchmark/history/`) to:
+
+- Filter runs by model name, instance, launch mode, target type, status, or bench preset
+- Paginate through past runs with key metrics (TTFT p50, aggregate tok/s)
+- Plot metric evolution over time (TTFT, latency p50/p95, throughput) when at least two completed runs match the filters
+
+Filter from a model card via **Historique bench**, or from a run detail page via **Model history**.
+
+### MLX vs external compare
+
+Use **MLX vs external compare** (`/benchmark/compare/`) to align two completed runs that share the same llmbench preset:
+
+1. Run **Standard** (or the same custom preset) on a local MLX instance (`INSTANCE` target).
+2. Run the identical preset against Ollama or another API (`ENDPOINT` target, e.g. `localhost:11434`).
+3. Open the compare page — suggested pairs appear automatically when presets match.
+4. Review overlay charts (TTFT, aggregate tok/s) and the side-by-side scenario table.
+5. **Export JSON snapshot** for archival or sharing (no cloud upload — file downloads locally).
+
+Example workflow:
+
+```bash
+# MLX instance already running on :11446
+# 1) Benchmark → Standard preset → INSTANCE
+# 2) Benchmark → Ollama compare preset → ENDPOINT :11434
+# 3) Benchmark → MLX vs external compare → pick pair → Export JSON
+```
+
 ---
 
 ## Privacy & security
