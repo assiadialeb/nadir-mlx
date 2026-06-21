@@ -16,6 +16,18 @@ def _parse_cli_arg(argv: list[str], flag: str) -> str | None:
     return None
 
 
+def _strip_cli_flag(flag: str) -> None:
+    """Remove a custom orchestrator flag before delegating to mlx_lm CLI parsing."""
+    index = 1
+    while index < len(sys.argv):
+        if sys.argv[index] != flag:
+            index += 1
+            continue
+        del sys.argv[index]
+        if index < len(sys.argv) and not sys.argv[index].startswith("-"):
+            del sys.argv[index]
+
+
 def _patch_tokenizer_config() -> None:
     """Ensure Mistral/Qwen-style tokenizers load with the correct regex fix."""
     from mlx_lm.server import ModelProvider
@@ -106,6 +118,7 @@ def main() -> None:
         or os.environ.get("NADIR_GATEWAY_ALIAS", "").strip()
         or None
     )
+    _strip_cli_flag("--model-id")
 
     original_init = _patch_tokenizer_config()
     if model_path is not None:

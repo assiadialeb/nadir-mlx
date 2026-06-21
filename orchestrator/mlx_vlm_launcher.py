@@ -16,6 +16,18 @@ def _parse_cli_arg(argv: list[str], flag: str) -> str | None:
     return None
 
 
+def _strip_cli_flag(flag: str) -> None:
+    """Remove a custom orchestrator flag before delegating to mlx_vlm CLI parsing."""
+    index = 1
+    while index < len(sys.argv):
+        if sys.argv[index] != flag:
+            index += 1
+            continue
+        del sys.argv[index]
+        if index < len(sys.argv) and not sys.argv[index].startswith("-"):
+            del sys.argv[index]
+
+
 def _parse_model_path(argv: list[str]) -> Path | None:
     for index, arg in enumerate(argv):
         if arg == "--model" and index + 1 < len(argv):
@@ -79,6 +91,7 @@ def main() -> None:
         or os.environ.get("NADIR_GATEWAY_ALIAS", "").strip()
         or None
     )
+    _strip_cli_flag("--model-id")
 
     for index, arg in enumerate(sys.argv[1:], start=1):
         if arg == "--model" and index + 1 < len(sys.argv):
