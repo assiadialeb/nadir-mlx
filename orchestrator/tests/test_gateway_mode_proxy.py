@@ -127,13 +127,38 @@ class GatewayModeProxyTests(SimpleTestCase):
         upstream.status_code = 200
         upstream.json.return_value = {"created": 1, "data": []}
         upstream.headers = httpx.Headers({"content-type": "application/json"})
-        _mock_buffered_client(mock_client_cls, upstream)
+        mock_client = _mock_buffered_client(mock_client_cls, upstream)
 
         response = self.client.post(
             "/v1/images/generations",
             json={"model": "flux-local", "prompt": "a cat"},
         )
         self.assertEqual(response.status_code, 200)
+        upstream_body = mock_client.post.await_args.kwargs["json"]
+        self.assertEqual(upstream_body["model"], "flux-local")
+        self.assertEqual(upstream_body["prompt"], "a cat")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    def test_image_generations_rejects_text_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/images/generations",
+            json={"model": "llama-chat", "prompt": "a cat"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=IMAGE_TARGET)
+    def test_rerank_rejects_image_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/rerank",
+            json={
+                "model": "flux-local",
+                "query": "test",
+                "documents": ["doc"],
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
     @patch("orchestrator.gateway.selectors.resolve_gateway_target")
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")

@@ -40,6 +40,16 @@ EMBED_TARGET = GatewayTarget(
     api_path="/v1/embeddings",
 )
 
+IMAGE_TARGET = GatewayTarget(
+    alias="Flux-1",
+    instance_id=7,
+    launch_mode="IMAGE",
+    host="127.0.0.1",
+    port=11400,
+    upstream_model="Flux-1",
+    api_path="/v1/images/generations",
+)
+
 
 def _mock_buffered_client(mock_client_cls: MagicMock, response: MagicMock) -> AsyncMock:
     mock_client = AsyncMock()
@@ -200,6 +210,18 @@ class GatewayChatProxyTests(SimpleTestCase):
             "/v1/chat/completions",
             json={
                 "model": "local-embed",
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=IMAGE_TARGET)
+    def test_chat_completions_rejects_image_instance(self, _mock_resolve: MagicMock) -> None:
+        response = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "Flux-1",
                 "messages": [{"role": "user", "content": "Hi"}],
             },
         )
