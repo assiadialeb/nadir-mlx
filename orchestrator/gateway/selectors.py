@@ -81,3 +81,34 @@ def resolve_gateway_target(alias: str) -> GatewayTarget:
         upstream_model=_downstream_model(instance, resolved_alias),
         api_path=api_path,
     )
+
+
+def list_running_gateway_models() -> dict[str, object]:
+    """Build an OpenAI-compatible model list from RUNNING instances."""
+    import time
+
+    from orchestrator.gateway_aliases import instance_gateway_alias
+
+    created_at = int(time.time())
+    entries: list[dict[str, object]] = []
+    seen_aliases: set[str] = set()
+
+    for instance in InferenceInstance.objects.filter(status="RUNNING").order_by("model_name"):
+        alias = instance_gateway_alias(instance)
+        alias_key = alias.casefold()
+        if alias_key in seen_aliases:
+            continue
+        seen_aliases.add(alias_key)
+        entries.append(
+            {
+                "id": alias,
+                "object": "model",
+                "created": created_at,
+                "owned_by": "nadir",
+                "metadata": {
+                    "launch_mode": instance.launch_mode,
+                },
+            }
+        )
+
+    return {"object": "list", "data": entries}

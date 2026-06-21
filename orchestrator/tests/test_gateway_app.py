@@ -13,5 +13,10 @@ class GatewayAppTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
-            {"status": "ok", "service": "nadir-gateway"},
+            {
+                "status": "ok",
+                "service": "nadir-gateway",
+                "docs": "/docs",
+                "models": "/v1/models",
+            },
         )

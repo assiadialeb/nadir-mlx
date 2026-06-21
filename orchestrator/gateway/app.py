@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from orchestrator.gateway.routes.chat import router as chat_router
+from orchestrator.gateway.routes.models import router as models_router
+from orchestrator.gateway.routes.modes import router as modes_router
 
 
 def create_app() -> FastAPI:
@@ -17,7 +19,14 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def gateway_health() -> dict[str, str]:
-        return {"status": "ok", "service": "nadir-gateway"}
+        return {
+            "status": "ok",
+            "service": "nadir-gateway",
+            "docs": "/docs",
+            "models": "/v1/models",
+        }
 
+    app.include_router(models_router)
     app.include_router(chat_router)
+    app.include_router(modes_router)
     return app
