@@ -161,6 +161,14 @@ INSTANCE_AUTO_RESTART_BACKOFF_SECONDS = int(
 )
 INSTANCE_WATCHDOG_ENABLED = _env_bool("MLX_INSTANCE_WATCHDOG_ENABLED", True)
 
+# MLX inference instance ports (auto-assigned by server_manager.get_free_port)
+INSTANCE_PORT_RANGE_START = 11400
+INSTANCE_PORT_RANGE_END = 11500
+
+# Nadir Gateway — single OpenAI-compatible entrypoint (outside instance range)
+NADIR_GATEWAY_HOST = os.environ.get("NADIR_GATEWAY_HOST", "127.0.0.1")
+NADIR_GATEWAY_PORT = int(os.environ.get("NADIR_GATEWAY_PORT", "11380"))
+
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True

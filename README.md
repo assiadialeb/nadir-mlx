@@ -69,10 +69,15 @@ Quantization (`4bit`, `8bit`, …) is inferred from the folder name when present
 
 ```mermaid
 flowchart TB
-    subgraph UI["Django UI :8000"]
+    subgraph UI["Django control plane :8000"]
         Dashboard[Dashboard]
         Search[HF Search]
         Benchmark[Benchmarks]
+    end
+
+    subgraph Gateway["Nadir Gateway :11380"]
+        Router[alias router]
+        Proxy["/v1 proxy (MLX-22+)"]
     end
 
     subgraph Orchestrator["orchestrator/"]
@@ -81,7 +86,7 @@ flowchart TB
         MU[model_utils]
     end
 
-    subgraph Instances["Inference instances :11400-11500"]
+    subgraph Instances["MLX instances :11400-11500"]
         TEXT[mlx-lm]
         VLM[mlx-vlm]
         EMB[embedding_server]
@@ -91,10 +96,16 @@ flowchart TB
         STT[stt_server]
     end
 
+    Client[LiteLLM / OpenAI client]
     Models[(./models/)]
     Logs[(./logs/)]
     DB[(db.sqlite3)]
 
+    Client -->|"model = gateway alias"| Gateway
+    Gateway --> Router
+    Router --> DB
+    Gateway --> Proxy
+    Proxy --> Instances
     Dashboard --> SM
     Search --> DL
     DL --> Models
@@ -103,6 +114,16 @@ flowchart TB
     UI --> DB
     Benchmark --> Instances
 ```
+
+See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the control-plane vs data-plane decision.
+
+**Port allocation**
+
+| Port | Service |
+|------|---------|
+| `8000` | Django admin UI |
+| `11380` | Nadir Gateway (`NADIR_GATEWAY_PORT`) |
+| `11400–11500` | MLX inference instances (auto-assigned) |
 
 ---
 
@@ -149,7 +170,31 @@ python manage.py runserver
 
 Open **http://127.0.0.1:8000** and sign in with your superuser account.
 
-### 4. Download and launch a model
+### 4. Run the gateway (optional, recommended with LiteLLM)
+
+In a **second terminal**, start the OpenAI-compatible gateway on port `11380`:
+
+```bash
+source venv/bin/activate
+python -m orchestrator.gateway
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:11380/health
+```
+
+Configure LiteLLM (or any OpenAI client) with `api_base: http://127.0.0.1:11380/v1` and `model: <gateway-alias>` (the alias shown on each server card in the UI). Proxy routes for `/v1/chat/completions` and other modes land in MLX-22+.
+
+Environment variables (see `.env.example`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NADIR_GATEWAY_HOST` | `127.0.0.1` | Gateway bind address |
+| `NADIR_GATEWAY_PORT` | `11380` | Gateway port (must stay outside `11400–11500`) |
+
+### 5. Download and launch a model
 
 1. Go to **Search** and find a model (e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit`)
 2. Click **Download** — files land in `./models/<model-name>/`
