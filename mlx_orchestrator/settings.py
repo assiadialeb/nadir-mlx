@@ -168,6 +168,9 @@ INSTANCE_PORT_RANGE_END = 11500
 # Nadir Gateway — single OpenAI-compatible entrypoint (outside instance range)
 NADIR_GATEWAY_HOST = os.environ.get("NADIR_GATEWAY_HOST", "127.0.0.1")
 NADIR_GATEWAY_PORT = int(os.environ.get("NADIR_GATEWAY_PORT", "11380"))
+NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS = float(
+    os.environ.get("NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS", "300")
+)
 
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True

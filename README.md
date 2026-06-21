@@ -185,7 +185,19 @@ Health check:
 curl http://127.0.0.1:11380/health
 ```
 
-Configure LiteLLM (or any OpenAI client) with `api_base: http://127.0.0.1:11380/v1` and `model: <gateway-alias>` (the alias shown on each server card in the UI). Proxy routes for `/v1/chat/completions` and other modes land in MLX-22+.
+Configure LiteLLM (or any OpenAI client) with `api_base: http://127.0.0.1:11380/v1` and `model: <gateway-alias>` (the alias shown on each server card in the UI).
+
+```bash
+curl http://127.0.0.1:11380/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<gateway-alias>",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 128
+  }'
+```
+
+Proxy routes for embeddings and other modes land in MLX-23; aggregated `/v1/models` in MLX-24.
 
 Environment variables (see `.env.example`):
 

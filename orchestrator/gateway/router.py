@@ -16,6 +16,7 @@ LaunchMode = Literal[
 ]
 
 CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+COMPLETIONS_PATH = "/v1/completions"
 EMBEDDINGS_PATH = "/v1/embeddings"
 RERANK_PATH = "/v1/rerank"
 IMAGES_PATH = "/v1/images/generations"
