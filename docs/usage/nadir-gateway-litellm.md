@@ -291,3 +291,5 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 | IMAGE | [gateway-runbooks/image.md](gateway-runbooks/image.md) |
 | TTS | [gateway-runbooks/tts.md](gateway-runbooks/tts.md) |
 | STT | [gateway-runbooks/stt.md](gateway-runbooks/stt.md) |
+
+See also the [API coverage matrix](nadir-gateway-coverage-matrix.md) for gaps vs OpenAI / LiteLLM (streaming, audio formats, etc.).

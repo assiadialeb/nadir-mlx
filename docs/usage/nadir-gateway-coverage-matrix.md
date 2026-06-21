@@ -1,0 +1,132 @@
+# Nadir Gateway — API coverage matrix
+
+Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI / LiteLLM expectations.
+
+!!! note "Living document"
+    Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
+
+Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) in backlog.
+
+## Cross-cutting (all modes)
+
+| Topic | Status |
+|-------|--------|
+| Alias → RUNNING instance routing | ✅ |
+| Aggregated `GET /v1/models` | ✅ |
+| In-memory alias cache (avoid DB on every hit) | ❌ MLX-31 |
+| Wake / idle stop for instances | ❌ next sprint |
+| API key auth on gateway | ❌ (LiteLLM can enforce upstream) |
+| Multi-worker uvicorn | ❌ single process by default |
+
+## TEXT
+
+| Capability | Status |
+|------------|--------|
+| `POST /v1/chat/completions` | ✅ |
+| `POST /v1/completions` (legacy) | ✅ TEXT only |
+| **SSE streaming** (`stream: true`) | ✅ gateway + upstream |
+| Tools / function calling | ⚠️ depends on mlx-lm / model |
+| `logprobs`, `n>1`, strict JSON mode | ⚠️ mlx-lm limits |
+| `/v1/completions` on VLM alias | ❌ 400 (by design) |
+
+**Main gaps:** OpenAI parity (tools, structured output) — not routing.
+
+## MULTIMODAL (VLM)
+
+| Capability | Status |
+|------------|--------|
+| Chat + **streaming** via `/v1/chat/completions` | ✅ |
+| Multimodal messages (`image_url`, etc.) | ⚠️ if mlx-vlm upstream supports it |
+| `/v1/completions` | ❌ |
+
+**Main gap:** real vision QA (images in payload).
+
+## EMBEDDING
+
+| Capability | Status |
+|------------|--------|
+| `POST /v1/embeddings` string + batch | ✅ |
+| **Streaming** | ❌ |
+| `encoding_format: base64` | ❌ field accepted, always float |
+| `dimensions` (OpenAI truncation) | ❌ |
+| `user`, rate/token limits | ⚠️ partial |
+
+## RERANKER
+
+| Capability | Status |
+|------------|--------|
+| `POST /v1/rerank` (Jina-like) | ✅ |
+| **`model` required** on gateway | ✅ (optional upstream) |
+| `return_documents`, `top_n` | ✅ |
+| **Streaming** | ❌ |
+| Cohere / other API shapes | ❌ |
+
+## IMAGE
+
+| Capability | Status |
+|------------|--------|
+| `POST /v1/images/generations` | ✅ |
+| `b64_json` | ✅ |
+| `response_format: url` | ❌ rejected upstream |
+| **Streaming** | ❌ |
+| edits / variations / inpainting | ❌ |
+| Long generation timeout | ⚠️ `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` (default 300s) |
+
+## TTS (Kokoro)
+
+| Capability | Status |
+|------------|--------|
+| `POST /v1/audio/speech` | ✅ |
+| Formats **wav, mp3** | ✅ |
+| OpenAI formats **opus, aac, flac, pcm** | ❌ |
+| **Audio streaming** | ❌ (full binary response) |
+| OpenAI voice → Kokoro remap | ✅ upstream |
+| `instructions` (GPT-4o mini TTS) | ❌ |
+
+## STT (Whisper)
+
+| Capability | Status |
+|------------|--------|
+| `POST /v1/audio/transcriptions` multipart | ✅ |
+| `response_format`: json, text, verbose_json | ✅ basic |
+| Input **WAV / MP3** | ✅ |
+| **M4A, FLAC, etc.** | ⚠️ requires ffmpeg |
+| **Streaming / realtime** | ❌ |
+| `/v1/audio/translations` | ❌ |
+| Segments, word timestamps, srt/vtt | ❌ or partial |
+| `prompt`, `temperature` (Whisper) | ⚠️ verify upstream |
+
+## Streaming summary
+
+| Mode | Streaming |
+|------|-----------|
+| TEXT / VLM chat | ✅ SSE |
+| Embeddings, rerank, image, TTS, STT | ❌ |
+
+## LiteLLM QA priorities
+
+**Ready for integration QA:**
+
+- Chat + stream
+- Embeddings batch
+- Rerank
+- Image `b64_json`
+- TTS wav/mp3
+- STT multipart WAV
+
+**Likely mismatch points:**
+
+1. TTS when client requests `opus` / `aac`
+2. STT M4A without ffmpeg on the host
+3. Image when client expects a **URL**
+4. Rerank / embedding depending on LiteLLM version and `model_info.mode`
+5. VLM with images in messages
+6. Chat **tools** when the client sends them
+
+## References
+
+- Epic: MLX-17
+- Route cache: MLX-31
+- Integration guide: [nadir-gateway-litellm.md](nadir-gateway-litellm.md)
+- E2E runbooks: [gateway-runbooks/](gateway-runbooks/)
+- ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)
