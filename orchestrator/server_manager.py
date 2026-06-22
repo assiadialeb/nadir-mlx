@@ -241,7 +241,7 @@ def _terminate_launchers_on_port(port: int) -> None:
             _terminate_pid(pid, signal.SIGKILL)
         time.sleep(0.3)
 
-    _wait_for_port_release(port, 2.0)
+    _wait_for_port_release(port, 5.0)
 
 
 def _terminate_pid(pid: int, sig: signal.Signals) -> None:
@@ -657,8 +657,78 @@ def start_instance(
         log_file.close()
 
 
+def _stop_port_release_timeout_seconds() -> float:
+    """How long to wait for a TCP port to become free after stopping an instance."""
+    raw = os.environ.get("MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS")
+    if raw:
+        try:
+            return max(3.0, float(raw))
+        except ValueError:
+            pass
+    return float(getattr(settings, "MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS", 12.0))
+
+
+def is_manual_stop_in_progress(instance: InferenceInstance) -> bool:
+    """Return True while the UI is stopping this instance (watchdog should stay idle)."""
+    ops = (instance.server_config or {}).get("ops") or {}
+    return bool(ops.get("manual_stop_in_progress"))
+
+
+def _set_manual_stop_in_progress(
+    instance: InferenceInstance,
+    *,
+    active: bool,
+    save: bool = True,
+) -> None:
+    config = dict(instance.server_config or {})
+    ops = dict(config.get("ops") or {})
+    if active:
+        ops["manual_stop_in_progress"] = True
+    else:
+        ops.pop("manual_stop_in_progress", None)
+    config["ops"] = ops
+    instance.server_config = config
+    if save:
+        instance.save(update_fields=["server_config"])
+
+
+def _port_blocker_pids(port: int) -> list[int]:
+    """Return launcher and listener PIDs still bound to a port."""
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for pid in _find_orchestrator_launcher_pids(port) + _find_listener_pids(port):
+        if pid in seen or pid <= 0:
+            continue
+        seen.add(pid)
+        ordered.append(pid)
+    return ordered
+
+
+def _ensure_port_released(port: int, timeout_seconds: float) -> list[int]:
+    """Kill blockers and poll until the port is free or the timeout expires."""
+    deadline = time.time() + timeout_seconds
+    last_known: list[int] = []
+    while time.time() < deadline:
+        if is_port_free(port):
+            return []
+        blockers = _port_blocker_pids(port)
+        if blockers:
+            last_known = blockers
+            for pid in blockers:
+                _terminate_pid(pid, signal.SIGKILL)
+            time.sleep(0.4)
+            continue
+        time.sleep(0.25)
+    if is_port_free(port):
+        return []
+    return _port_blocker_pids(port) or last_known
+
+
 def check_instance_status(instance: InferenceInstance) -> str:
     """Check whether the subprocess PID is still active and update status."""
+    if is_manual_stop_in_progress(instance):
+        return instance.status
+
     if instance.status not in ("RUNNING", "LOADING"):
         return instance.status
 
@@ -701,33 +771,34 @@ def check_instance_status(instance: InferenceInstance) -> str:
 
 def stop_instance(instance: InferenceInstance) -> None:
     """Terminate the inference server and ensure the port is released."""
-    targets = _collect_stop_targets(instance)
-    survivors = _force_stop_pids(targets, grace_seconds=2.0)
-
-    _terminate_launchers_on_port(instance.port)
-
-    remaining_launchers = set(_find_orchestrator_launcher_pids(instance.port))
-    remaining_listeners = set(_find_listener_pids(instance.port))
-    survivors = survivors | remaining_launchers | remaining_listeners
-    if survivors:
-        for pid in survivors:
-            _terminate_pid(pid, signal.SIGKILL)
-        time.sleep(0.5)
-
-    if _find_orchestrator_launcher_pids(instance.port) or not is_port_free(instance.port):
-        remaining_pids = (
-            _find_orchestrator_launcher_pids(instance.port) or _find_listener_pids(instance.port)
+    instance.refresh_from_db()
+    _set_manual_stop_in_progress(instance, active=True)
+    try:
+        targets = _collect_stop_targets(instance)
+        _force_stop_pids(targets, grace_seconds=3.0)
+        remaining = _ensure_port_released(
+            instance.port,
+            _stop_port_release_timeout_seconds(),
         )
-        pid_list = ", ".join(str(pid) for pid in remaining_pids) or "unknown"
-        raise RuntimeError(
-            f"Port {instance.port} is still in use (PID: {pid_list}). "
-            "The server could not be stopped completely."
-        )
+        if remaining:
+            pid_list = ", ".join(str(pid) for pid in remaining)
+            raise RuntimeError(
+                f"Port {instance.port} is still in use (PID: {pid_list}). "
+                "The server could not be stopped completely."
+            )
 
-    instance.pid = None
-    instance.status = "STOPPED"
-    instance.stopped_at = timezone.now()
-    instance.save(update_fields=["status", "pid", "stopped_at"])
+        config = dict(instance.server_config or {})
+        ops = dict(config.get("ops") or {})
+        ops.pop("manual_stop_in_progress", None)
+        config["ops"] = ops
+        instance.server_config = config
+        instance.pid = None
+        instance.status = "STOPPED"
+        instance.stopped_at = timezone.now()
+        instance.save(update_fields=["status", "pid", "stopped_at", "server_config"])
+    except Exception:
+        _set_manual_stop_in_progress(instance, active=False)
+        raise
 
 
 def delete_instance(instance: InferenceInstance) -> None:

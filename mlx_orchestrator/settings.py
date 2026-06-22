@@ -160,6 +160,9 @@ INSTANCE_AUTO_RESTART_BACKOFF_SECONDS = int(
     os.environ.get("MLX_RESTART_BACKOFF_SECONDS", "30")
 )
 INSTANCE_WATCHDOG_ENABLED = _env_bool("MLX_INSTANCE_WATCHDOG_ENABLED", True)
+MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS = float(
+    os.environ.get("MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS", "12")
+)
 
 # MLX inference instance ports (auto-assigned by server_manager.get_free_port)
 INSTANCE_PORT_RANGE_START = 11400

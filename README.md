@@ -491,12 +491,14 @@ Example workflow:
 
 **Port still in use after stop**
 
+The stop flow waits up to `MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS` (default **12**) for the kernel to release the port. If it still fails:
+
 ```bash
 lsof -nP -iTCP:<PORT> -sTCP:LISTEN
 kill -9 <PID>
 ```
 
-The UI now verifies port release before marking an instance as stopped.
+The UI verifies port release before marking an instance as stopped. During a manual stop, the health watchdog pauses for that instance to avoid races with auto-restart.
 
 **Model download stuck**
 

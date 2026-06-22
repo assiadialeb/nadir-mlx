@@ -129,6 +129,20 @@ class ServerConfigOpsTests(TestCase):
 
 
 class RefreshInstanceHealthIntegrationTests(TestCase):
+    def test_refresh_skips_instance_during_manual_stop(self) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="demo-model",
+            port=11498,
+            launch_mode="TEXT",
+            status="RUNNING",
+            health_status="HEALTHY",
+            server_config={"host": "127.0.0.1", "ops": {"manual_stop_in_progress": True}},
+        )
+        with patch("orchestrator.instance_health.check_instance_status") as mock_check:
+            status = refresh_instance_health(instance)
+        mock_check.assert_not_called()
+        self.assertEqual(status, "HEALTHY")
+
     def test_refresh_marks_stopped_as_unknown(self) -> None:
         instance = InferenceInstance.objects.create(
             model_name="demo-model",
