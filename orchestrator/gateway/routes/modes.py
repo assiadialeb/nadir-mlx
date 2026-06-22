@@ -14,7 +14,9 @@ from orchestrator.gateway.services.mode_proxy import (
     proxy_audio_transcriptions,
     proxy_audio_translations,
     proxy_embeddings,
+    proxy_image_edits,
     proxy_image_generations,
+    proxy_image_variations,
     proxy_rerank,
 )
 
@@ -44,6 +46,22 @@ async def rerank(request: Request):
 @router.post("/v1/images/generations")
 async def image_generations(request: Request):
     return await _handle_json_route(request, proxy_image_generations)
+
+
+@router.post("/v1/images/edits")
+async def image_edits(request: Request):
+    try:
+        return await proxy_image_edits(request)
+    except GatewayRouteError as exc:
+        return route_error_response(exc)
+
+
+@router.post("/v1/images/variations")
+async def image_variations(request: Request):
+    try:
+        return await proxy_image_variations(request)
+    except GatewayRouteError as exc:
+        return route_error_response(exc)
 
 
 @router.post("/v1/audio/speech")

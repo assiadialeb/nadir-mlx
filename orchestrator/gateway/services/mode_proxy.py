@@ -13,6 +13,8 @@ from orchestrator.gateway.router import (
     AUDIO_TRANSCRIPTIONS_PATH,
     AUDIO_TRANSLATIONS_PATH,
     EMBEDDINGS_PATH,
+    IMAGE_EDITS_PATH,
+    IMAGE_VARIATIONS_PATH,
     IMAGES_PATH,
     RERANK_PATH,
     GatewayTarget,
@@ -77,25 +79,17 @@ async def proxy_image_generations(body: dict[str, Any], headers: Any) -> Respons
     )
 
 
-async def proxy_audio_speech(body: dict[str, Any], headers: Any) -> Response:
-    target = await resolve_target_from_body(body)
-    validate_target_launch_mode(target, TTS_MODES, "text-to-speech")
-    request_headers = forward_request_headers(headers)
-    timeout = proxy_timeout_seconds()
-    url = upstream_url_for_path(target, AUDIO_SPEECH_PATH)
-    return await proxy_binary_post(
-        url,
-        prepare_upstream_body(body, target),
-        request_headers,
-        timeout,
-    )
-
-
-async def _proxy_audio_multipart(request: Request, upstream_path: str) -> Response:
+async def _proxy_multipart_request(
+    request: Request,
+    upstream_path: str,
+    *,
+    allowed_modes: frozenset[str],
+    endpoint_label: str,
+) -> Response:
     form = await request.form()
     model = form.get("model")
     target = await resolve_target_from_model(str(model) if model is not None else "")
-    validate_target_launch_mode(target, STT_MODES, "speech-to-text")
+    validate_target_launch_mode(target, allowed_modes, endpoint_label)
 
     multipart_data: dict[str, str] = {}
     multipart_files: dict[str, tuple[str | None, bytes, str | None]] = {}
@@ -138,12 +132,54 @@ async def _proxy_audio_multipart(request: Request, upstream_path: str) -> Respon
     )
 
 
+async def proxy_image_edits(request: Request) -> Response:
+    return await _proxy_multipart_request(
+        request,
+        IMAGE_EDITS_PATH,
+        allowed_modes=IMAGE_MODES,
+        endpoint_label="image edits",
+    )
+
+
+async def proxy_image_variations(request: Request) -> Response:
+    return await _proxy_multipart_request(
+        request,
+        IMAGE_VARIATIONS_PATH,
+        allowed_modes=IMAGE_MODES,
+        endpoint_label="image variations",
+    )
+
+
+async def proxy_audio_speech(body: dict[str, Any], headers: Any) -> Response:
+    target = await resolve_target_from_body(body)
+    validate_target_launch_mode(target, TTS_MODES, "text-to-speech")
+    request_headers = forward_request_headers(headers)
+    timeout = proxy_timeout_seconds()
+    url = upstream_url_for_path(target, AUDIO_SPEECH_PATH)
+    return await proxy_binary_post(
+        url,
+        prepare_upstream_body(body, target),
+        request_headers,
+        timeout,
+    )
+
+
 async def proxy_audio_transcriptions(request: Request) -> Response:
-    return await _proxy_audio_multipart(request, AUDIO_TRANSCRIPTIONS_PATH)
+    return await _proxy_multipart_request(
+        request,
+        AUDIO_TRANSCRIPTIONS_PATH,
+        allowed_modes=STT_MODES,
+        endpoint_label="speech-to-text",
+    )
 
 
 async def proxy_audio_translations(request: Request) -> Response:
-    return await _proxy_audio_multipart(request, AUDIO_TRANSLATIONS_PATH)
+    return await _proxy_multipart_request(
+        request,
+        AUDIO_TRANSLATIONS_PATH,
+        allowed_modes=STT_MODES,
+        endpoint_label="speech-to-text",
+    )
 
 
 async def _proxy_json_for_target(

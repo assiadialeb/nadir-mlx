@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from orchestrator.gateway.routes.chat import router as chat_router
+from orchestrator.gateway.routes.image_files import router as image_files_router
 from orchestrator.gateway.routes.models import router as models_router
 from orchestrator.gateway.routes.modes import router as modes_router
 
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(models_router)
+    app.include_router(image_files_router)
     app.include_router(chat_router)
     app.include_router(modes_router)
     return app

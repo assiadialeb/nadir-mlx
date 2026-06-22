@@ -23,7 +23,20 @@ export NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS=600
 python manage.py run_gateway
 ```
 
-Upstream mflux only supports `response_format: b64_json` (not `url`).
+Upstream supports `response_format: b64_json` (default) and **`url`** (local PNG served by the gateway).
+
+For `url`, files are stored under `data/generated_images/` and exposed at:
+
+`GET http://127.0.0.1:11380/v1/images/files/{id}`
+
+Configure the public base if clients reach the gateway via another host:
+
+```bash
+NADIR_GATEWAY_PUBLIC_BASE_URL=http://127.0.0.1:11380
+IMAGE_OUTPUT_TTL_SECONDS=3600
+```
+
+`POST /v1/images/edits` and `/v1/images/variations` return **501** in v1 (mflux txt2img only). See [ADR 003](../../adr/003-image-edits-variations.md).
 
 ## 1. Discovery
 
@@ -39,7 +52,28 @@ Optional — read upstream defaults (direct instance port, for tuning):
 curl -s http://127.0.0.1:11400/v1/image/defaults | python3 -m json.tool
 ```
 
-## 2. Fast generation (smoke test)
+## 3. URL response format
+
+```bash
+curl -s http://127.0.0.1:11380/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Flux-1",
+    "prompt": "A red apple on a wooden table",
+    "quality": "fast",
+    "response_format": "url",
+    "n": 1
+  }' | python3 -m json.tool
+```
+
+Fetch the PNG (same host, no external CDN):
+
+```bash
+curl -s -o /tmp/nadir-gateway-flux-url.png "http://127.0.0.1:11380/v1/images/files/<file_id>"
+file /tmp/nadir-gateway-flux-url.png
+```
+
+## 4. Fast generation (smoke test, b64_json)
 
 Use `quality: fast` for a quicker first run:
 
@@ -70,7 +104,7 @@ rm -f "$tmp"
 
 **Expected:** HTTP 200 within timeout, non-empty `b64_json`, PNG decodable.
 
-## 3. Wrong route (negative test)
+## 5. Wrong route (negative test)
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completions \
@@ -83,7 +117,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 
 **Expected:** HTTP **400** (`unsupported_endpoint`).
 
-## 4. LiteLLM
+## 6. LiteLLM
 
 ```yaml
 model_list:
@@ -118,6 +152,8 @@ print(response)
 |------|--------|--------|
 | 404 | Wrong alias casing | Use exact id from `GET /v1/models` |
 | 504 | Gateway timeout | Raise `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS`, use `quality: fast` |
-| 400 | `url` response_format | Use `b64_json` only |
+| 400 | `url` misconfigured | Set `NADIR_GATEWAY_PUBLIC_BASE_URL` if clients use another host |
+| 404 | Image file expired | Regenerate; default TTL 3600s (`IMAGE_OUTPUT_TTL_SECONDS`) |
+| 501 | edits / variations | Not supported v1 — use generations |
 | 400 | Empty prompt | Provide non-empty `prompt` |
 | 503 | Instance not RUNNING | Start IMAGE server in UI |

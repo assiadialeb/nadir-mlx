@@ -66,6 +66,9 @@ logs/*
 logs/benchmarks/*
 !logs/benchmarks/.gitkeep
 
+# Ephemeral generated image PNGs (response_format=url)
+data/generated_images/
+
 # macOS
 .DS_Store
 .AppleDouble

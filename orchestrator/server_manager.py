@@ -537,6 +537,14 @@ def _get_launch_env(
             quality = server_config.get("default_quality")
             if quality:
                 env["IMAGE_DEFAULT_QUALITY"] = str(quality)
+            env.setdefault(
+                "IMAGE_OUTPUT_DIR",
+                str(getattr(settings, "IMAGE_OUTPUT_DIR", "")),
+            )
+            env.setdefault(
+                "NADIR_GATEWAY_PUBLIC_BASE_URL",
+                str(getattr(settings, "NADIR_GATEWAY_PUBLIC_BASE_URL", "")),
+            )
     return env
 
 

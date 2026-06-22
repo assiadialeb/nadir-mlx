@@ -67,9 +67,9 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) do
 |------------|--------|
 | `POST /v1/images/generations` | ✅ |
 | `b64_json` | ✅ |
-| `response_format: url` | ❌ rejected upstream |
+| `response_format: url` | ✅ MLX-34 (local gateway URL, no CDN) |
 | **Streaming** | ❌ |
-| edits / variations / inpainting | ❌ |
+| edits / variations / inpainting | ❌ v1 — [ADR 003](../adr/003-image-edits-variations.md) (501) |
 | Long generation timeout | ⚠️ `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` (default 300s) |
 
 ## TTS (Kokoro)
