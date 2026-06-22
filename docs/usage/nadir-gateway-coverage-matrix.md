@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) in backlog.
+Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) done.
 
 ## Cross-cutting (all modes)
 
@@ -13,7 +13,7 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) in
 |-------|--------|
 | Alias → RUNNING instance routing | ✅ |
 | Aggregated `GET /v1/models` | ✅ |
-| In-memory alias cache (avoid DB on every hit) | ❌ MLX-31 |
+| In-memory alias cache (avoid DB on every hit) | ✅ MLX-31 (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
 | Wake / idle stop for instances | ❌ next sprint |
 | API key auth on gateway | ❌ (LiteLLM can enforce upstream) |
 | Multi-worker uvicorn | ❌ single process by default |

@@ -208,6 +208,7 @@ Environment variables (see `.env.example`):
 | `NADIR_GATEWAY_HOST` | `127.0.0.1` | Gateway bind address |
 | `NADIR_GATEWAY_PORT` | `11380` | Gateway port (must stay outside `11400–11500`) |
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
+| `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
 
 ### 5. Download and launch a model
 

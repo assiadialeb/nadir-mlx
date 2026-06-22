@@ -7,11 +7,15 @@ from orchestrator.gateway.router import (
     EMBEDDINGS_PATH,
     GatewayRouteError,
 )
+from orchestrator.gateway.route_cache import clear_gateway_route_cache
 from orchestrator.gateway.selectors import resolve_gateway_target
 from orchestrator.models import InferenceInstance
 
 
 class GatewayRouterTests(TestCase):
+    def setUp(self) -> None:
+        clear_gateway_route_cache()
+
     def test_resolve_gateway_target_returns_running_text_instance(self) -> None:
         instance = InferenceInstance.objects.create(
             model_name="Llama-3-8B",

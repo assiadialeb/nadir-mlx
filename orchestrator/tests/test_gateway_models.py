@@ -2,11 +2,15 @@
 
 from django.test import TestCase
 
+from orchestrator.gateway.route_cache import clear_gateway_route_cache
 from orchestrator.gateway.selectors import list_running_gateway_models
 from orchestrator.models import InferenceInstance
 
 
 class GatewayModelsSelectorTests(TestCase):
+    def setUp(self) -> None:
+        clear_gateway_route_cache()
+
     def test_list_running_gateway_models_returns_running_aliases(self) -> None:
         InferenceInstance.objects.create(
             model_name="Llama-3-8B",
