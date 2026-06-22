@@ -81,7 +81,7 @@ def login_view(request):
             login(request, user)
             return redirect('servers')
         else:
-            messages.error(request, "Nom d'utilisateur ou mot de passe incorrect.")
+            messages.error(request, "Invalid username or password.")
             
     return render(request, 'orchestrator/login.html')
 
@@ -149,7 +149,7 @@ def models_view(request):
             filter_total = len(hf_models_all)
             filter_count = len(hf_models)
         except Exception as exc:
-            messages.error(request, f"Impossible de contacter l'API Hugging Face : {exc}")
+            messages.error(request, f"Unable to reach the Hugging Face API: {exc}")
 
     return render(request, 'orchestrator/models.html', {
         'active_tab': active_tab,
@@ -176,7 +176,7 @@ def delete_model_view(request):
 
     folder_name = (request.POST.get('model_name') or '').strip()
     if not folder_name:
-        messages.error(request, "Aucun modèle sélectionné.")
+        messages.error(request, "No model selected.")
         return redirect(f"{reverse('models')}?tab=installed")
 
     try:
@@ -184,8 +184,8 @@ def delete_model_view(request):
         messages.success(
             request,
             (
-                f"Modèle {result.folder_name} supprimé "
-                f"({result.instances_removed} serveur(s), "
+                f"Model {result.folder_name} deleted "
+                f"({result.instances_removed} server(s), "
                 f"{result.benchmark_runs_removed} benchmark(s), "
                 f"{result.log_files_removed} log(s))."
             ),
@@ -193,7 +193,7 @@ def delete_model_view(request):
     except ValueError as exc:
         messages.error(request, str(exc))
     except Exception as exc:
-        messages.error(request, f"Erreur lors de la suppression du modèle : {exc}")
+        messages.error(request, f"Failed to delete model: {exc}")
 
     return redirect(f"{reverse('models')}?tab=installed")
 
@@ -206,11 +206,11 @@ def download_model_view(request):
         if repo_id:
             try:
                 start_model_download(repo_id)
-                messages.success(request, f"Le téléchargement du modèle {repo_id} a démarré en arrière-plan.")
+                messages.success(request, f"Download started in the background for model {repo_id}.")
             except ValueError as exc:
                 messages.error(request, str(exc))
         else:
-            messages.error(request, "Aucun identifiant de modèle spécifié.")
+            messages.error(request, "No model identifier specified.")
     tab = request.POST.get('tab', 'hub')
     params: dict[str, str] = {'tab': tab}
     for key in ('q', 'cap', 'sort'):
@@ -257,7 +257,7 @@ def start_instance_view(request):
         launch_mode_raw = request.POST.get('launch_mode', 'TEXT')
 
         if not model_name:
-            messages.error(request, "Veuillez sélectionner un modèle.")
+            messages.error(request, "Please select a model.")
             return redirect('servers')
 
         port = None
@@ -265,7 +265,7 @@ def start_instance_view(request):
             try:
                 port = int(port_raw)
             except ValueError:
-                messages.error(request, "Le port spécifié doit être un nombre valide.")
+                messages.error(request, "The specified port must be a valid number.")
                 return redirect('servers')
 
         try:
@@ -284,15 +284,15 @@ def start_instance_view(request):
                 "TTS": "TTS (mlx-audio / Kokoro)",
                 "STT": "STT (mlx-audio / Whisper)",
             }
-            mode_label = mode_labels.get(instance.launch_mode, "Texte (mlx_lm)")
+            mode_label = mode_labels.get(instance.launch_mode, "Text (mlx_lm)")
             messages.success(
                 request,
-                f"Instance {mode_label} lancée sur le port {instance.port} (PID: {instance.pid}).",
+                f"{mode_label} instance started on port {instance.port} (PID: {instance.pid}).",
             )
         except ValueError as e:
             messages.error(request, str(e))
         except Exception as e:
-            messages.error(request, f"Erreur lors du lancement de l'instance : {str(e)}")
+            messages.error(request, f"Failed to start instance: {str(e)}")
             
     return redirect('servers')
 
@@ -304,11 +304,11 @@ def stop_instance_view(request, instance_id):
         instance = get_object_or_404(InferenceInstance, id=instance_id)
         try:
             stop_instance(instance)
-            messages.success(request, f"Instance sur le port {instance.port} arrêtée.")
+            messages.success(request, f"Instance on port {instance.port} stopped.")
         except RuntimeError as exc:
             messages.error(request, str(exc))
         except Exception as e:
-            messages.error(request, f"Erreur lors de l'arrêt de l'instance : {str(e)}")
+            messages.error(request, f"Failed to stop instance: {str(e)}")
             
     return redirect('servers')
 
@@ -388,12 +388,12 @@ def delete_instance_view(request, instance_id):
             delete_instance(instance)
             messages.success(
                 request,
-                f"Instance {model_name} (port {port}) supprimée.",
+                f"Instance {model_name} (port {port}) deleted.",
             )
         except Exception as e:
             messages.error(
                 request,
-                f"Erreur lors de la suppression de l'instance : {str(e)}",
+                f"Failed to delete instance: {str(e)}",
             )
 
     return redirect('servers')

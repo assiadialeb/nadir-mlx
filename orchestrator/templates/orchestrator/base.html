@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="fr" class="h-full">
+<html lang="en" class="h-full">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Sovereign MLX Orchestrator{% endblock %}</title>
+    <title>{% block title %}Nadir — MLX Server{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -67,15 +67,15 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
                         </svg>
                     </div>
-                    <span class="font-bold text-lg bg-gradient-to-r from-slate-900 via-slate-700 to-slate-500 bg-clip-text text-transparent">MLX Orchestrator</span>
+                    <span class="font-bold text-lg bg-gradient-to-r from-slate-900 via-slate-700 to-slate-500 bg-clip-text text-transparent">Nadir</span>
                 </div>
 
                 <nav class="flex space-x-1 md:space-x-4">
                     <a href="{% url 'servers' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'servers' or request.resolver_match.url_name == 'dashboard' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
-                        Serveurs
+                        Servers
                     </a>
                     <a href="{% url 'models' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'models' or request.resolver_match.url_name == 'search' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
-                        Modèles
+                        Models
                     </a>
                     <a href="{% url 'benchmark' %}" class="px-3 py-2 rounded-lg text-sm font-medium transition-all {% if request.resolver_match.url_name == 'benchmark' or request.resolver_match.url_name == 'benchmark_detail' or request.resolver_match.url_name == 'benchmark_history' or request.resolver_match.url_name == 'benchmark_compare' %}bg-indigo-50 text-indigo-700 shadow-inner{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
                         Benchmark
@@ -84,11 +84,11 @@
 
                 <div class="flex items-center space-x-4">
                     <div class="hidden sm:flex flex-col text-right">
-                        <span class="text-xs text-slate-500">Connecté en tant que</span>
+                        <span class="text-xs text-slate-500">Signed in as</span>
                         <span class="text-sm font-medium text-slate-700">{{ user.username }}</span>
                     </div>
                     <a href="{% url 'logout' %}" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 transition-all">
-                        Déconnexion
+                        Sign out
                     </a>
                 </div>
             </div>
@@ -119,7 +119,7 @@
 
     <footer class="border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
         <div class="max-w-7xl mx-auto px-4">
-            MLX Local Server Orchestration Hub &bull; Apple Silicon Unified Memory Manager &bull; Host Souverain
+            Nadir · Local MLX inference · Apple Silicon unified memory · Privacy-first
         </div>
     </footer>
 

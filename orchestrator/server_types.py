@@ -17,8 +17,8 @@ class ServerTypeSpec(TypedDict):
 SERVER_TYPES: tuple[ServerTypeSpec, ...] = (
     {
         "id": "TEXT",
-        "label": "Texte — mlx_lm",
-        "short_label": "Texte",
+        "label": "Text — mlx_lm",
+        "short_label": "Text",
         "capability": "supports_text",
         "backend": "mlx_lm",
         "api_hint": "/v1/chat/completions",
