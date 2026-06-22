@@ -113,6 +113,26 @@ curl http://127.0.0.1:11380/v1/chat/completions \
   }'
 ```
 
+Vision (MULTIMODAL alias, base64 image):
+
+```bash
+curl http://127.0.0.1:11380/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<vlm-alias>",
+    "max_tokens": 128,
+    "messages": [{
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Describe this image."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,<base64>"}}
+      ]
+    }]
+  }'
+```
+
+See [gateway-runbooks/vlm.md](gateway-runbooks/vlm.md) for full E2E steps.
+
 ### Embeddings (EMBEDDING)
 
 Supports `encoding_format` (`float` default, `base64`) and optional `dimensions` (truncate to first N floats).
@@ -312,6 +332,7 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 | Launch mode | Runbook |
 |-------------|---------|
 | TEXT / MULTIMODAL | [gateway-runbooks/chat.md](gateway-runbooks/chat.md) |
+| MULTIMODAL (vision) | [gateway-runbooks/vlm.md](gateway-runbooks/vlm.md) |
 | EMBEDDING | [gateway-runbooks/embedding.md](gateway-runbooks/embedding.md) |
 | RERANKER | [gateway-runbooks/reranker.md](gateway-runbooks/reranker.md) |
 | IMAGE | [gateway-runbooks/image.md](gateway-runbooks/image.md) |

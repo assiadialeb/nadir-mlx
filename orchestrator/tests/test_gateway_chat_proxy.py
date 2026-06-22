@@ -425,3 +425,46 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         forwarded = mock_client.post.await_args.kwargs["json"]
         self.assertEqual(forwarded["response_format"], response_format)
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=VLM_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    def test_chat_completions_multimodal_forwards_vision_messages(
+        self,
+        mock_client_cls: MagicMock,
+        _mock_resolve: MagicMock,
+    ) -> None:
+        vision_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What color is dominant?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                        },
+                    },
+                ],
+            }
+        ]
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.json.return_value = {
+            "choices": [{"message": {"role": "assistant", "content": "Red."}}]
+        }
+        upstream.headers = httpx.Headers({"content-type": "application/json"})
+        mock_client = _mock_buffered_client(mock_client_cls, upstream)
+
+        response = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "vlm-alias",
+                "messages": vision_messages,
+                "max_tokens": 64,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        forwarded = mock_client.post.await_args.kwargs["json"]
+        self.assertEqual(forwarded["messages"], vision_messages)
+        self.assertEqual(forwarded["model"], "vlm-alias")

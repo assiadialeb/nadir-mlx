@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: June 2026 — MLX-36 (chat tools + JSON qualification) done.
+Last updated: June 2026 — MLX-37 (VLM vision E2E) done.
 
 ## Cross-cutting (all modes)
 
@@ -37,10 +37,11 @@ Last updated: June 2026 — MLX-36 (chat tools + JSON qualification) done.
 | Capability | Status |
 |------------|--------|
 | Chat + **streaming** via `/v1/chat/completions` | ✅ |
-| Multimodal messages (`image_url`, etc.) | ⚠️ if mlx-vlm upstream supports it |
-| `/v1/completions` | ❌ |
+| Multimodal messages (`image_url`, base64, local path) | ✅ MLX-37 ([runbook](gateway-runbooks/vlm.md), [matrix](vlm-vision-model-matrix.md)) |
+| Multi-image per message | ⚠️ mlx-vlm may keep last image only |
+| `/v1/completions` | ❌ 400 |
 
-**Main gap:** real vision QA (images in payload).
+**Main gap:** multi-image parity upstream; gateway relay is complete.
 
 ## EMBEDDING
 
@@ -121,7 +122,7 @@ Last updated: June 2026 — MLX-36 (chat tools + JSON qualification) done.
 1. STT M4A without ffmpeg on the host
 2. Image when client expects a **URL**
 4. Rerank / embedding depending on LiteLLM version and `model_info.mode`
-5. VLM with images in messages
+5. VLM with images — use base64 or local paths ([vlm-vision-model-matrix.md](vlm-vision-model-matrix.md))
 6. Chat **tools** on models without `tool_parser_type` — see [chat-tools-model-matrix.md](chat-tools-model-matrix.md)
 
 ## References
@@ -130,6 +131,7 @@ Last updated: June 2026 — MLX-36 (chat tools + JSON qualification) done.
 - Route cache: MLX-31
 - STT realtime spike: [ADR 002](../adr/002-stt-realtime-spike.md) (MLX-33)
 - Chat tools / JSON: [ADR 004](../adr/004-chat-tools-structured-output.md) (MLX-36)
+- VLM vision: [ADR 005](../adr/005-vlm-vision-gateway.md) (MLX-37)
 - Integration guide: [nadir-gateway-litellm.md](nadir-gateway-litellm.md)
 - E2E runbooks: [gateway-runbooks/](gateway-runbooks/)
 - ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)

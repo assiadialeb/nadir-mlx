@@ -29,6 +29,7 @@ from .model_utils import (
 )
 
 LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
+_REUSABLE_INSTANCE_STATUSES = ("STOPPED", "FAILED")
 
 
 def default_server_host() -> str:
@@ -548,17 +549,26 @@ def _get_launch_env(
     return env
 
 
+def _find_reusable_instance(model_name: str, port: int) -> InferenceInstance | None:
+    """Return a stopped or failed instance row that can be relaunched on the same slot."""
+    return (
+        InferenceInstance.objects.filter(
+            model_name=model_name,
+            port=port,
+            status__in=_REUSABLE_INSTANCE_STATUSES,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+
 def _get_or_create_instance(
     model_name: str,
     port: int,
     launch_mode: LaunchMode,
     server_config: dict[str, Any],
 ) -> InferenceInstance:
-    existing = InferenceInstance.objects.filter(
-        model_name=model_name,
-        port=port,
-        status="STOPPED",
-    ).order_by("-created_at").first()
+    existing = _find_reusable_instance(model_name, port)
     if existing:
         existing.status = "LOADING"
         existing.launch_mode = launch_mode
@@ -600,15 +610,7 @@ def start_instance(
     else:
         port = int(port)
 
-    reusable = (
-        InferenceInstance.objects.filter(
-            model_name=model_name,
-            port=port,
-            status="STOPPED",
-        )
-        .order_by("-created_at")
-        .first()
-    )
+    reusable = _find_reusable_instance(model_name, port)
     normalized_config = _resolve_server_config(
         launch_mode,
         server_config,

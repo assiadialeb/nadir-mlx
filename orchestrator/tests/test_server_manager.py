@@ -4,14 +4,19 @@ import signal
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from django.test import TestCase as DjangoTestCase
+
 from orchestrator.server_manager import (
     _collect_stop_targets,
     _ensure_port_released,
+    _find_reusable_instance,
     _force_stop_pids,
     _is_process_alive,
+    _resolve_server_config,
     is_manual_stop_in_progress,
     stop_instance,
 )
+from orchestrator.models import InferenceInstance
 
 
 class ServerManagerStopTests(TestCase):
@@ -98,3 +103,32 @@ class ServerManagerStopTests(TestCase):
         with self.assertRaises(RuntimeError):
             stop_instance(instance)
         mock_stop_flag.assert_any_call(instance, active=False)
+
+
+class ServerManagerReuseTests(DjangoTestCase):
+    def test_find_reusable_instance_includes_failed_status(self) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit",
+            port=11428,
+            launch_mode="TEXT",
+            server_config={"model_id": "Qwen3.5-27B"},
+            status="FAILED",
+        )
+        found = _find_reusable_instance(instance.model_name, instance.port)
+        self.assertEqual(found.pk, instance.pk)
+
+    def test_resolve_server_config_allows_same_alias_on_failed_slot(self) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit",
+            port=11428,
+            launch_mode="TEXT",
+            server_config={"model_id": "Qwen3.5-27B"},
+            status="FAILED",
+        )
+        config = _resolve_server_config(
+            "TEXT",
+            {"model_id": "Qwen3.5-27B"},
+            instance.model_name,
+            exclude_instance_id=instance.pk,
+        )
+        self.assertEqual(config["model_id"], "Qwen3.5-27B")
