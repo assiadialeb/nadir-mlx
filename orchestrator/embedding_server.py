@@ -9,7 +9,7 @@ from typing import Any, Literal, Optional, Union
 
 import mlx.core as mx
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from mlx_embeddings import generate, load
@@ -20,6 +20,8 @@ from orchestrator.embedding_response import (
     build_embedding_data_entries,
     normalize_encoding_format,
 )
+from orchestrator.inference_auth import require_inference_api_key
+from orchestrator.security_utils import public_error_message
 
 app = FastAPI(title="MLX Embedding Server")
 _state: dict[str, Any] = {}
@@ -63,7 +65,7 @@ def list_models() -> dict[str, Any]:
     }
 
 
-@app.post("/v1/embeddings")
+@app.post("/v1/embeddings", dependencies=[Depends(require_inference_api_key)])
 def create_embeddings(body: EmbeddingsRequest) -> dict[str, Any]:
     model = _state.get("model")
     processor = _state.get("processor")
@@ -83,7 +85,10 @@ def create_embeddings(body: EmbeddingsRequest) -> dict[str, Any]:
         output = generate(model, processor, texts)
         vectors = _extract_embeddings(output).tolist()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=public_error_message(exc, fallback="Embedding generation failed."),
+        ) from exc
 
     if isinstance(body.input, str):
         rows = [vectors] if vectors and not isinstance(vectors[0], list) else vectors

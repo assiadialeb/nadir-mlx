@@ -1,5 +1,8 @@
 """Tests for the gateway FastAPI application."""
 
+import os
+from unittest.mock import patch
+
 from django.test import TestCase
 from fastapi.testclient import TestClient
 
@@ -20,3 +23,12 @@ class GatewayAppTests(TestCase):
                 "models": "/v1/models",
             },
         )
+
+    @patch.dict(os.environ, {"NADIR_GATEWAY_API_KEY": "secret-key"}, clear=False)
+    def test_protected_route_requires_gateway_api_key(self) -> None:
+        client = TestClient(create_app())
+        unauthorized = client.get("/v1/models")
+        self.assertEqual(unauthorized.status_code, 401)
+
+        authorized = client.get("/v1/models", headers={"X-API-Key": "secret-key"})
+        self.assertEqual(authorized.status_code, 200)

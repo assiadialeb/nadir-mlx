@@ -12,7 +12,8 @@ import requests
 
 from orchestrator.image_model_profiles import parse_readme_inference_hints_from_text
 from orchestrator.model_registry import REGISTRY_PATH, load_model_registry
-from orchestrator.model_utils import get_folder_name
+from orchestrator.model_utils import get_folder_name, validate_hf_repo_id
+from orchestrator.security_utils import validate_huggingface_api_url
 
 HF_API_URL = "https://huggingface.co/api/models"
 HF_RAW_README_URL = "https://huggingface.co/{repo_id}/resolve/main/README.md"
@@ -88,7 +89,7 @@ def fetch_top_mlx_models(limit: int = 50) -> list[dict[str, Any]]:
         "direction": "-1",
         "limit": limit,
     }
-    response = requests.get(HF_API_URL, params=params, timeout=30)
+    response = requests.get(validate_huggingface_api_url(HF_API_URL), params=params, timeout=30)
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, list):
@@ -98,7 +99,9 @@ def fetch_top_mlx_models(limit: int = 50) -> list[dict[str, Any]]:
 
 def fetch_model_card(repo_id: str) -> dict[str, Any]:
     """Fetch extended model card metadata from Hugging Face."""
-    response = requests.get(f"{HF_API_URL}/{repo_id}", timeout=30)
+    safe_repo_id = validate_hf_repo_id(repo_id)
+    url = validate_huggingface_api_url(f"{HF_API_URL}/{safe_repo_id}")
+    response = requests.get(url, timeout=30)
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict):
@@ -108,10 +111,9 @@ def fetch_model_card(repo_id: str) -> dict[str, Any]:
 
 def fetch_readme_text(repo_id: str) -> str:
     """Download README.md raw content for a Hugging Face repo."""
-    response = requests.get(
-        HF_RAW_README_URL.format(repo_id=repo_id),
-        timeout=30,
-    )
+    safe_repo_id = validate_hf_repo_id(repo_id)
+    url = validate_huggingface_api_url(HF_RAW_README_URL.format(repo_id=safe_repo_id))
+    response = requests.get(url, timeout=30)
     if response.status_code == 404:
         return ""
     response.raise_for_status()
@@ -227,17 +229,16 @@ def _infer_upstream_from_folder(folder_name: str, family_id: str) -> list[str]:
     return inferred
 
 
-def _score_upstream_match(folder_name: str, family_id: str, candidate: str) -> int:
-    folder = folder_name.lower()
-    candidate_lower = candidate.lower()
-    candidate_name = candidate_lower.split("/", 1)[-1]
-
+def _token_overlap_score(folder: str, candidate_name: str) -> int:
     folder_tokens = {token for token in re.split(r"[^a-z0-9]+", folder) if len(token) >= 2}
     candidate_tokens = {
         token for token in re.split(r"[^a-z0-9]+", candidate_name) if len(token) >= 2
     }
-    score = len(folder_tokens & candidate_tokens) * 2
+    return len(folder_tokens & candidate_tokens) * 2
 
+
+def _brand_alignment_score(folder: str, candidate_name: str) -> int:
+    score = 0
     if "gemma" in folder and "gemma" in candidate_name:
         score += 6
     if "gemma" in folder and "internvl" in candidate_name:
@@ -250,16 +251,30 @@ def _score_upstream_match(folder_name: str, family_id: str, candidate: str) -> i
         score += 6
     if "parakeet" in folder and "parakeet" in candidate_name:
         score += 6
-
-    org = candidate_lower.split("/", 1)[0]
-    if family_id.startswith("gemma") and org == "google":
-        score += 4
-    if family_id == "llama_text" and org in {"meta-llama", "mlx-community"}:
-        score += 3
-    if family_id.startswith("qwen") and org == "qwen":
-        score += 4
-
     return score
+
+
+def _org_alignment_score(family_id: str, org: str) -> int:
+    if family_id.startswith("gemma") and org == "google":
+        return 4
+    if family_id == "llama_text" and org in {"meta-llama", "mlx-community"}:
+        return 3
+    if family_id.startswith("qwen") and org == "qwen":
+        return 4
+    return 0
+
+
+def _score_upstream_match(folder_name: str, family_id: str, candidate: str) -> int:
+    folder = folder_name.lower()
+    candidate_lower = candidate.lower()
+    candidate_name = candidate_lower.split("/", 1)[-1]
+    org = candidate_lower.split("/", 1)[0]
+
+    return (
+        _token_overlap_score(folder, candidate_name)
+        + _brand_alignment_score(folder, candidate_name)
+        + _org_alignment_score(family_id, org)
+    )
 
 
 def extract_upstream_repo(
@@ -307,6 +322,56 @@ def _match_pattern_rules(folder_name: str, patterns: list[dict[str, Any]]) -> st
     return best_family or None
 
 
+def _family_from_audio_tokens(lowered: str) -> str | None:
+    if "kokoro" in lowered:
+        return "kokoro_tts"
+    if "parakeet" in lowered:
+        return "parakeet_stt"
+    if "whisper" in lowered:
+        return "whisper_stt"
+    return None
+
+
+def _family_from_task_tokens(lowered: str) -> str | None:
+    if "reranker" in lowered:
+        return "jina_reranker"
+    if "embedding" in lowered:
+        return "qwen3_embedding"
+    if "llama" in lowered or "meta-llama" in lowered:
+        return "llama_text"
+    return None
+
+
+def _family_from_image_tokens(lowered: str) -> str | None:
+    if "schnell" in lowered:
+        return "flux_schnell"
+    if "flux" in lowered and "lite" in lowered:
+        return "flux_lite"
+    if "z-image-turbo" in lowered or "z_image_turbo" in lowered:
+        return "z_image_turbo"
+    return None
+
+
+def _family_from_gemma_tokens(lowered: str, pipeline: str) -> str | None:
+    if "gemma-4" in lowered or "gemma4" in lowered or pipeline == "any-to-any":
+        return "gemma4_vlm"
+    if "gemma-3" in lowered or "gemma3" in lowered:
+        if pipeline in {"image-text-to-text", "any-to-any"}:
+            return "gemma3_vlm"
+        return "gemma3_text"
+    if "gemma-2" in lowered or "gemma2" in lowered:
+        return "gemma3_text"
+    return None
+
+
+def _family_from_pipeline_tag(pipeline: str, lowered: str) -> str | None:
+    if pipeline == "automatic-speech-recognition":
+        return "parakeet_stt" if "parakeet" in lowered else "whisper_stt"
+    if "qwen" in lowered and pipeline == "text-generation":
+        return "qwen_text"
+    return PIPELINE_FAMILY_FALLBACK.get(pipeline)
+
+
 def infer_family_id(
     folder_name: str,
     pipeline_tag: str,
@@ -316,42 +381,16 @@ def infer_family_id(
     lowered = folder_name.lower()
     pipeline = (pipeline_tag or "").strip().lower()
 
-    if "kokoro" in lowered:
-        return "kokoro_tts"
-    if "parakeet" in lowered:
-        return "parakeet_stt"
-    if "whisper" in lowered:
-        return "whisper_stt"
-    if "reranker" in lowered:
-        return "jina_reranker"
-    if "embedding" in lowered:
-        return "qwen3_embedding"
-    if "llama" in lowered or "meta-llama" in lowered:
-        return "llama_text"
-    if "schnell" in lowered:
-        return "flux_schnell"
-    if "flux" in lowered and "lite" in lowered:
-        return "flux_lite"
-    if "z-image-turbo" in lowered or "z_image_turbo" in lowered:
-        return "z_image_turbo"
-
-    if "gemma-4" in lowered or "gemma4" in lowered or pipeline == "any-to-any":
-        return "gemma4_vlm"
-    if "gemma-3" in lowered or "gemma3" in lowered:
-        if pipeline in {"image-text-to-text", "any-to-any"}:
-            return "gemma3_vlm"
-        return "gemma3_text"
-    if "gemma-2" in lowered or "gemma2" in lowered:
-        return "gemma3_text"
-
-    if "qwen" in lowered and pipeline == "text-generation":
-        return "qwen_text"
-
-    if pipeline == "automatic-speech-recognition":
-        return "parakeet_stt" if "parakeet" in lowered else "whisper_stt"
-
-    if pipeline in PIPELINE_FAMILY_FALLBACK:
-        return PIPELINE_FAMILY_FALLBACK[pipeline]
+    for resolver in (
+        lambda: _family_from_audio_tokens(lowered),
+        lambda: _family_from_task_tokens(lowered),
+        lambda: _family_from_image_tokens(lowered),
+        lambda: _family_from_gemma_tokens(lowered, pipeline),
+        lambda: _family_from_pipeline_tag(pipeline, lowered),
+    ):
+        family_id = resolver()
+        if family_id:
+            return family_id
 
     if patterns:
         return _match_pattern_rules(folder_name, patterns)
@@ -411,6 +450,25 @@ def build_model_entry(
     return entry
 
 
+def _should_keep_existing_repo_id(merged: dict[str, Any], incoming_repo_id: str) -> bool:
+    return _is_canonical_mlx_repo(merged.get("repo_id")) and not _is_canonical_mlx_repo(
+        incoming_repo_id
+    )
+
+
+def _merge_registry_field(merged: dict[str, Any], key: str, value: Any) -> None:
+    if key == "repo_id" and _should_keep_existing_repo_id(merged, value):
+        return
+    if key == "upstream" and merged.get("upstream") and not value:
+        return
+    if key == "sources":
+        merged[key] = sorted(set(list(merged.get(key) or []) + list(value or [])))
+        return
+    if key == "readme_hints" and merged.get(key) and not value:
+        return
+    merged[key] = value
+
+
 def merge_model_entry(
     existing: dict[str, Any],
     incoming: dict[str, Any],
@@ -418,18 +476,58 @@ def merge_model_entry(
     """Merge model entries without downgrading canonical repo ids or upstream refs."""
     merged = dict(existing)
     for key, value in incoming.items():
-        if key == "repo_id":
-            if _is_canonical_mlx_repo(merged.get("repo_id")) and not _is_canonical_mlx_repo(value):
-                continue
-        if key == "upstream" and merged.get("upstream") and not value:
-            continue
-        if key == "sources":
-            merged[key] = sorted(set(list(merged.get(key) or []) + list(value or [])))
-            continue
-        if key == "readme_hints" and merged.get(key) and not value:
-            continue
-        merged[key] = value
+        _merge_registry_field(merged, key, value)
     return merged
+
+
+def _fetch_upstream_readme_entry(
+    repo_id: str,
+    card: dict[str, Any],
+    mlx_readme: str,
+    upstream: str,
+    *,
+    patterns: list[dict[str, Any]] | None,
+    sleep_seconds: float,
+) -> dict[str, Any] | None:
+    upstream_readme = fetch_readme_text(upstream)
+    time.sleep(sleep_seconds)
+    if not upstream_readme.strip():
+        return None
+    return build_model_entry(
+        repo_id,
+        card,
+        mlx_readme,
+        upstream_readme,
+        patterns=patterns,
+    )
+
+
+def _build_registry_model_entry(
+    repo_id: str,
+    *,
+    patterns: list[dict[str, Any]] | None,
+    fetch_upstream_readme: bool,
+    sleep_seconds: float,
+) -> dict[str, Any] | None:
+    card = fetch_model_card(repo_id)
+    mlx_readme = fetch_readme_text(repo_id)
+    entry = build_model_entry(repo_id, card, mlx_readme, patterns=patterns)
+    if entry is None:
+        return None
+
+    upstream = str(entry.get("upstream") or "")
+    if fetch_upstream_readme and upstream:
+        upstream_entry = _fetch_upstream_readme_entry(
+            repo_id,
+            card,
+            mlx_readme,
+            upstream,
+            patterns=patterns,
+            sleep_seconds=sleep_seconds,
+        )
+        if upstream_entry is not None:
+            entry = upstream_entry
+    return entry
 
 
 def collect_registry_models(
@@ -450,31 +548,15 @@ def collect_registry_models(
 
         folder_name = get_folder_name(repo_id)
         try:
-            card = fetch_model_card(repo_id)
-            mlx_readme = fetch_readme_text(repo_id)
-            entry = build_model_entry(
+            entry = _build_registry_model_entry(
                 repo_id,
-                card,
-                mlx_readme,
                 patterns=patterns,
+                fetch_upstream_readme=fetch_upstream_readme,
+                sleep_seconds=sleep_seconds,
             )
             if entry is None:
                 skipped += 1
                 continue
-
-            upstream = str(entry.get("upstream") or "")
-            upstream_readme = ""
-            if fetch_upstream_readme and upstream:
-                upstream_readme = fetch_readme_text(upstream)
-                time.sleep(sleep_seconds)
-                if upstream_readme.strip():
-                    entry = build_model_entry(
-                        repo_id,
-                        card,
-                        mlx_readme,
-                        upstream_readme,
-                        patterns=patterns,
-                    ) or entry
             models[folder_name] = entry
         except Exception:
             skipped += 1

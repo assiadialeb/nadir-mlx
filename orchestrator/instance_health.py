@@ -9,6 +9,7 @@ import httpx
 from django.utils import timezone
 
 from orchestrator.models import InferenceInstance
+from orchestrator.security_utils import validate_server_bind_host
 from orchestrator.server_manager import (
     _find_listener_pids,
     _is_process_alive,
@@ -23,10 +24,10 @@ HEALTH_TIMEOUT_SECONDS = 2.0
 
 
 def _connect_host(instance: InferenceInstance) -> str:
-    host = str((instance.server_config or {}).get("host") or "127.0.0.1")
-    if host == "0.0.0.0":
+    raw_host = str((instance.server_config or {}).get("host") or "127.0.0.1")
+    if raw_host == "0.0.0.0":
         return "127.0.0.1"
-    return host
+    return validate_server_bind_host(raw_host)
 
 
 def probe_http_health(instance: InferenceInstance) -> bool:

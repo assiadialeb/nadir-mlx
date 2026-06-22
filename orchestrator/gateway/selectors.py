@@ -12,15 +12,16 @@ from orchestrator.gateway.router import (
 from orchestrator.gateway.route_cache import RouteCacheSnapshot, get_route_snapshot
 from orchestrator.gateway_aliases import instance_gateway_alias
 from orchestrator.models import InferenceInstance
+from orchestrator.security_utils import validate_server_bind_host
 
 _UNAVAILABLE_STATUSES = frozenset({"STOPPED", "FAILED", "LOADING"})
 
 
 def _connect_host(instance: InferenceInstance) -> str:
-    host = str((instance.server_config or {}).get("host") or "127.0.0.1")
-    if host == "0.0.0.0":
+    raw_host = str((instance.server_config or {}).get("host") or "127.0.0.1")
+    if raw_host == "0.0.0.0":
         return "127.0.0.1"
-    return host
+    return validate_server_bind_host(raw_host)
 
 
 def _downstream_model(instance: InferenceInstance, alias: str) -> str:

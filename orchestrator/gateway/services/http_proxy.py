@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any, AsyncIterator
@@ -12,6 +13,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from orchestrator.gateway.router import GatewayRouteError, GatewayTarget
+
+CONTENT_TYPE_JSON = "application/json"
+MSG_UPSTREAM_TIMEOUT = "Upstream request timed out."
+MSG_BAD_GATEWAY = "Could not reach the inference backend."
 
 FORWARD_REQUEST_HEADERS = frozenset(
     {
@@ -48,7 +53,7 @@ def forward_request_headers(headers: Any) -> dict[str, str]:
         if key.lower() in FORWARD_REQUEST_HEADERS:
             forwarded[key] = value
     if "content-type" not in {name.lower() for name in forwarded}:
-        forwarded["content-type"] = "application/json"
+        forwarded["content-type"] = CONTENT_TYPE_JSON
     return forwarded
 
 
@@ -110,9 +115,9 @@ def gateway_error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
-async def read_upstream_error(response: httpx.Response) -> JSONResponse:
+def read_upstream_error(response: httpx.Response) -> JSONResponse:
     content_type = response.headers.get("content-type", "")
-    if "application/json" in content_type:
+    if CONTENT_TYPE_JSON in content_type:
         try:
             payload = response.json()
         except json.JSONDecodeError:
@@ -126,26 +131,26 @@ async def proxy_binary_post(
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],
-    timeout: float,
 ) -> Response:
     """Forward a JSON POST and stream the upstream binary body without buffering."""
-    client = httpx.AsyncClient(timeout=timeout)
+    client = httpx.AsyncClient()
     try:
-        request = client.build_request("POST", url, json=body, headers=headers)
-        response = await client.send(request, stream=True)
-    except httpx.TimeoutException:
+        async with asyncio.timeout(proxy_timeout_seconds()):
+            request = client.build_request("POST", url, json=body, headers=headers)
+            response = await client.send(request, stream=True)
+    except (TimeoutError, httpx.TimeoutException):
         await client.aclose()
-        return gateway_error(504, "gateway_timeout", "Upstream request timed out.")
+        return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
     except httpx.HTTPError:
         await client.aclose()
-        return gateway_error(502, "bad_gateway", "Could not reach the inference backend.")
+        return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
 
     if response.status_code >= 400:
         error_body = await response.aread()
         await response.aclose()
         await client.aclose()
         content_type = response.headers.get("content-type", "")
-        if "application/json" in content_type:
+        if CONTENT_TYPE_JSON in content_type:
             try:
                 payload = json.loads(error_body)
             except json.JSONDecodeError:
@@ -179,21 +184,21 @@ async def proxy_json_post(
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],
-    timeout: float,
 ) -> Response:
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, json=body, headers=headers)
-    except httpx.TimeoutException:
-        return gateway_error(504, "gateway_timeout", "Upstream request timed out.")
+        async with asyncio.timeout(proxy_timeout_seconds()):
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=body, headers=headers)
+    except (TimeoutError, httpx.TimeoutException):
+        return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
     except httpx.HTTPError:
-        return gateway_error(502, "bad_gateway", "Could not reach the inference backend.")
+        return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
 
     if response.status_code >= 400:
-        return await read_upstream_error(response)
+        return read_upstream_error(response)
 
     content_type = response.headers.get("content-type", "")
-    if "application/json" in content_type:
+    if CONTENT_TYPE_JSON in content_type:
         return JSONResponse(
             status_code=response.status_code,
             content=response.json(),
@@ -211,19 +216,19 @@ async def stream_upstream_chunks(
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],
-    timeout: float,
 ) -> AsyncIterator[bytes]:
-    client = httpx.AsyncClient(timeout=timeout)
+    client = httpx.AsyncClient()
     try:
-        request = client.build_request("POST", url, json=body, headers=headers)
-        response = await client.send(request, stream=True)
-    except httpx.TimeoutException:
+        async with asyncio.timeout(proxy_timeout_seconds()):
+            request = client.build_request("POST", url, json=body, headers=headers)
+            response = await client.send(request, stream=True)
+    except (TimeoutError, httpx.TimeoutException):
         await client.aclose()
-        yield _encode_sse_error("Upstream request timed out.")
+        yield _encode_sse_error(MSG_UPSTREAM_TIMEOUT)
         return
     except httpx.HTTPError:
         await client.aclose()
-        yield _encode_sse_error("Could not reach the inference backend.")
+        yield _encode_sse_error(MSG_BAD_GATEWAY)
         return
 
     if response.status_code >= 400:

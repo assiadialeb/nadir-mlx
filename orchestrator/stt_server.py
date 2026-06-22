@@ -11,10 +11,12 @@ from typing import Any, Optional
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
+from orchestrator.inference_auth import require_inference_api_key
+from orchestrator.security_utils import public_error_message
 from orchestrator.stt_response_formats import (
     SttFormatError,
     normalize_stt_response_format,
@@ -216,12 +218,15 @@ async def _create_stt_response(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=public_error_message(exc, fallback="Transcription failed."),
+        ) from exc
 
     return _build_stt_response(payload, normalized_format)
 
 
-@app.post("/v1/audio/transcriptions", response_model=None)
+@app.post("/v1/audio/transcriptions", response_model=None, dependencies=[Depends(require_inference_api_key)])
 async def create_transcription(
     file: UploadFile = File(...),
     model: str = Form("default_model"),
@@ -244,7 +249,7 @@ async def create_transcription(
     )
 
 
-@app.post("/v1/audio/translations", response_model=None)
+@app.post("/v1/audio/translations", response_model=None, dependencies=[Depends(require_inference_api_key)])
 async def create_translation(
     file: UploadFile = File(...),
     model: str = Form("default_model"),

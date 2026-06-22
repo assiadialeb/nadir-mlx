@@ -32,30 +32,32 @@ def benchmark_preset_key(params: dict[str, Any] | None) -> str:
     )
 
 
+def _parse_optional_enum(raw_value: object, valid_values: frozenset[str]) -> str:
+    normalized = str(raw_value or "").strip().upper()
+    return normalized if normalized in valid_values else ""
+
+
+def _parse_positive_int(raw_value: object) -> int | None:
+    cleaned = str(raw_value or "").strip()
+    return int(cleaned) if cleaned.isdigit() else None
+
+
+def _parse_history_page(raw_value: object) -> int:
+    cleaned = str(raw_value or "1").strip()
+    if cleaned.isdigit() and int(cleaned) > 0:
+        return int(cleaned)
+    return 1
+
+
 def parse_benchmark_history_query(params: dict[str, Any]) -> dict[str, Any]:
     """Parse history filter query parameters."""
     model_name = str(params.get("model") or "").strip()
-    launch_mode = str(params.get("launch_mode") or "").strip().upper()
-    if launch_mode and launch_mode not in VALID_LAUNCH_MODES:
-        launch_mode = ""
-
-    status = str(params.get("status") or "").strip().upper()
-    if status and status not in VALID_STATUSES:
-        status = ""
-
-    target_type = str(params.get("target_type") or "").strip().upper()
-    if target_type and target_type not in VALID_TARGET_TYPES:
-        target_type = ""
-
-    instance_id_raw = str(params.get("instance_id") or "").strip()
-    instance_id: int | None = None
-    if instance_id_raw.isdigit():
-        instance_id = int(instance_id_raw)
-
+    launch_mode = _parse_optional_enum(params.get("launch_mode"), VALID_LAUNCH_MODES)
+    status = _parse_optional_enum(params.get("status"), VALID_STATUSES)
+    target_type = _parse_optional_enum(params.get("target_type"), VALID_TARGET_TYPES)
+    instance_id = _parse_positive_int(params.get("instance_id"))
     scenario = str(params.get("scenario") or "medium_conc4").strip() or "medium_conc4"
-
-    page_raw = str(params.get("page") or "1").strip()
-    page = int(page_raw) if page_raw.isdigit() and int(page_raw) > 0 else 1
+    page = _parse_history_page(params.get("page"))
 
     return {
         "model_name": model_name,

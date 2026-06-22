@@ -7,6 +7,8 @@ from typing import Any, Literal, Optional
 
 from django.conf import settings
 
+from orchestrator.security_utils import assert_path_under_directory, models_root_path
+
 LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
 
 CONFIG_JSON = "config.json"
@@ -14,6 +16,8 @@ CONFIG_JSON_ORIG = "config.json.orig"
 
 SAFE_MODEL_FOLDER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 HF_REPO_ID_PATTERN = re.compile(r"^[\w.-]+/[\w.-]+$")
+
+INVALID_MODEL_FOLDER_NAME = "Invalid model folder name."
 
 EMBEDDING_NAME_PATTERN = re.compile(
     r"(embedding|embed|e5|bge|nomic|gte|retrieval)",
@@ -78,11 +82,11 @@ def validate_model_folder_name(folder_name: str) -> str:
     """Reject path traversal and unsafe characters in a local model folder name."""
     name = folder_name.strip()
     if not name or name in {".", ".."}:
-        raise ValueError("Invalid model folder name.")
+        raise ValueError(INVALID_MODEL_FOLDER_NAME)
     if "/" in name or "\\" in name or ".." in name:
-        raise ValueError("Invalid model folder name.")
+        raise ValueError(INVALID_MODEL_FOLDER_NAME)
     if not SAFE_MODEL_FOLDER_PATTERN.fullmatch(name):
-        raise ValueError("Invalid model folder name.")
+        raise ValueError(INVALID_MODEL_FOLDER_NAME)
     return name
 
 
@@ -374,14 +378,15 @@ def get_model_capabilities(folder_name: str) -> dict[str, bool]:
 
 def get_model_folder_size_bytes(folder_name: str) -> int:
     """Return total on-disk size for a model folder (bytes)."""
-    model_path = get_model_path(folder_name)
+    model_path = assert_path_under_directory(get_model_path(folder_name), models_root_path())
     if not model_path.is_dir():
         return 0
 
     total = 0
     for root, _dirs, files in os.walk(model_path):
+        current_root = assert_path_under_directory(Path(root), models_root_path())
         for file_name in files:
-            file_path = Path(root) / file_name
+            file_path = assert_path_under_directory(current_root / file_name, models_root_path())
             try:
                 total += file_path.stat().st_size
             except OSError:
@@ -391,7 +396,7 @@ def get_model_folder_size_bytes(folder_name: str) -> int:
 
 def prepare_model_for_text_inference(model_path: os.PathLike[str] | str) -> None:
     """Patch configs that mlx_lm cannot load natively (e.g. gemma4_unified)."""
-    path = Path(model_path)
+    path = assert_path_under_directory(Path(model_path), models_root_path())
     config_path = path / CONFIG_JSON
     if not config_path.is_file():
         return
@@ -411,7 +416,7 @@ def prepare_model_for_text_inference(model_path: os.PathLike[str] | str) -> None
 
 def prepare_model_for_multimodal_inference(model_path: os.PathLike[str] | str) -> None:
     """Restore the original unified config required by mlx_vlm."""
-    path = Path(model_path)
+    path = assert_path_under_directory(Path(model_path), models_root_path())
     backup_path = path / CONFIG_JSON_ORIG
     config_path = path / CONFIG_JSON
     if backup_path.is_file():

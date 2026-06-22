@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from orchestrator.gateway.auth import verify_gateway_api_key
 
 from orchestrator.gateway.routes.chat import router as chat_router
 from orchestrator.gateway.routes.image_files import router as image_files_router
@@ -27,8 +29,8 @@ def create_app() -> FastAPI:
             "models": "/v1/models",
         }
 
-    app.include_router(models_router)
-    app.include_router(image_files_router)
-    app.include_router(chat_router)
-    app.include_router(modes_router)
+    app.include_router(models_router, dependencies=[Depends(verify_gateway_api_key)])
+    app.include_router(image_files_router, dependencies=[Depends(verify_gateway_api_key)])
+    app.include_router(chat_router, dependencies=[Depends(verify_gateway_api_key)])
+    app.include_router(modes_router, dependencies=[Depends(verify_gateway_api_key)])
     return app

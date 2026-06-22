@@ -28,7 +28,7 @@ function openDeleteBenchmarkModal(button) {
     const form = document.getElementById('delete-benchmark-form');
     document.getElementById('delete-benchmark-label').textContent = button.dataset.runLabel || '';
     form.action = button.dataset.deleteUrl || '';
-    document.getElementById('delete-benchmark-next').value = window.location.pathname + window.location.search;
+    document.getElementById('delete-benchmark-next').value = globalThis.location.pathname + globalThis.location.search;
     document.getElementById('delete-benchmark-modal').classList.remove('hidden');
 }
 

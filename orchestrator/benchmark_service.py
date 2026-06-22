@@ -15,15 +15,22 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .models import BenchmarkRun, InferenceInstance
+from .security_utils import (
+    public_error_message,
+    safe_path_under_root,
+    safe_positive_int,
+    validate_outbound_http_host,
+)
 
 LLMBENCH_SCRIPT = Path(__file__).resolve().parent / "vendor" / "llmbench.py"
 BENCHMARK_TIMEOUT_SECONDS = 3600
 
 
 def _benchmark_output_path(run_id: int) -> Path:
+    safe_positive_int(run_id, field_name="benchmark run id")
     benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
     benchmarks_dir.mkdir(parents=True, exist_ok=True)
-    return benchmarks_dir / f"bench_{run_id}.json"
+    return safe_path_under_root(benchmarks_dir, f"bench_{run_id}.json")
 
 
 def _remove_benchmark_artifacts(run: BenchmarkRun) -> None:
@@ -127,7 +134,7 @@ def _benchmark_thread(run_id: int) -> None:
         _mark_failed(run, "Benchmark timed out after 1 hour.")
     except Exception as exc:
         run.refresh_from_db()
-        _mark_failed(run, str(exc))
+        _mark_failed(run, public_error_message(exc, fallback="Benchmark failed."))
 
 
 def _resolve_target(
@@ -151,7 +158,10 @@ def _resolve_target(
     if port is None:
         raise ValueError("Port is required for a custom endpoint.")
 
-    return host.strip(), port, None
+    safe_host = validate_outbound_http_host(host.strip())
+    if port < 1 or port > 65535:
+        raise ValueError("Port must be between 1 and 65535.")
+    return safe_host, port, None
 
 
 def _parse_concurrency(raw_value: str) -> list[int]:
@@ -179,7 +189,8 @@ def resolve_benchmark_model_id(
     if cleaned:
         return cleaned
 
-    base_url = f"http://{host}:{port}"
+    safe_host = validate_outbound_http_host(host)
+    base_url = f"http://{safe_host}:{port}"
     try:
         response = httpx.get(f"{base_url}/v1/models", timeout=10)
         response.raise_for_status()

@@ -5,14 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import random
+import secrets
 import threading
 import time
 from pathlib import Path
 from typing import Literal, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from orchestrator.image_assets import build_generation_response_entry, store_image_png
@@ -22,6 +22,8 @@ from orchestrator.image_model_loader import (
     resolve_image_profile,
 )
 from orchestrator.image_model_profiles import ImageModelProfile
+from orchestrator.inference_auth import require_inference_api_key
+from orchestrator.security_utils import public_error_message
 
 app = FastAPI(title="MLX Image Server")
 _state: dict[str, object] = {}
@@ -103,7 +105,7 @@ def list_models() -> dict[str, object]:
     }
 
 
-@app.post("/v1/images/generations")
+@app.post("/v1/images/generations", dependencies=[Depends(require_inference_api_key)])
 def create_images(body: ImageGenerationRequest) -> dict[str, object]:
     model = _state.get("model")
     profile = _get_profile()
@@ -125,7 +127,7 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
         )
         try:
             for index in range(body.n):
-                seed = body.seed if body.seed is not None else random.randint(0, 2**31 - 1)
+                seed = body.seed if body.seed is not None else secrets.randbelow(2**31)
                 png_bytes = generate_image_bytes(
                     model,
                     profile,
@@ -142,7 +144,10 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
                 )
                 print(f"[image] completed image {index + 1}/{body.n}", flush=True)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=500,
+                detail=public_error_message(exc, fallback="Image generation failed."),
+            ) from exc
 
     return {"created": int(time.time()), "data": data}
 

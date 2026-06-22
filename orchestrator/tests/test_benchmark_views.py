@@ -77,7 +77,8 @@ class BenchmarkViewsTests(TestCase):
             {"run_a": mlx_run.id, "run_b": external_run.id},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertTrue(response["Content-Type"].startswith("application/json"))
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
         self.assertIn("attachment", response["Content-Disposition"])
         self.assertIn(b"scenario_alignment", response.content)
 
