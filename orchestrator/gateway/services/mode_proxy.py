@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import Request
@@ -20,6 +21,9 @@ from orchestrator.gateway.router import (
     GatewayTarget,
 )
 from orchestrator.gateway.services.http_proxy import (
+    CONTENT_TYPE_JSON,
+    MSG_BAD_GATEWAY,
+    MSG_UPSTREAM_TIMEOUT,
     forward_request_headers,
     gateway_error,
     passthrough_response_headers,
@@ -109,21 +113,22 @@ async def _proxy_multipart_request(
     timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, upstream_path)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                url,
-                data=multipart_data,
-                files=multipart_files or None,
-            )
-    except httpx.TimeoutException:
-        return gateway_error(504, "gateway_timeout", "Upstream request timed out.")
+        async with asyncio.timeout(timeout):
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    data=multipart_data,
+                    files=multipart_files or None,
+                )
+    except (TimeoutError, httpx.TimeoutException):
+        return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
     except httpx.HTTPError:
-        return gateway_error(502, "bad_gateway", "Could not reach the inference backend.")
+        return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
 
     if response.status_code >= 400:
-        return await read_upstream_error(response)
+        return read_upstream_error(response)
 
-    content_type = response.headers.get("content-type", "application/json")
+    content_type = response.headers.get("content-type", CONTENT_TYPE_JSON)
     return Response(
         content=response.content,
         status_code=response.status_code,
@@ -154,13 +159,11 @@ async def proxy_audio_speech(body: dict[str, Any], headers: Any) -> Response:
     target = await resolve_target_from_body(body)
     validate_target_launch_mode(target, TTS_MODES, "text-to-speech")
     request_headers = forward_request_headers(headers)
-    timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, AUDIO_SPEECH_PATH)
     return await proxy_binary_post(
         url,
         prepare_upstream_body(body, target),
         request_headers,
-        timeout,
     )
 
 
@@ -189,6 +192,5 @@ async def _proxy_json_for_target(
     headers: Any,
 ) -> Response:
     request_headers = forward_request_headers(headers)
-    timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, upstream_path)
-    return await proxy_json_post(url, upstream_body, request_headers, timeout)
+    return await proxy_json_post(url, upstream_body, request_headers)

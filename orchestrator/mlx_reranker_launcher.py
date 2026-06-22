@@ -31,7 +31,10 @@ def _patch_local_reranker_for_local_paths() -> None:
     def _prepare_model_files(self, model_name: str) -> str:
         local_path = Path(model_name).expanduser()
         if local_path.is_dir():
-            return str(local_path.resolve())
+            from orchestrator.security_utils import assert_path_under_directory, models_root_path
+
+            safe_path = assert_path_under_directory(local_path.resolve(), models_root_path())
+            return str(safe_path)
         return original_prepare(self, model_name)
 
     reranker_mlx.Reranker._prepare_model_files = _prepare_model_files

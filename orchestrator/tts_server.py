@@ -11,10 +11,11 @@ from typing import Optional
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from orchestrator.inference_auth import require_inference_api_key
 from orchestrator.kokoro_tts_utils import (
     OPENAI_TTS_VOICES,
     is_kokoro_voice_id,
@@ -22,6 +23,7 @@ from orchestrator.kokoro_tts_utils import (
     resolve_lang_code,
 )
 from orchestrator.kokoro_voices import KOKORO_VOICES
+from orchestrator.security_utils import public_error_message
 from orchestrator.tts_audio_codec import (
     TtsFormatError,
     encode_speech_audio,
@@ -149,7 +151,10 @@ def _synthesize_speech(
                     "Pick a voice from GET /v1/audio/voices (e.g. ff_siwis for French)."
                 ),
             ) from exc
-        raise HTTPException(status_code=500, detail=message) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=public_error_message(exc, fallback="Speech synthesis failed."),
+        ) from exc
 
     if not audio_chunks or sample_rate is None:
         raise HTTPException(status_code=400, detail="No audio generated.")
@@ -182,7 +187,7 @@ def _speech_audio_response(
     return Response(content=encoded, media_type=media_type, headers=headers)
 
 
-@app.post("/v1/audio/speech")
+@app.post("/v1/audio/speech", dependencies=[Depends(require_inference_api_key)])
 def create_speech(body: SpeechRequest) -> Response:
     model = _state.get("model")
     if model is None:

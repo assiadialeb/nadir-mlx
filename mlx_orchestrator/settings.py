@@ -40,7 +40,7 @@ _allowed_hosts_raw = os.environ.get("DJANGO_ALLOWED_HOSTS", "")
 if _allowed_hosts_raw.strip():
     ALLOWED_HOSTS = [host.strip() for host in _allowed_hosts_raw.split(",") if host.strip()]
 elif DEBUG:
-    ALLOWED_HOSTS = ["*"]
+    ALLOWED_HOSTS = ["127.0.0.1", "localhost", "[::1]"]
 else:
     ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 

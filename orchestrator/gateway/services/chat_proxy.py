@@ -13,7 +13,6 @@ from orchestrator.gateway.services.http_proxy import (
     forward_request_headers,
     prepare_upstream_body,
     proxy_json_post,
-    proxy_timeout_seconds,
     resolve_target_from_body,
     stream_upstream_chunks,
     upstream_url_for_path,
@@ -30,15 +29,14 @@ async def proxy_chat_completions(body: dict[str, Any], headers: Any) -> Response
     validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "chat completions")
     upstream_body = prepare_chat_upstream_body(body, target.upstream_model)
     request_headers = forward_request_headers(headers)
-    timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
 
     if body.get("stream"):
         return StreamingResponse(
-            stream_upstream_chunks(url, upstream_body, request_headers, timeout),
+            stream_upstream_chunks(url, upstream_body, request_headers),
             media_type="text/event-stream",
         )
-    return await proxy_json_post(url, upstream_body, request_headers, timeout)
+    return await proxy_json_post(url, upstream_body, request_headers)
 
 
 async def proxy_text_completions(body: dict[str, Any], headers: Any) -> Response:
@@ -47,12 +45,11 @@ async def proxy_text_completions(body: dict[str, Any], headers: Any) -> Response
     validate_target_launch_mode(target, TEXT_ONLY_LAUNCH_MODES, "text completions")
     upstream_body = prepare_chat_upstream_body(body, target.upstream_model)
     request_headers = forward_request_headers(headers)
-    timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, COMPLETIONS_PATH)
 
     if body.get("stream"):
         return StreamingResponse(
-            stream_upstream_chunks(url, upstream_body, request_headers, timeout),
+            stream_upstream_chunks(url, upstream_body, request_headers),
             media_type="text/event-stream",
         )
-    return await proxy_json_post(url, upstream_body, request_headers, timeout)
+    return await proxy_json_post(url, upstream_body, request_headers)

@@ -501,12 +501,19 @@ def delete_benchmark_view(request, run_id: int):
 
 
 def _safe_redirect_target(request, raw_next: str | None) -> str:
-    if raw_next and url_has_allowed_host_and_scheme(
-        raw_next,
+    if not raw_next:
+        return reverse("benchmark_history")
+
+    next_url = str(raw_next).strip()
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        return reverse("benchmark_history")
+
+    if url_has_allowed_host_and_scheme(
+        next_url,
         allowed_hosts={request.get_host()},
         require_https=request.is_secure(),
     ):
-        return raw_next
+        return next_url
     return reverse("benchmark_history")
 
 
@@ -579,8 +586,9 @@ def benchmark_compare_export_view(request):
     snapshot = build_comparison_snapshot(run_a, run_b)
     response = HttpResponse(
         json.dumps(snapshot, indent=2),
-        content_type="application/json",
+        content_type="application/json; charset=utf-8",
     )
+    response["X-Content-Type-Options"] = "nosniff"
     response["Content-Disposition"] = (
         f'attachment; filename="bench_compare_{run_a.id}_vs_{run_b.id}.json"'
     )

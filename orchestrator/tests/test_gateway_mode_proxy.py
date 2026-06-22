@@ -1,5 +1,6 @@
 """Tests for multi-mode gateway proxy routes."""
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -274,7 +275,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         upstream.status_code = 200
         upstream.headers = httpx.Headers({"content-type": "audio/opus"})
 
-        async def _aiter_bytes() -> AsyncMock:
+        async def _aiter_bytes() -> AsyncIterator[bytes]:
             for chunk in (b"OggS", b"page"):
                 yield chunk
 
@@ -313,7 +314,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         upstream.status_code = 200
         upstream.headers = httpx.Headers({"content-type": "audio/wav"})
 
-        async def _aiter_bytes() -> AsyncMock:
+        async def _aiter_bytes() -> AsyncIterator[bytes]:
             yield b"RIFFaudio"
 
         upstream.aiter_bytes = _aiter_bytes

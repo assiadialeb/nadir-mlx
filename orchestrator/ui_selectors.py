@@ -19,6 +19,7 @@ from orchestrator.model_registry import (
 from orchestrator.model_utils import get_model_capabilities, get_model_folder_size_bytes
 from orchestrator.models import InferenceInstance, ModelDownload
 from orchestrator.registry_builder import infer_family_id
+from orchestrator.security_utils import sanitize_hf_search_query, validate_huggingface_api_url
 from orchestrator.server_types import SERVER_TYPES
 
 InstalledSort = Literal["name_asc", "name_desc", "size_asc", "size_desc"]
@@ -50,7 +51,7 @@ LAUNCH_MODE_CAPABILITY_KEYS: dict[str, str] = {
 
 
 def _empty_capability_flags() -> dict[str, bool]:
-    return {key: False for key in LAUNCH_MODE_CAPABILITY_KEYS.values()}
+    return dict.fromkeys(LAUNCH_MODE_CAPABILITY_KEYS.values(), False)
 
 
 def launch_modes_to_capabilities(launch_modes: list[str]) -> dict[str, bool]:
@@ -100,26 +101,49 @@ def _heuristic_launch_modes(
     lowered = folder_name.lower()
     pipeline = (pipeline_tag or "").lower()
 
+    audio_modes = _heuristic_audio_modes(lowered, pipeline)
+    if audio_modes:
+        return audio_modes
+
+    ranking_modes = _heuristic_ranking_modes(lowered, pipeline)
+    if ranking_modes:
+        return ranking_modes
+
+    if _heuristic_multimodal_match(lowered, pipeline, tags):
+        return ["MULTIMODAL"]
+
+    return ["TEXT"]
+
+
+def _heuristic_audio_modes(lowered: str, pipeline: str) -> list[str] | None:
     if "kokoro" in lowered or pipeline == "text-to-speech":
         return ["TTS"]
     if "whisper" in lowered or "parakeet" in lowered or pipeline == "automatic-speech-recognition":
         return ["STT"]
+    return None
+
+
+def _heuristic_ranking_modes(lowered: str, pipeline: str) -> list[str] | None:
     if "reranker" in lowered or pipeline == "text-ranking":
         return ["RERANKER"]
     if "embedding" in lowered or pipeline == "feature-extraction":
         return ["EMBEDDING"]
     if "flux" in lowered or "schnell" in lowered or pipeline == "text-to-image":
         return ["IMAGE"]
+    return None
+
+
+def _heuristic_multimodal_match(
+    lowered: str,
+    pipeline: str,
+    tags: list[str] | None,
+) -> bool:
     if pipeline in {"image-text-to-text", "any-to-any"}:
-        return ["MULTIMODAL"]
+        return True
     if "gemma-4" in lowered or "gemma-3" in lowered:
-        return ["MULTIMODAL"]
-
+        return True
     tag_tokens = {str(tag).lower() for tag in (tags or [])}
-    if tag_tokens & {"image-text-to-text", "any-to-any"}:
-        return ["MULTIMODAL"]
-
-    return ["TEXT"]
+    return bool(tag_tokens & {"image-text-to-text", "any-to-any"})
 
 
 def _extract_param_size(name: str) -> float | None:
@@ -205,16 +229,18 @@ def parse_hf_model_from_api(
 
 def fetch_hf_models(query: str = "", *, limit: int = HF_FETCH_LIMIT_DEFAULT) -> list[dict[str, Any]]:
     """Fetch mlx-community models from the Hugging Face API."""
+    safe_query = sanitize_hf_search_query(query)
     params: dict[str, Any] = {
         "author": "mlx-community",
         "sort": "downloads",
         "direction": "-1",
         "limit": limit,
     }
-    if query:
-        params["search"] = query
+    if safe_query:
+        params["search"] = safe_query
 
-    response = requests.get("https://huggingface.co/api/models", params=params, timeout=8)
+    api_url = validate_huggingface_api_url("https://huggingface.co/api/models")
+    response = requests.get(api_url, params=params, timeout=8)
     response.raise_for_status()
 
     payload = response.json()
