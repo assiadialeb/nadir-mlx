@@ -81,7 +81,7 @@ Only **RUNNING** instances appear. Internal ports are never returned.
 | **RERANKER** | `POST /v1/rerank` | rerank (provider-specific) |
 | **IMAGE** | `POST /v1/images/generations` | image generation |
 | **TTS** | `POST /v1/audio/speech` | `audio_speech` |
-| **STT** | `POST /v1/audio/transcriptions` | transcription (multipart) |
+| **STT** | `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | transcription (multipart) |
 
 If you call a route with an alias whose launch mode does not match (e.g. chat on an IMAGE alias), the gateway returns **400** `unsupported_endpoint`.
 
@@ -178,6 +178,23 @@ curl http://127.0.0.1:11380/v1/audio/transcriptions \
   -F "model=<alias>" \
   -F "response_format=json"
 ```
+
+Subtitles (`srt` / `vtt`) and translation (audio → English):
+
+```bash
+curl http://127.0.0.1:11380/v1/audio/transcriptions \
+  -F "file=@sample.wav" \
+  -F "model=<alias>" \
+  -F "response_format=srt"
+
+curl http://127.0.0.1:11380/v1/audio/translations \
+  -F "file=@sample-fr.wav" \
+  -F "model=<alias>" \
+  -F "response_format=json"
+```
+
+!!! note "Input formats"
+    WAV and MP3 decode in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on the MLX host. Realtime WebSocket STT is not supported — see [ADR 002](../adr/002-stt-realtime-spike.md).
 
 ## LiteLLM configuration
 

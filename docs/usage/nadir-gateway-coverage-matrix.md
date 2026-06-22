@@ -78,8 +78,8 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) do
 |------------|--------|
 | `POST /v1/audio/speech` | ✅ |
 | Formats **wav, mp3** | ✅ |
-| OpenAI formats **opus, aac, flac, pcm** | ❌ |
-| **Audio streaming** | ❌ (full binary response) |
+| OpenAI formats **opus, aac, flac, pcm** | ✅ MLX-32 (opus/aac/flac/pcm; ffmpeg required except wav/pcm) |
+| **Audio streaming** | ✅ MLX-32 chunked relay (gateway + optional `stream: true` upstream) |
 | OpenAI voice → Kokoro remap | ✅ upstream |
 | `instructions` (GPT-4o mini TTS) | ❌ |
 
@@ -88,20 +88,21 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) do
 | Capability | Status |
 |------------|--------|
 | `POST /v1/audio/transcriptions` multipart | ✅ |
-| `response_format`: json, text, verbose_json | ✅ basic |
+| `response_format`: json, text, verbose_json, **srt**, **vtt** | ✅ MLX-33 |
 | Input **WAV / MP3** | ✅ |
-| **M4A, FLAC, etc.** | ⚠️ requires ffmpeg |
-| **Streaming / realtime** | ❌ |
-| `/v1/audio/translations` | ❌ |
-| Segments, word timestamps, srt/vtt | ❌ or partial |
-| `prompt`, `temperature` (Whisper) | ⚠️ verify upstream |
+| **M4A, FLAC, OGG, Opus, WebM** | ✅ with ffmpeg (documented) |
+| **Streaming / realtime** | ❌ no-go v1 — [ADR 002](../adr/002-stt-realtime-spike.md) |
+| `/v1/audio/translations` | ✅ MLX-33 (Whisper translate → English) |
+| Segments + optional `word_timestamps` | ✅ MLX-33 |
+| `prompt`, `temperature` (Whisper) | ✅ forwarded to mlx-audio |
 
 ## Streaming summary
 
 | Mode | Streaming |
 |------|-----------|
 | TEXT / VLM chat | ✅ SSE |
-| Embeddings, rerank, image, TTS, STT | ❌ |
+| TTS | ✅ chunked binary (MLX-32) |
+| Embeddings, rerank, image, STT | ❌ |
 
 ## LiteLLM QA priorities
 
@@ -116,9 +117,8 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) do
 
 **Likely mismatch points:**
 
-1. TTS when client requests `opus` / `aac`
-2. STT M4A without ffmpeg on the host
-3. Image when client expects a **URL**
+1. STT M4A without ffmpeg on the host
+2. Image when client expects a **URL**
 4. Rerank / embedding depending on LiteLLM version and `model_info.mode`
 5. VLM with images in messages
 6. Chat **tools** when the client sends them
@@ -127,6 +127,7 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) do
 
 - Epic: MLX-17
 - Route cache: MLX-31
+- STT realtime spike: [ADR 002](../adr/002-stt-realtime-spike.md) (MLX-33)
 - Integration guide: [nadir-gateway-litellm.md](nadir-gateway-litellm.md)
 - E2E runbooks: [gateway-runbooks/](gateway-runbooks/)
 - ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)

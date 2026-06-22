@@ -7,13 +7,20 @@ import io
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
+
+from orchestrator.stt_response_formats import (
+    SttFormatError,
+    normalize_stt_response_format,
+    render_stt_response_body,
+    segments_duration_seconds,
+)
 
 app = FastAPI(title="MLX STT Server")
 _state: dict[str, object] = {}
@@ -79,51 +86,112 @@ def _decode_uploaded_audio(audio_bytes: bytes) -> np.ndarray:
     return np.asarray(waveform, dtype=np.float32)
 
 
-def _transcription_payload_from_result(result: object) -> dict[str, object]:
+def _transcription_payload_from_result(result: object, *, task: str) -> dict[str, Any]:
     if hasattr(result, "text"):
+        segments = list(getattr(result, "segments", None) or [])
+        language = getattr(result, "language", None)
+        text = str(result.text).strip()
         return {
-            "text": result.text,
-            "language": getattr(result, "language", None),
+            "text": text,
+            "language": language,
+            "task": task,
+            "duration": segments_duration_seconds(segments),
+            "segments": segments,
         }
     if isinstance(result, dict):
-        return result
+        payload = dict(result)
+        payload.setdefault("task", task)
+        payload.setdefault("segments", [])
+        payload.setdefault("duration", segments_duration_seconds(list(payload["segments"])))
+        return payload
     if hasattr(result, "__iter__") and not isinstance(result, str):
         chunks = list(result)
         if chunks and hasattr(chunks[-1], "text"):
-            return {"text": chunks[-1].text}
-        return {"text": "".join(str(chunk) for chunk in chunks)}
-    return {"text": str(result)}
+            return _transcription_payload_from_result(chunks[-1], task=task)
+        text = "".join(str(chunk) for chunk in chunks)
+        return {"text": text, "task": task, "segments": [], "duration": 0.0}
+    return {"text": str(result), "task": task, "segments": [], "duration": 0.0}
+
+
+def _parse_optional_float(raw: Optional[str], field_name: str) -> Optional[float]:
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field_name}: expected a number.",
+        ) from exc
+
+
+def _parse_word_timestamps(raw: Optional[str]) -> bool:
+    if raw is None or not str(raw).strip():
+        return False
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _run_transcription(
     stt_model: object,
     waveform: np.ndarray,
     *,
+    task: str,
     effective_language: Optional[str],
     effective_chunk: float,
-) -> dict[str, object]:
+    word_timestamps: bool,
+    prompt: Optional[str],
+    temperature: Optional[float],
+) -> dict[str, Any]:
     generate_kwargs: dict[str, object] = {
         "chunk_duration": effective_chunk,
         "stream": False,
+        "task": task,
+        "word_timestamps": word_timestamps,
+        "return_timestamps": True,
     }
     if effective_language:
         generate_kwargs["language"] = effective_language
+    if prompt:
+        generate_kwargs["initial_prompt"] = prompt
+    if temperature is not None:
+        generate_kwargs["temperature"] = temperature
 
     result = stt_model.generate(waveform, **generate_kwargs)
-    return _transcription_payload_from_result(result)
+    return _transcription_payload_from_result(result, task=task)
 
 
-@app.post("/v1/audio/transcriptions", response_model=None)
-async def create_transcription(
-    file: UploadFile = File(...),
-    model: str = Form("default_model"),
-    language: Optional[str] = Form(None),
-    response_format: str = Form("json"),
-    chunk_duration: Optional[float] = Form(None),
+def _build_stt_response(payload: dict[str, Any], response_format: str) -> Response:
+    try:
+        body, media_type = render_stt_response_body(payload, response_format)
+    except SttFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if isinstance(body, dict):
+        return JSONResponse(body, media_type=media_type)
+    if media_type.startswith("text/plain"):
+        return PlainTextResponse(str(body), media_type=media_type)
+    return Response(content=str(body), media_type=media_type)
+
+
+async def _create_stt_response(
+    *,
+    file: UploadFile,
+    task: str,
+    language: Optional[str],
+    response_format: str,
+    chunk_duration: Optional[float],
+    word_timestamps: bool,
+    prompt: Optional[str],
+    temperature: Optional[float],
 ) -> Response:
     stt_model = _state.get("model")
     if stt_model is None:
         raise HTTPException(status_code=503, detail="STT model not loaded.")
+
+    try:
+        normalized_format = normalize_stt_response_format(response_format)
+    except SttFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     defaults = _defaults()
     effective_language = language or defaults.language
@@ -138,20 +206,64 @@ async def create_transcription(
         payload = _run_transcription(
             stt_model,
             waveform,
+            task=task,
             effective_language=effective_language,
             effective_chunk=effective_chunk,
+            word_timestamps=word_timestamps,
+            prompt=prompt,
+            temperature=temperature,
         )
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    text = str(payload.get("text", "")).strip()
-    if response_format == "text":
-        return PlainTextResponse(text)
-    if response_format == "verbose_json":
-        return JSONResponse(payload)
-    return JSONResponse({"text": text})
+    return _build_stt_response(payload, normalized_format)
+
+
+@app.post("/v1/audio/transcriptions", response_model=None)
+async def create_transcription(
+    file: UploadFile = File(...),
+    model: str = Form("default_model"),
+    language: Optional[str] = Form(None),
+    response_format: str = Form("json"),
+    chunk_duration: Optional[float] = Form(None),
+    word_timestamps: Optional[str] = Form(None),
+    prompt: Optional[str] = Form(None),
+    temperature: Optional[str] = Form(None),
+) -> Response:
+    return await _create_stt_response(
+        file=file,
+        task="transcribe",
+        language=language,
+        response_format=response_format,
+        chunk_duration=chunk_duration,
+        word_timestamps=_parse_word_timestamps(word_timestamps),
+        prompt=prompt,
+        temperature=_parse_optional_float(temperature, "temperature"),
+    )
+
+
+@app.post("/v1/audio/translations", response_model=None)
+async def create_translation(
+    file: UploadFile = File(...),
+    model: str = Form("default_model"),
+    response_format: str = Form("json"),
+    chunk_duration: Optional[float] = Form(None),
+    word_timestamps: Optional[str] = Form(None),
+    prompt: Optional[str] = Form(None),
+    temperature: Optional[str] = Form(None),
+) -> Response:
+    return await _create_stt_response(
+        file=file,
+        task="translate",
+        language=None,
+        response_format=response_format,
+        chunk_duration=chunk_duration,
+        word_timestamps=_parse_word_timestamps(word_timestamps),
+        prompt=prompt,
+        temperature=_parse_optional_float(temperature, "temperature"),
+    )
 
 
 def _parse_args() -> argparse.Namespace:

@@ -12,6 +12,7 @@ from orchestrator.gateway.routes.common import parse_json_body, route_error_resp
 from orchestrator.gateway.services.mode_proxy import (
     proxy_audio_speech,
     proxy_audio_transcriptions,
+    proxy_audio_translations,
     proxy_embeddings,
     proxy_image_generations,
     proxy_rerank,
@@ -54,5 +55,13 @@ async def audio_speech(request: Request):
 async def audio_transcriptions(request: Request):
     try:
         return await proxy_audio_transcriptions(request)
+    except GatewayRouteError as exc:
+        return route_error_response(exc)
+
+
+@router.post("/v1/audio/translations")
+async def audio_translations(request: Request):
+    try:
+        return await proxy_audio_translations(request)
     except GatewayRouteError as exc:
         return route_error_response(exc)

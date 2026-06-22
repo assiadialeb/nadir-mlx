@@ -122,6 +122,59 @@ async def read_upstream_error(response: httpx.Response) -> JSONResponse:
     return JSONResponse(status_code=response.status_code, content=payload)
 
 
+async def proxy_binary_post(
+    url: str,
+    body: dict[str, Any],
+    headers: dict[str, str],
+    timeout: float,
+) -> Response:
+    """Forward a JSON POST and stream the upstream binary body without buffering."""
+    client = httpx.AsyncClient(timeout=timeout)
+    try:
+        request = client.build_request("POST", url, json=body, headers=headers)
+        response = await client.send(request, stream=True)
+    except httpx.TimeoutException:
+        await client.aclose()
+        return gateway_error(504, "gateway_timeout", "Upstream request timed out.")
+    except httpx.HTTPError:
+        await client.aclose()
+        return gateway_error(502, "bad_gateway", "Could not reach the inference backend.")
+
+    if response.status_code >= 400:
+        error_body = await response.aread()
+        await response.aclose()
+        await client.aclose()
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                payload = json.loads(error_body)
+            except json.JSONDecodeError:
+                payload = {"error": {"message": error_body.decode(), "type": "upstream_error"}}
+            return JSONResponse(status_code=response.status_code, content=payload)
+        return JSONResponse(
+            status_code=response.status_code,
+            content={"error": {"message": error_body.decode(), "type": "upstream_error"}},
+        )
+
+    media_type = response.headers.get("content-type", "application/octet-stream")
+    passthrough = passthrough_response_headers(response.headers)
+
+    async def iter_chunks() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        iter_chunks(),
+        status_code=response.status_code,
+        media_type=media_type,
+        headers=passthrough,
+    )
+
+
 async def proxy_json_post(
     url: str,
     body: dict[str, Any],

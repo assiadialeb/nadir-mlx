@@ -75,6 +75,15 @@ def _mock_buffered_client(mock_client_cls: MagicMock, response: MagicMock) -> As
     return mock_client
 
 
+def _mock_streaming_client(mock_client_cls: MagicMock, response: MagicMock) -> AsyncMock:
+    mock_client = AsyncMock()
+    mock_client.build_request = MagicMock(return_value=MagicMock())
+    mock_client.send = AsyncMock(return_value=response)
+    mock_client.aclose = AsyncMock()
+    mock_client_cls.return_value = mock_client
+    return mock_client
+
+
 class GatewayModeProxyTests(SimpleTestCase):
     def setUp(self) -> None:
         self.client = TestClient(create_app())
@@ -247,6 +256,45 @@ class GatewayModeProxyTests(SimpleTestCase):
 
     @patch("orchestrator.gateway.selectors.resolve_gateway_target")
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    def test_audio_speech_streams_binary_payload(
+        self,
+        mock_client_cls: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = GatewayTarget(
+            alias="kokoro",
+            instance_id=5,
+            launch_mode="TTS",
+            host="127.0.0.1",
+            port=11414,
+            upstream_model="kokoro",
+            api_path="/v1/audio/speech",
+        )
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.headers = httpx.Headers({"content-type": "audio/opus"})
+
+        async def _aiter_bytes() -> AsyncMock:
+            for chunk in (b"OggS", b"page"):
+                yield chunk
+
+        upstream.aiter_bytes = _aiter_bytes
+        upstream.aread = AsyncMock(return_value=b"")
+        upstream.aclose = AsyncMock()
+        mock_client = _mock_streaming_client(mock_client_cls, upstream)
+
+        response = self.client.post(
+            "/v1/audio/speech",
+            json={"model": "kokoro", "input": "Hello", "response_format": "opus"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"OggSpage")
+        self.assertEqual(response.headers.get("content-type"), "audio/opus")
+        upstream_body = mock_client.build_request.call_args.kwargs["json"]
+        self.assertEqual(upstream_body["response_format"], "opus")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target")
+    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_audio_speech_returns_binary_payload(
         self,
         mock_client_cls: MagicMock,
@@ -263,10 +311,15 @@ class GatewayModeProxyTests(SimpleTestCase):
         )
         upstream = MagicMock()
         upstream.status_code = 200
-        upstream.content = b"RIFFaudio"
         upstream.headers = httpx.Headers({"content-type": "audio/wav"})
-        upstream.json.side_effect = ValueError("not json")
-        _mock_buffered_client(mock_client_cls, upstream)
+
+        async def _aiter_bytes() -> AsyncMock:
+            yield b"RIFFaudio"
+
+        upstream.aiter_bytes = _aiter_bytes
+        upstream.aread = AsyncMock(return_value=b"")
+        upstream.aclose = AsyncMock()
+        _mock_streaming_client(mock_client_cls, upstream)
 
         response = self.client.post(
             "/v1/audio/speech",
@@ -284,6 +337,33 @@ class GatewayModeProxyTests(SimpleTestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target")
+    @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
+    def test_audio_translations_forwards_multipart_file(
+        self,
+        mock_client_cls: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = STT_TARGET
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.content = b'{"text":"hello"}'
+        upstream.headers = httpx.Headers({"content-type": "application/json"})
+        mock_client = _mock_buffered_client(mock_client_cls, upstream)
+
+        response = self.client.post(
+            "/v1/audio/translations",
+            files={"file": ("sample.wav", b"RIFFtestdata", "audio/wav")},
+            data={"model": "whispers", "response_format": "json"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["text"], "hello")
+        self.assertEqual(
+            mock_client.post.await_args.args[0],
+            "http://127.0.0.1:11445/v1/audio/translations",
+        )
 
     @patch("orchestrator.gateway.selectors.resolve_gateway_target")
     @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")

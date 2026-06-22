@@ -11,6 +11,7 @@ from starlette.responses import Response
 from orchestrator.gateway.router import (
     AUDIO_SPEECH_PATH,
     AUDIO_TRANSCRIPTIONS_PATH,
+    AUDIO_TRANSLATIONS_PATH,
     EMBEDDINGS_PATH,
     IMAGES_PATH,
     RERANK_PATH,
@@ -21,6 +22,7 @@ from orchestrator.gateway.services.http_proxy import (
     gateway_error,
     passthrough_response_headers,
     prepare_upstream_body,
+    proxy_binary_post,
     proxy_json_post,
     proxy_timeout_seconds,
     read_upstream_error,
@@ -78,15 +80,18 @@ async def proxy_image_generations(body: dict[str, Any], headers: Any) -> Respons
 async def proxy_audio_speech(body: dict[str, Any], headers: Any) -> Response:
     target = await resolve_target_from_body(body)
     validate_target_launch_mode(target, TTS_MODES, "text-to-speech")
-    return await _proxy_json_for_target(
-        target,
-        AUDIO_SPEECH_PATH,
+    request_headers = forward_request_headers(headers)
+    timeout = proxy_timeout_seconds()
+    url = upstream_url_for_path(target, AUDIO_SPEECH_PATH)
+    return await proxy_binary_post(
+        url,
         prepare_upstream_body(body, target),
-        headers,
+        request_headers,
+        timeout,
     )
 
 
-async def proxy_audio_transcriptions(request: Request) -> Response:
+async def _proxy_audio_multipart(request: Request, upstream_path: str) -> Response:
     form = await request.form()
     model = form.get("model")
     target = await resolve_target_from_model(str(model) if model is not None else "")
@@ -108,7 +113,7 @@ async def proxy_audio_transcriptions(request: Request) -> Response:
         multipart_data[key] = str(value)
 
     timeout = proxy_timeout_seconds()
-    url = upstream_url_for_path(target, AUDIO_TRANSCRIPTIONS_PATH)
+    url = upstream_url_for_path(target, upstream_path)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
@@ -131,6 +136,14 @@ async def proxy_audio_transcriptions(request: Request) -> Response:
         headers=passthrough_response_headers(response.headers),
         media_type=content_type,
     )
+
+
+async def proxy_audio_transcriptions(request: Request) -> Response:
+    return await _proxy_audio_multipart(request, AUDIO_TRANSCRIPTIONS_PATH)
+
+
+async def proxy_audio_translations(request: Request) -> Response:
+    return await _proxy_audio_multipart(request, AUDIO_TRANSLATIONS_PATH)
 
 
 async def _proxy_json_for_target(

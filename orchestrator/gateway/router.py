@@ -22,6 +22,7 @@ RERANK_PATH = "/v1/rerank"
 IMAGES_PATH = "/v1/images/generations"
 AUDIO_SPEECH_PATH = "/v1/audio/speech"
 AUDIO_TRANSCRIPTIONS_PATH = "/v1/audio/transcriptions"
+AUDIO_TRANSLATIONS_PATH = "/v1/audio/translations"
 
 LAUNCH_MODE_API_PATH: dict[str, str] = {
     "TEXT": CHAT_COMPLETIONS_PATH,
