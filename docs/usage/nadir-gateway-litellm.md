@@ -311,6 +311,7 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 
 | Launch mode | Runbook |
 |-------------|---------|
+| TEXT / MULTIMODAL | [gateway-runbooks/chat.md](gateway-runbooks/chat.md) |
 | EMBEDDING | [gateway-runbooks/embedding.md](gateway-runbooks/embedding.md) |
 | RERANKER | [gateway-runbooks/reranker.md](gateway-runbooks/reranker.md) |
 | IMAGE | [gateway-runbooks/image.md](gateway-runbooks/image.md) |

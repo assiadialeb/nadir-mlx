@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from orchestrator.gateway.app import create_app
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, GatewayRouteError, GatewayTarget
-from orchestrator.gateway.services.chat_proxy import prepare_upstream_body
+from orchestrator.gateway.services.chat_proxy import prepare_chat_upstream_body
 
 TEXT_TARGET = GatewayTarget(
     alias="llama-chat",
@@ -97,7 +97,10 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.client = TestClient(create_app())
 
     def test_prepare_upstream_body_rewrites_text_model(self) -> None:
-        body = prepare_upstream_body({"model": "llama-chat", "messages": []}, TEXT_TARGET)
+        body = prepare_chat_upstream_body(
+            {"model": "llama-chat", "messages": []},
+            TEXT_TARGET.upstream_model,
+        )
         self.assertEqual(body["model"], "default_model")
 
     @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
@@ -320,3 +323,105 @@ class GatewayChatProxyTests(SimpleTestCase):
         )
 
         self.assertEqual(response.status_code, 422)
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    def test_chat_completions_forwards_tools_payload_unchanged(
+        self,
+        mock_client_cls: MagicMock,
+        _mock_resolve: MagicMock,
+    ) -> None:
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Return weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                        "required": ["city"],
+                    },
+                },
+            }
+        ]
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": "{\"city\":\"Paris\"}",
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        upstream.headers = httpx.Headers({"content-type": "application/json"})
+        mock_client = _mock_buffered_client(mock_client_cls, upstream)
+
+        response = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "llama-chat",
+                "messages": [{"role": "user", "content": "Weather in Paris?"}],
+                "tools": tools,
+                "tool_choice": "auto",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        forwarded = mock_client.post.await_args.kwargs["json"]
+        self.assertEqual(forwarded["tools"], tools)
+        self.assertEqual(forwarded["tool_choice"], "auto")
+        self.assertEqual(forwarded["model"], "default_model")
+
+    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    def test_chat_completions_forwards_json_schema_response_format(
+        self,
+        mock_client_cls: MagicMock,
+        _mock_resolve: MagicMock,
+    ) -> None:
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "city_answer",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.json.return_value = {
+            "choices": [{"message": {"role": "assistant", "content": "{\"city\":\"Paris\"}"}}]
+        }
+        upstream.headers = httpx.Headers({"content-type": "application/json"})
+        mock_client = _mock_buffered_client(mock_client_cls, upstream)
+
+        response = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "llama-chat",
+                "messages": [{"role": "user", "content": "Return JSON"}],
+                "response_format": response_format,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        forwarded = mock_client.post.await_args.kwargs["json"]
+        self.assertEqual(forwarded["response_format"], response_format)

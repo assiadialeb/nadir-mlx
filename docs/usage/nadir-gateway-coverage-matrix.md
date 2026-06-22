@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: June 2026 — epic MLX-17 delivered; MLX-35 (embedding base64 + dimensions) done.
+Last updated: June 2026 — MLX-36 (chat tools + JSON qualification) done.
 
 ## Cross-cutting (all modes)
 
@@ -25,11 +25,12 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-35 (embedding base64 + di
 | `POST /v1/chat/completions` | ✅ |
 | `POST /v1/completions` (legacy) | ✅ TEXT only |
 | **SSE streaming** (`stream: true`) | ✅ gateway + upstream |
-| Tools / function calling | ⚠️ depends on mlx-lm / model |
-| `logprobs`, `n>1`, strict JSON mode | ⚠️ mlx-lm limits |
+| **Tools / function calling** | ⚠️ MLX-36 — gateway relay ✅; mlx-lm model-dependent ([matrix](chat-tools-model-matrix.md)) |
+| **`response_format` json_object / json_schema** | ⚠️ MLX-36 — relay ✅; enforcement upstream best-effort |
+| `logprobs`, `n>1` | ⚠️ mlx-lm limits |
 | `/v1/completions` on VLM alias | ❌ 400 (by design) |
 
-**Main gaps:** OpenAI parity (tools, structured output) — not routing.
+**Main gaps:** strict JSON schema enforcement, logprobs — not gateway routing.
 
 ## MULTIMODAL (VLM)
 
@@ -121,13 +122,14 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-35 (embedding base64 + di
 2. Image when client expects a **URL**
 4. Rerank / embedding depending on LiteLLM version and `model_info.mode`
 5. VLM with images in messages
-6. Chat **tools** when the client sends them
+6. Chat **tools** on models without `tool_parser_type` — see [chat-tools-model-matrix.md](chat-tools-model-matrix.md)
 
 ## References
 
 - Epic: MLX-17
 - Route cache: MLX-31
 - STT realtime spike: [ADR 002](../adr/002-stt-realtime-spike.md) (MLX-33)
+- Chat tools / JSON: [ADR 004](../adr/004-chat-tools-structured-output.md) (MLX-36)
 - Integration guide: [nadir-gateway-litellm.md](nadir-gateway-litellm.md)
 - E2E runbooks: [gateway-runbooks/](gateway-runbooks/)
 - ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)
