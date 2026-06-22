@@ -115,12 +115,16 @@ curl http://127.0.0.1:11380/v1/chat/completions \
 
 ### Embeddings (EMBEDDING)
 
+Supports `encoding_format` (`float` default, `base64`) and optional `dimensions` (truncate to first N floats).
+
 ```bash
 curl http://127.0.0.1:11380/v1/embeddings \
   -H "Content-Type: application/json" \
   -d '{
     "model": "<alias>",
-    "input": ["Local embeddings on Apple Silicon"]
+    "input": ["Local embeddings on Apple Silicon"],
+    "encoding_format": "base64",
+    "dimensions": 256
   }'
 ```
 

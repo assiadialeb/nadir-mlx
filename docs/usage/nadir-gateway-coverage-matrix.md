@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) done.
+Last updated: June 2026 — epic MLX-17 delivered; MLX-35 (embedding base64 + dimensions) done.
 
 ## Cross-cutting (all modes)
 
@@ -47,8 +47,8 @@ Last updated: June 2026 — epic MLX-17 delivered; MLX-31 (alias route cache) do
 |------------|--------|
 | `POST /v1/embeddings` string + batch | ✅ |
 | **Streaming** | ❌ |
-| `encoding_format: base64` | ❌ field accepted, always float |
-| `dimensions` (OpenAI truncation) | ❌ |
+| `encoding_format: base64` | ✅ MLX-35 (float32 little-endian) |
+| `dimensions` (OpenAI truncation) | ✅ MLX-35 (first N dims) |
 | `user`, rate/token limits | ⚠️ partial |
 
 ## RERANKER

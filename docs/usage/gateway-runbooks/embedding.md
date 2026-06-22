@@ -42,7 +42,61 @@ curl -s http://127.0.0.1:11380/v1/embeddings \
 
 **Expected:** Two entries in `data`, indices 0 and 1.
 
-## 4. Wrong route (negative test)
+## 4. Base64 encoding
+
+```bash
+curl -s http://127.0.0.1:11380/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<alias>",
+    "input": "Encode me as base64",
+    "encoding_format": "base64"
+  }' | python3 -m json.tool
+```
+
+**Expected:** HTTP 200, `"data"[0].embedding` is a **base64 string** (not a float array).
+
+Decode locally (Python):
+
+```python
+import base64, struct
+
+encoded = "<paste embedding string>"
+packed = base64.b64decode(encoded)
+vector = struct.unpack(f"<{len(packed) // 4}f", packed)
+print(vector)
+```
+
+## 5. Dimension truncation
+
+Matryoshka-style truncation keeps the first `dimensions` floats (OpenAI-compatible):
+
+```bash
+curl -s http://127.0.0.1:11380/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<alias>",
+    "input": "Shorter vector please",
+    "dimensions": 256
+  }' | python3 -m json.tool
+```
+
+**Expected:** HTTP 200, embedding length **256** (or HTTP **400** if the model outputs fewer dimensions).
+
+Combine with base64:
+
+```bash
+curl -s http://127.0.0.1:11380/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<alias>",
+    "input": "Compact base64",
+    "encoding_format": "base64",
+    "dimensions": 128
+  }' | python3 -m json.tool
+```
+
+## 6. Wrong route (negative test)
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completions \
@@ -55,7 +109,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 
 **Expected:** HTTP **400** (`unsupported_endpoint`).
 
-## 5. LiteLLM
+## 7. LiteLLM
 
 Add to `config.yaml` (Docker → `host.docker.internal`):
 
@@ -89,4 +143,5 @@ assert len(response.data[0]["embedding"]) > 0
 | 404 | Unknown alias | Check UI alias / `GET /v1/models` |
 | 503 | Instance not RUNNING | Start embedding server in UI |
 | 400 | Chat route used | Use `/v1/embeddings` only |
+| 400 | Invalid `dimensions` or `encoding_format` | Use positive `dimensions` ≤ vector size; `float` or `base64` only |
 | 502 | Upstream down | Check instance logs in UI |
