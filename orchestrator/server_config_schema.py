@@ -49,46 +49,46 @@ class ConfigFieldSpec:
 COMMON_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         name="host",
-        label="Interface réseau",
+        label="Network interface",
         widget="select",
         modes=ALL_LAUNCH_MODES,
         default=None,
         choices=(
-            ("0.0.0.0", "Toutes les interfaces (0.0.0.0)"),
-            ("127.0.0.1", "Local uniquement (127.0.0.1)"),
+            ("0.0.0.0", "All interfaces (0.0.0.0)"),
+            ("127.0.0.1", "Local only (127.0.0.1)"),
         ),
-        help_text="Utilisez 127.0.0.1 pour limiter l'accès à la machine locale.",
+        help_text="Use 127.0.0.1 to restrict access to this machine.",
     ),
     ConfigFieldSpec(
         name="model_id",
-        label="Alias gateway",
+        label="Gateway alias",
         widget="text",
         modes=("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"),
-        placeholder="Prérempli avec le nom du modèle",
-        help_text="Valeur du champ model pour l'api",
+        placeholder="Prefilled from model folder name",
+        help_text="Value sent in the OpenAI `model` field.",
     ),
 )
 
 MODE_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         name="max_tokens",
-        label="Max tokens (défaut serveur)",
+        label="Max tokens (server default)",
         widget="number",
         modes=("TEXT", "MULTIMODAL"),
         placeholder="512",
         min_value=1,
         max_value=131_072,
-        help_text="Plafond par défaut si le client n'envoie pas max_tokens.",
+        help_text="Default cap when the client omits max_tokens.",
     ),
     ConfigFieldSpec(
         name="max_kv_size",
-        label="Taille max du cache KV",
+        label="Max KV cache size",
         widget="number",
         modes=("MULTIMODAL",),
         placeholder="Auto",
         min_value=512,
         max_value=1_000_000,
-        help_text="Limite la mémoire contextuelle (tokens). Utile sur gros modèles VLM.",
+        help_text="Context memory limit (tokens). Useful for large VLM models.",
     ),
     ConfigFieldSpec(
         name="trust_remote_code",
@@ -96,76 +96,76 @@ MODE_FIELDS: tuple[ConfigFieldSpec, ...] = (
         widget="checkbox",
         modes=("TEXT", "MULTIMODAL"),
         default=False,
-        help_text="Requis pour certains tokenizers ou architectures custom.",
+        help_text="Required for some custom tokenizers or architectures.",
     ),
     ConfigFieldSpec(
         name="disable_batching",
-        label="Désactiver le batching",
+        label="Disable batching",
         widget="checkbox",
         modes=("RERANKER",),
         default=False,
-        help_text="Débug ou compatibilité local-reranker.",
+        help_text="Debug or local-reranker compatibility.",
     ),
     ConfigFieldSpec(
         name="default_quality",
-        label="Qualité par défaut",
+        label="Default quality",
         widget="select",
         modes=("IMAGE",),
         default="balanced",
         choices=(
-            ("fast", "Rapide"),
-            ("balanced", "Équilibré"),
-            ("quality", "Qualité"),
+            ("fast", "Fast"),
+            ("balanced", "Balanced"),
+            ("quality", "Quality"),
         ),
-        help_text="Preset utilisé si quality n'est pas précisé dans la requête API.",
+        help_text="Preset when the API request omits quality.",
     ),
     ConfigFieldSpec(
         name="voice_id",
-        label="Voix",
+        label="Voice",
         widget="select",
         modes=("TTS",),
         default=DEFAULT_KOKORO_VOICE,
         choices=KOKORO_VOICES,
-        help_text="Voix Kokoro utilisée par défaut si le client n'envoie pas voice.",
+        help_text="Default Kokoro voice when the client omits voice.",
     ),
     ConfigFieldSpec(
         name="speaking_rate",
-        label="Vitesse de parole",
+        label="Speaking rate",
         widget="number",
         modes=("TTS",),
         default=1.0,
         placeholder="1.0",
         min_value=0.25,
         max_value=4.0,
-        help_text="Multiplicateur de vitesse (selon le backend TTS).",
+        help_text="Speed multiplier (TTS backend dependent).",
     ),
     ConfigFieldSpec(
         name="lang_code",
-        label="Langue (Kokoro)",
+        label="Language (Kokoro)",
         widget="select",
         modes=("TTS",),
         default=DEFAULT_KOKORO_LANG_CODE,
         choices=KOKORO_LANG_CODES,
-        help_text="Code langue Kokoro (phonétique) utilisé par défaut.",
+        help_text="Default Kokoro phonetic language code.",
     ),
     ConfigFieldSpec(
         name="language",
-        label="Langue (transcription)",
+        label="Language (transcription)",
         widget="text",
         modes=("STT",),
-        placeholder="Auto (détection)",
-        help_text="Code ISO (ex. en, fr). Laisser vide pour la détection automatique.",
+        placeholder="Auto-detect",
+        help_text="ISO code (e.g. en, fr). Leave empty for auto-detection.",
     ),
     ConfigFieldSpec(
         name="chunk_duration",
-        label="Durée des segments (s)",
+        label="Segment duration (s)",
         widget="number",
         modes=("STT",),
         default=30.0,
         placeholder="30",
         min_value=1.0,
         max_value=120.0,
-        help_text="Taille des fenêtres audio pour Whisper (secondes).",
+        help_text="Whisper audio window size in seconds.",
     ),
 )
 
@@ -308,14 +308,14 @@ def _coerce_select(field: ConfigFieldSpec, raw_value: Any) -> str:
     value = str(raw_value).strip()
     allowed = {choice[0] for choice in field.choices}
     if value not in allowed:
-        raise ValueError(f"{field.label}: valeur invalide '{value}'.")
+        raise ValueError(f"{field.label}: invalid value '{value}'.")
     return value
 
 
 def _coerce_required_text(field: ConfigFieldSpec, raw_value: Any) -> str:
     value = str(raw_value).strip()
     if not value:
-        raise ValueError(f"{field.label} ne peut pas être vide.")
+        raise ValueError(f"{field.label} cannot be empty.")
     return value
 
 
@@ -332,7 +332,7 @@ def _coerce_field_value(field: ConfigFieldSpec, raw_value: Any) -> Any:
     if field.widget == "resource":
         value = str(raw_value).strip()
         if not value:
-            raise ValueError(f"{field.label} est requis.")
+            raise ValueError(f"{field.label} is required.")
         return value
 
     return _coerce_required_text(field, raw_value)
@@ -342,13 +342,13 @@ def _validate_advanced(launch_mode: str, advanced: Any) -> dict[str, Any]:
     if advanced is None:
         return {}
     if not isinstance(advanced, dict):
-        raise ValueError("La section advanced doit être un objet JSON.")
+        raise ValueError("The advanced section must be a JSON object.")
 
     allowed = ADVANCED_WHITELIST.get(launch_mode, frozenset())
     unknown = set(advanced.keys()) - allowed
     if unknown:
         labels = ", ".join(sorted(unknown))
-        raise ValueError(f"Clés advanced non autorisées pour {launch_mode}: {labels}.")
+        raise ValueError(f"Advanced keys not allowed for {launch_mode}: {labels}.")
 
     normalized: dict[str, Any] = {}
     for key, value in advanced.items():
@@ -413,7 +413,7 @@ def parse_server_config_from_post(
         try:
             raw["advanced"] = json.loads(advanced_text)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"JSON avancé invalide: {exc}") from exc
+            raise ValueError(f"Invalid advanced JSON: {exc}") from exc
 
     return validate_and_normalize_server_config(launch_mode, raw, model_name)
 
@@ -429,7 +429,7 @@ def resolve_server_config_from_request(
         try:
             payload = json.loads(raw_json)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Configuration serveur invalide: {exc}") from exc
+            raise ValueError(f"Invalid server configuration: {exc}") from exc
         return validate_and_normalize_server_config(launch_mode, payload, model_name)
     return parse_server_config_from_post(post_data, launch_mode, model_name)
 

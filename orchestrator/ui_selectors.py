@@ -27,10 +27,10 @@ HF_FETCH_LIMIT_DEFAULT = 24
 HF_FETCH_LIMIT_FILTERED = 100
 
 SORT_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("name_asc", "Nom A → Z"),
-    ("name_desc", "Nom Z → A"),
-    ("size_desc", "Taille (plus grand)"),
-    ("size_asc", "Taille (plus petit)"),
+    ("name_asc", "Name A → Z"),
+    ("name_desc", "Name Z → A"),
+    ("size_desc", "Size (largest)"),
+    ("size_asc", "Size (smallest)"),
 )
 
 CAPABILITY_FILTER_IDS: frozenset[str] = frozenset(server_type["id"] for server_type in SERVER_TYPES)

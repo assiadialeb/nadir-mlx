@@ -20,15 +20,15 @@ def normalize_gateway_alias(raw_value: str) -> str:
 def validate_gateway_alias_format(alias: str) -> None:
     """Raise ValueError when the alias is empty or uses invalid characters."""
     if not alias:
-        raise ValueError("L'alias gateway est obligatoire.")
+        raise ValueError("Gateway alias is required.")
     if len(alias) > _MAX_GATEWAY_ALIAS_LENGTH:
         raise ValueError(
-            f"L'alias gateway ne peut pas dépasser {_MAX_GATEWAY_ALIAS_LENGTH} caractères."
+            f"Gateway alias cannot exceed {_MAX_GATEWAY_ALIAS_LENGTH} characters."
         )
     if not _GATEWAY_ALIAS_PATTERN.match(alias):
         raise ValueError(
-            "L'alias gateway ne peut contenir que des lettres, chiffres, "
-            "tirets, underscores, points, deux-points ou slashes."
+            "Gateway alias may only contain letters, digits, hyphens, "
+            "underscores, dots, colons, or slashes."
         )
 
 
@@ -57,7 +57,7 @@ def validate_gateway_alias_unique(
             continue
         if instance_gateway_alias(instance).casefold() == alias_key:
             raise ValueError(
-                f"L'alias gateway « {normalized} » est déjà utilisé par une autre instance."
+                f"Gateway alias '{normalized}' is already used by another instance."
             )
 
 
