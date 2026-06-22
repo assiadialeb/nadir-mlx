@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import io
 import logging
 import os
 import time
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from orchestrator.kokoro_tts_utils import (
@@ -23,6 +22,12 @@ from orchestrator.kokoro_tts_utils import (
     resolve_lang_code,
 )
 from orchestrator.kokoro_voices import KOKORO_VOICES
+from orchestrator.tts_audio_codec import (
+    TtsFormatError,
+    encode_speech_audio,
+    iter_encoded_audio_chunks,
+    normalize_tts_response_format,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,8 @@ class SpeechRequest(BaseModel):
     speed: Optional[float] = Field(default=None, ge=0.25, le=4.0)
     lang_code: Optional[str] = None
     language: Optional[str] = None
-    response_format: Literal["wav", "mp3"] = "wav"
+    response_format: str = "wav"
+    stream: bool = False
 
 
 def _defaults() -> dict[str, object]:
@@ -153,18 +159,27 @@ def _synthesize_speech(
 def _speech_audio_response(
     audio: np.ndarray,
     sample_rate: int,
-    response_format: Literal["wav", "mp3"],
-) -> Response:
-    buffer = io.BytesIO()
-    from mlx_audio.audio_io import write as audio_write
+    response_format: str,
+    *,
+    stream: bool = False,
+) -> Response | StreamingResponse:
+    try:
+        encoded, media_type = encode_speech_audio(audio, sample_rate, response_format)
+    except TtsFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    audio_write(buffer, audio, sample_rate, format=response_format)
-    media_type = "audio/wav" if response_format == "wav" else "audio/mpeg"
-    return Response(
-        content=buffer.getvalue(),
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename=speech.{response_format}"},
-    )
+    headers = {"Content-Disposition": f"attachment; filename=speech.{response_format}"}
+    if stream:
+        return StreamingResponse(
+            iter_encoded_audio_chunks(encoded),
+            media_type=media_type,
+            headers=headers,
+        )
+    return Response(content=encoded, media_type=media_type, headers=headers)
 
 
 @app.post("/v1/audio/speech")
@@ -194,6 +209,11 @@ def create_speech(body: SpeechRequest) -> Response:
     if remap_note:
         logger.info(remap_note)
 
+    try:
+        response_format = normalize_tts_response_format(body.response_format)
+    except TtsFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     speed = body.speed if body.speed is not None else defaults.get("speaking_rate", 1.0)
     audio, sample_rate = _synthesize_speech(
         model,
@@ -202,7 +222,12 @@ def create_speech(body: SpeechRequest) -> Response:
         speed=float(speed),
         lang_code=lang_code,
     )
-    return _speech_audio_response(audio, sample_rate, body.response_format)
+    return _speech_audio_response(
+        audio,
+        sample_rate,
+        response_format,
+        stream=body.stream,
+    )
 
 
 def _verify_kokoro_dependencies() -> None:

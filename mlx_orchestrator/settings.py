@@ -160,6 +160,29 @@ INSTANCE_AUTO_RESTART_BACKOFF_SECONDS = int(
     os.environ.get("MLX_RESTART_BACKOFF_SECONDS", "30")
 )
 INSTANCE_WATCHDOG_ENABLED = _env_bool("MLX_INSTANCE_WATCHDOG_ENABLED", True)
+MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS = float(
+    os.environ.get("MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS", "12")
+)
+
+# MLX inference instance ports (auto-assigned by server_manager.get_free_port)
+INSTANCE_PORT_RANGE_START = 11400
+INSTANCE_PORT_RANGE_END = 11500
+
+# Nadir Gateway — single OpenAI-compatible entrypoint (outside instance range)
+NADIR_GATEWAY_HOST = os.environ.get("NADIR_GATEWAY_HOST", "127.0.0.1")
+NADIR_GATEWAY_PORT = int(os.environ.get("NADIR_GATEWAY_PORT", "11380"))
+NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS = float(
+    os.environ.get("NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS", "300")
+)
+NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS = float(
+    os.environ.get("NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS", "20")
+)
+NADIR_GATEWAY_PUBLIC_BASE_URL = os.environ.get(
+    "NADIR_GATEWAY_PUBLIC_BASE_URL",
+    f"http://{NADIR_GATEWAY_HOST}:{NADIR_GATEWAY_PORT}",
+)
+IMAGE_OUTPUT_DIR = BASE_DIR / "data" / "generated_images"
+IMAGE_OUTPUT_TTL_SECONDS = int(os.environ.get("IMAGE_OUTPUT_TTL_SECONDS", "3600"))
 
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True

@@ -13,6 +13,7 @@ from orchestrator.server_manager import (
     _find_listener_pids,
     _is_process_alive,
     check_instance_status,
+    is_manual_stop_in_progress,
 )
 
 HealthStatus = Literal["HEALTHY", "DEGRADED", "DOWN", "UNKNOWN"]
@@ -62,6 +63,9 @@ def evaluate_instance_health(instance: InferenceInstance) -> HealthStatus:
 
 def refresh_instance_health(instance: InferenceInstance) -> HealthStatus:
     """Sync runtime status, update health fields, and persist."""
+    if is_manual_stop_in_progress(instance):
+        return instance.health_status or "UNKNOWN"
+
     check_instance_status(instance)
     instance.refresh_from_db(fields=["status", "pid", "stopped_at"])
 

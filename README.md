@@ -69,10 +69,15 @@ Quantization (`4bit`, `8bit`, …) is inferred from the folder name when present
 
 ```mermaid
 flowchart TB
-    subgraph UI["Django UI :8000"]
+    subgraph UI["Django control plane :8000"]
         Dashboard[Dashboard]
         Search[HF Search]
         Benchmark[Benchmarks]
+    end
+
+    subgraph Gateway["Nadir Gateway :11380"]
+        Router[alias router]
+        Proxy["/v1 proxy (MLX-22+)"]
     end
 
     subgraph Orchestrator["orchestrator/"]
@@ -81,7 +86,7 @@ flowchart TB
         MU[model_utils]
     end
 
-    subgraph Instances["Inference instances :11400-11500"]
+    subgraph Instances["MLX instances :11400-11500"]
         TEXT[mlx-lm]
         VLM[mlx-vlm]
         EMB[embedding_server]
@@ -91,10 +96,16 @@ flowchart TB
         STT[stt_server]
     end
 
+    Client[LiteLLM / OpenAI client]
     Models[(./models/)]
     Logs[(./logs/)]
     DB[(db.sqlite3)]
 
+    Client -->|"model = gateway alias"| Gateway
+    Gateway --> Router
+    Router --> DB
+    Gateway --> Proxy
+    Proxy --> Instances
     Dashboard --> SM
     Search --> DL
     DL --> Models
@@ -103,6 +114,16 @@ flowchart TB
     UI --> DB
     Benchmark --> Instances
 ```
+
+See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the control-plane vs data-plane decision.
+
+**Port allocation**
+
+| Port | Service |
+|------|---------|
+| `8000` | Django admin UI |
+| `11380` | Nadir Gateway (`NADIR_GATEWAY_PORT`) |
+| `11400–11500` | MLX inference instances (auto-assigned) |
 
 ---
 
@@ -149,7 +170,47 @@ python manage.py runserver
 
 Open **http://127.0.0.1:8000** and sign in with your superuser account.
 
-### 4. Download and launch a model
+### 4. Run the gateway (optional, recommended with LiteLLM)
+
+In a **second terminal**, start the OpenAI-compatible gateway on port `11380`:
+
+```bash
+source venv/bin/activate
+python manage.py run_gateway
+# equivalent: python -m orchestrator.gateway
+```
+
+Full integration guide (all launch modes — chat, embeddings, rerank, image, TTS, STT): **[docs/usage/nadir-gateway-litellm.md](docs/usage/nadir-gateway-litellm.md)**.
+
+Health check:
+
+```bash
+curl http://127.0.0.1:11380/health
+curl http://127.0.0.1:11380/v1/models
+```
+
+Configure LiteLLM with a **single** `api_base: http://127.0.0.1:11380/v1` (or `host.docker.internal` from Docker) and one `model_list` entry per **gateway alias** (shown on each server card in the UI). Instances must be **Running** before inference (no auto-wake yet).
+
+```bash
+curl http://127.0.0.1:11380/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<gateway-alias>",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 128
+  }'
+```
+
+Environment variables (see `.env.example`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NADIR_GATEWAY_HOST` | `127.0.0.1` | Gateway bind address |
+| `NADIR_GATEWAY_PORT` | `11380` | Gateway port (must stay outside `11400–11500`) |
+| `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
+| `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
+
+### 5. Download and launch a model
 
 1. Go to **Search** and find a model (e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit`)
 2. Click **Download** — files land in `./models/<model-name>/`
@@ -254,9 +315,22 @@ curl http://127.0.0.1:11442/v1/audio/transcriptions \
   -F "response_format=json"
 ```
 
-### LiteLLM proxy
+### LiteLLM proxy (Nadir Gateway)
 
-#### Reranker
+**Recommended:** point every local MLX model at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
+
+See **[docs/usage/nadir-gateway-litellm.md](docs/usage/nadir-gateway-litellm.md)** for:
+
+- `config.yaml` examples per launch mode
+- curl samples via gateway (not per-instance ports)
+- Docker `host.docker.internal` notes
+- Troubleshooting (`404`, `503`, wrong route for mode)
+
+#### Legacy: direct instance port
+
+The sections below still work for debugging a single backend on its `:114xx` port. Prefer the gateway for LiteLLM and cluster routing.
+
+#### Reranker (direct port)
 
 Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
 
@@ -341,6 +415,7 @@ mlx-server/
 │   ├── stt_server.py         # OpenAI-compatible STT (Whisper / mlx-audio)
 │   ├── image_model_loader.py # mflux model routing & inference helpers
 │   ├── mlx_*_launcher.py     # Subprocess entrypoints
+│   ├── gateway/              # Nadir Gateway (FastAPI proxy)
 │   ├── benchmark_service.py  # llmbenchmark integration
 │   └── vendor/llmbench.py    # Vendored benchmark CLI
 ├── models/                   # Downloaded weights (gitignored)
@@ -359,7 +434,7 @@ mlx-server/
 | `./db.sqlite3` | Django ORM (downloads, instances, benchmarks) |
 | `./venv/` | Python virtual environment |
 
-Port range for inference instances defaults to **11400–11500**. The orchestrator UI runs on **8000** by default.
+Port range for inference instances defaults to **11400–11500**. The orchestrator UI runs on **8000** by default. The Nadir Gateway runs on **11380** (`NADIR_GATEWAY_PORT`).
 
 ---
 
@@ -417,12 +492,14 @@ Example workflow:
 
 **Port still in use after stop**
 
+The stop flow waits up to `MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS` (default **12**) for the kernel to release the port. If it still fails:
+
 ```bash
 lsof -nP -iTCP:<PORT> -sTCP:LISTEN
 kill -9 <PID>
 ```
 
-The UI now verifies port release before marking an instance as stopped.
+The UI verifies port release before marking an instance as stopped. During a manual stop, the health watchdog pauses for that instance to avoid races with auto-restart.
 
 **Model download stuck**
 

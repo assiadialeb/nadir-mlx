@@ -35,6 +35,17 @@ class ImageProgressLoggerTests(TestCase):
             logger.call_before_loop(1, "test", MagicMock(), MagicMock())
         self.assertEqual(logger._started_at, 100.0)
 
+    def test_call_before_loop_accepts_keyword_arguments(self) -> None:
+        logger = ImageProgressLogger()
+        with patch("orchestrator.image_progress.time.monotonic", return_value=100.0):
+            logger.call_before_loop(
+                seed=1,
+                prompt="test",
+                latents=MagicMock(),
+                config=MagicMock(),
+            )
+        self.assertEqual(logger._started_at, 100.0)
+
     def test_register_progress_logger_attaches_callback(self) -> None:
         model = MagicMock()
         register_progress_logger(model)

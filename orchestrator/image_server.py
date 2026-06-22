@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import random
@@ -16,6 +15,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from orchestrator.image_assets import build_generation_response_entry, store_image_png
 from orchestrator.image_model_loader import (
     generate_image_bytes,
     load_image_model,
@@ -112,12 +112,6 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
 
     if not body.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt must not be empty.")
-    if body.response_format == "url":
-        raise HTTPException(
-            status_code=400,
-            detail="url response_format is not supported; use b64_json.",
-        )
-
     width, height = _parse_size(body.size, profile)
     steps = profile.resolve_steps(body.quality, body.num_inference_steps)
     guidance = profile.default_guidance if body.guidance is None else body.guidance
@@ -143,12 +137,36 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
                     guidance=guidance,
                     negative_prompt=body.negative_prompt,
                 )
-                data.append({"b64_json": base64.b64encode(png_bytes).decode("ascii")})
+                data.append(
+                    build_generation_response_entry(png_bytes, body.response_format)
+                )
                 print(f"[image] completed image {index + 1}/{body.n}", flush=True)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"created": int(time.time()), "data": data}
+
+
+@app.post("/v1/images/edits")
+def create_image_edits() -> dict[str, object]:
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Image edits are not supported by local mflux txt2img in v1. "
+            "Use POST /v1/images/generations or see ADR 003."
+        ),
+    )
+
+
+@app.post("/v1/images/variations")
+def create_image_variations() -> dict[str, object]:
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Image variations are not supported by local mflux txt2img in v1. "
+            "Use POST /v1/images/generations or see ADR 003."
+        ),
+    )
 
 
 def _parse_args() -> argparse.Namespace:

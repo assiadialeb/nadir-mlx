@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import time
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Literal, Optional, Union
 
 import mlx.core as mx
 import uvicorn
@@ -14,6 +14,13 @@ from pydantic import BaseModel
 
 from mlx_embeddings import generate, load
 
+from orchestrator.embedding_response import (
+    EmbeddingDimensionError,
+    EmbeddingFormatError,
+    build_embedding_data_entries,
+    normalize_encoding_format,
+)
+
 app = FastAPI(title="MLX Embedding Server")
 _state: dict[str, Any] = {}
 
@@ -21,7 +28,8 @@ _state: dict[str, Any] = {}
 class EmbeddingsRequest(BaseModel):
     model: str = "default_model"
     input: Union[str, list[str]]
-    encoding_format: str = "float"
+    encoding_format: Literal["float", "base64"] = "float"
+    dimensions: Optional[int] = None
 
 
 def _extract_embeddings(output: Any) -> mx.array:
@@ -67,6 +75,11 @@ def create_embeddings(body: EmbeddingsRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="input must not be empty.")
 
     try:
+        encoding_format = normalize_encoding_format(body.encoding_format)
+    except EmbeddingFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
         output = generate(model, processor, texts)
         vectors = _extract_embeddings(output).tolist()
     except Exception as exc:
@@ -74,12 +87,17 @@ def create_embeddings(body: EmbeddingsRequest) -> dict[str, Any]:
 
     if isinstance(body.input, str):
         rows = [vectors] if vectors and not isinstance(vectors[0], list) else vectors
-        data = [{"object": "embedding", "index": 0, "embedding": rows[0]}]
     else:
-        data = [
-            {"object": "embedding", "index": index, "embedding": row}
-            for index, row in enumerate(vectors)
-        ]
+        rows = vectors
+
+    try:
+        data = build_embedding_data_entries(
+            rows,
+            encoding_format=encoding_format,
+            dimensions=body.dimensions,
+        )
+    except EmbeddingDimensionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     token_count = _estimate_tokens(texts)
     return {

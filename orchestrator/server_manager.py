@@ -11,6 +11,7 @@ from typing import Any, Literal, Optional
 from django.conf import settings
 from django.utils import timezone
 
+from .gateway_aliases import validate_gateway_alias_unique
 from .models import InferenceInstance
 from .server_config_schema import build_default_server_config, validate_and_normalize_server_config
 from .model_utils import (
@@ -28,6 +29,7 @@ from .model_utils import (
 )
 
 LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
+_REUSABLE_INSTANCE_STATUSES = ("STOPPED", "FAILED")
 
 
 def default_server_host() -> str:
@@ -240,7 +242,7 @@ def _terminate_launchers_on_port(port: int) -> None:
             _terminate_pid(pid, signal.SIGKILL)
         time.sleep(0.3)
 
-    _wait_for_port_release(port, 2.0)
+    _wait_for_port_release(port, 5.0)
 
 
 def _terminate_pid(pid: int, sig: signal.Signals) -> None:
@@ -301,12 +303,19 @@ def _resolve_server_config(
     launch_mode: LaunchMode,
     server_config: dict[str, Any] | None,
     model_name: str,
+    *,
+    exclude_instance_id: int | None = None,
 ) -> dict[str, Any]:
-    return validate_and_normalize_server_config(
+    normalized = validate_and_normalize_server_config(
         launch_mode,
         server_config or build_default_server_config(launch_mode),
         model_name,
     )
+    validate_gateway_alias_unique(
+        _config_model_id(normalized, model_name),
+        exclude_instance_id=exclude_instance_id,
+    )
+    return normalized
 
 
 def _config_host(server_config: dict[str, Any]) -> str:
@@ -355,6 +364,7 @@ def _build_launch_command(
             str(port),
         ]
         _append_cli_args(command, {
+            "model-id": model_id,
             "max-tokens": server_config.get("max_tokens"),
             "max-kv-size": server_config.get("max_kv_size"),
             "trust-remote-code": server_config.get("trust_remote_code"),
@@ -399,6 +409,7 @@ def _build_launch_command(
         ]
         if server_config.get("disable_batching"):
             command.append("--disable-batching")
+        command.extend(["--model-id", model_id])
         return command
 
     if launch_mode == "IMAGE":
@@ -467,6 +478,8 @@ def _build_launch_command(
         host,
         "--port",
         str(port),
+        "--model-id",
+        model_id,
     ]
     _append_cli_args(command, {
         "max-tokens": server_config.get("max_tokens"),
@@ -513,15 +526,40 @@ def _prepare_model_for_launch(model_path: str, launch_mode: LaunchMode) -> None:
 def _get_launch_env(
     launch_mode: LaunchMode,
     server_config: dict[str, Any],
+    *,
+    model_name: str = "",
 ) -> dict[str, str]:
     env = os.environ.copy()
+    if launch_mode in ("TEXT", "MULTIMODAL"):
+        env["NADIR_GATEWAY_ALIAS"] = _config_model_id(server_config, model_name)
     if launch_mode in ("IMAGE", "TTS", "STT"):
         env["TQDM_DISABLE"] = "1"
         if launch_mode == "IMAGE":
             quality = server_config.get("default_quality")
             if quality:
                 env["IMAGE_DEFAULT_QUALITY"] = str(quality)
+            env.setdefault(
+                "IMAGE_OUTPUT_DIR",
+                str(getattr(settings, "IMAGE_OUTPUT_DIR", "")),
+            )
+            env.setdefault(
+                "NADIR_GATEWAY_PUBLIC_BASE_URL",
+                str(getattr(settings, "NADIR_GATEWAY_PUBLIC_BASE_URL", "")),
+            )
     return env
+
+
+def _find_reusable_instance(model_name: str, port: int) -> InferenceInstance | None:
+    """Return a stopped or failed instance row that can be relaunched on the same slot."""
+    return (
+        InferenceInstance.objects.filter(
+            model_name=model_name,
+            port=port,
+            status__in=_REUSABLE_INSTANCE_STATUSES,
+        )
+        .order_by("-created_at")
+        .first()
+    )
 
 
 def _get_or_create_instance(
@@ -530,11 +568,7 @@ def _get_or_create_instance(
     launch_mode: LaunchMode,
     server_config: dict[str, Any],
 ) -> InferenceInstance:
-    existing = InferenceInstance.objects.filter(
-        model_name=model_name,
-        port=port,
-        status="STOPPED",
-    ).order_by("-created_at").first()
+    existing = _find_reusable_instance(model_name, port)
     if existing:
         existing.status = "LOADING"
         existing.launch_mode = launch_mode
@@ -561,7 +595,6 @@ def start_instance(
 ) -> InferenceInstance:
     """Launch an inference server in the background."""
     launch_mode = parse_launch_mode(launch_mode)
-    normalized_config = _resolve_server_config(launch_mode, server_config, model_name)
     model_path = str(resolve_model_dir(model_name))
     if not os.path.isdir(model_path):
         raise ValueError(f"Model folder '{model_name}' was not found in ./models.")
@@ -576,6 +609,14 @@ def start_instance(
         port = get_free_port()
     else:
         port = int(port)
+
+    reusable = _find_reusable_instance(model_name, port)
+    normalized_config = _resolve_server_config(
+        launch_mode,
+        server_config,
+        model_name,
+        exclude_instance_id=reusable.pk if reusable else None,
+    )
 
     _terminate_launchers_on_port(port)
     if not is_port_free(port):
@@ -594,7 +635,7 @@ def start_instance(
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            env=_get_launch_env(launch_mode, normalized_config),
+            env=_get_launch_env(launch_mode, normalized_config, model_name=model_name),
         )
         instance.pid = process.pid
         instance.status = "LOADING"
@@ -626,8 +667,78 @@ def start_instance(
         log_file.close()
 
 
+def _stop_port_release_timeout_seconds() -> float:
+    """How long to wait for a TCP port to become free after stopping an instance."""
+    raw = os.environ.get("MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS")
+    if raw:
+        try:
+            return max(3.0, float(raw))
+        except ValueError:
+            pass
+    return float(getattr(settings, "MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS", 12.0))
+
+
+def is_manual_stop_in_progress(instance: InferenceInstance) -> bool:
+    """Return True while the UI is stopping this instance (watchdog should stay idle)."""
+    ops = (instance.server_config or {}).get("ops") or {}
+    return bool(ops.get("manual_stop_in_progress"))
+
+
+def _set_manual_stop_in_progress(
+    instance: InferenceInstance,
+    *,
+    active: bool,
+    save: bool = True,
+) -> None:
+    config = dict(instance.server_config or {})
+    ops = dict(config.get("ops") or {})
+    if active:
+        ops["manual_stop_in_progress"] = True
+    else:
+        ops.pop("manual_stop_in_progress", None)
+    config["ops"] = ops
+    instance.server_config = config
+    if save:
+        instance.save(update_fields=["server_config"])
+
+
+def _port_blocker_pids(port: int) -> list[int]:
+    """Return launcher and listener PIDs still bound to a port."""
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for pid in _find_orchestrator_launcher_pids(port) + _find_listener_pids(port):
+        if pid in seen or pid <= 0:
+            continue
+        seen.add(pid)
+        ordered.append(pid)
+    return ordered
+
+
+def _ensure_port_released(port: int, timeout_seconds: float) -> list[int]:
+    """Kill blockers and poll until the port is free or the timeout expires."""
+    deadline = time.time() + timeout_seconds
+    last_known: list[int] = []
+    while time.time() < deadline:
+        if is_port_free(port):
+            return []
+        blockers = _port_blocker_pids(port)
+        if blockers:
+            last_known = blockers
+            for pid in blockers:
+                _terminate_pid(pid, signal.SIGKILL)
+            time.sleep(0.4)
+            continue
+        time.sleep(0.25)
+    if is_port_free(port):
+        return []
+    return _port_blocker_pids(port) or last_known
+
+
 def check_instance_status(instance: InferenceInstance) -> str:
     """Check whether the subprocess PID is still active and update status."""
+    if is_manual_stop_in_progress(instance):
+        return instance.status
+
     if instance.status not in ("RUNNING", "LOADING"):
         return instance.status
 
@@ -670,33 +781,34 @@ def check_instance_status(instance: InferenceInstance) -> str:
 
 def stop_instance(instance: InferenceInstance) -> None:
     """Terminate the inference server and ensure the port is released."""
-    targets = _collect_stop_targets(instance)
-    survivors = _force_stop_pids(targets, grace_seconds=2.0)
-
-    _terminate_launchers_on_port(instance.port)
-
-    remaining_launchers = set(_find_orchestrator_launcher_pids(instance.port))
-    remaining_listeners = set(_find_listener_pids(instance.port))
-    survivors = survivors | remaining_launchers | remaining_listeners
-    if survivors:
-        for pid in survivors:
-            _terminate_pid(pid, signal.SIGKILL)
-        time.sleep(0.5)
-
-    if _find_orchestrator_launcher_pids(instance.port) or not is_port_free(instance.port):
-        remaining_pids = (
-            _find_orchestrator_launcher_pids(instance.port) or _find_listener_pids(instance.port)
+    instance.refresh_from_db()
+    _set_manual_stop_in_progress(instance, active=True)
+    try:
+        targets = _collect_stop_targets(instance)
+        _force_stop_pids(targets, grace_seconds=3.0)
+        remaining = _ensure_port_released(
+            instance.port,
+            _stop_port_release_timeout_seconds(),
         )
-        pid_list = ", ".join(str(pid) for pid in remaining_pids) or "unknown"
-        raise RuntimeError(
-            f"Port {instance.port} is still in use (PID: {pid_list}). "
-            "The server could not be stopped completely."
-        )
+        if remaining:
+            pid_list = ", ".join(str(pid) for pid in remaining)
+            raise RuntimeError(
+                f"Port {instance.port} is still in use (PID: {pid_list}). "
+                "The server could not be stopped completely."
+            )
 
-    instance.pid = None
-    instance.status = "STOPPED"
-    instance.stopped_at = timezone.now()
-    instance.save(update_fields=["status", "pid", "stopped_at"])
+        config = dict(instance.server_config or {})
+        ops = dict(config.get("ops") or {})
+        ops.pop("manual_stop_in_progress", None)
+        config["ops"] = ops
+        instance.server_config = config
+        instance.pid = None
+        instance.status = "STOPPED"
+        instance.stopped_at = timezone.now()
+        instance.save(update_fields=["status", "pid", "stopped_at", "server_config"])
+    except Exception:
+        _set_manual_stop_in_progress(instance, active=False)
+        raise
 
 
 def delete_instance(instance: InferenceInstance) -> None:
@@ -720,7 +832,12 @@ def update_stopped_instance(
     new_port = int(port) if port is not None else instance.port
     new_mode = parse_launch_mode(launch_mode) if launch_mode else instance.launch_mode
     if server_config is not None:
-        new_config = _resolve_server_config(new_mode, server_config, instance.model_name)
+        new_config = _resolve_server_config(
+            new_mode,
+            server_config,
+            instance.model_name,
+            exclude_instance_id=instance.pk,
+        )
     else:
         new_config = dict(instance.server_config or {})
 
