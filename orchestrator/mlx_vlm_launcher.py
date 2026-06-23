@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 
 def _parse_cli_arg(argv: list[str], flag: str) -> str | None:
@@ -33,6 +35,77 @@ def _parse_model_path(argv: list[str]) -> Path | None:
         if arg == "--model" and index + 1 < len(argv):
             return Path(argv[index + 1]).resolve()
     return None
+
+
+def _read_model_config(model_path: Path) -> dict[str, Any]:
+    config_path = model_path / "config.json"
+    if not config_path.is_file():
+        return {}
+    try:
+        return json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _safetensors_metadata(model_path: Path) -> dict[str, str]:
+    weight_path = model_path / "model.safetensors"
+    if not weight_path.is_file():
+        return {}
+    try:
+        from safetensors import safe_open
+    except ImportError:
+        return {}
+    try:
+        with safe_open(str(weight_path), framework="np") as handle:
+            return dict(handle.metadata() or {})
+    except (OSError, RuntimeError, ValueError):
+        return {}
+
+
+def model_requires_relaxed_weight_loading(model_path: Path) -> bool:
+    """Return True for mlx-community Gemma 4 KV-shared checkpoints.
+
+    mlx_vlm skips weight sanitization when safetensors metadata has
+    ``format=mlx``. mlx-community Gemma 4 E2B/E4B 4-bit builds still ship
+    redundant KV-shared tensors that must be ignored at load time.
+    """
+    config = _read_model_config(model_path)
+    if config.get("model_type") != "gemma4":
+        return False
+
+    text_config = config.get("text_config") or {}
+    if not text_config.get("num_kv_shared_layers"):
+        return False
+
+    return _safetensors_metadata(model_path).get("format") == "mlx"
+
+
+def _install_relaxed_weight_loading_patch(model_path: Path) -> None:
+    """Allow mlx_vlm to ignore redundant tensors on mlx-community Gemma 4 weights."""
+    if not model_requires_relaxed_weight_loading(model_path):
+        return
+
+    import mlx.nn as nn
+    import mlx_vlm.utils as utils
+
+    if getattr(utils.load_model, "_nadir_relaxed_weights", False):
+        return
+
+    original_load_model = utils.load_model
+    original_load_weights = nn.Module.load_weights
+
+    def relaxed_load_weights(module: nn.Module, weights: Any, strict: bool = True) -> None:
+        original_load_weights(module, weights, strict=False)
+
+    def load_model_with_relaxed_weights(model_dir: Path, lazy: bool = False, **kwargs: Any):
+        nn.Module.load_weights = relaxed_load_weights
+        try:
+            return original_load_model(model_dir, lazy, **kwargs)
+        finally:
+            nn.Module.load_weights = original_load_weights
+
+    load_model_with_relaxed_weights._nadir_relaxed_weights = True
+    utils.load_model = load_model_with_relaxed_weights
 
 
 def _install_model_alias_patch(local_model_path: Path, api_model_id: str | None = None) -> None:
@@ -99,6 +172,7 @@ def main() -> None:
             break
 
     os.environ["MLX_VLM_PRELOAD_MODEL"] = str(model_path)
+    _install_relaxed_weight_loading_patch(model_path)
     _install_model_alias_patch(model_path, api_model_id)
 
     from mlx_vlm.server.cli import main as server_main
