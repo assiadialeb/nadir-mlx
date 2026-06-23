@@ -115,7 +115,7 @@ flowchart TB
     Benchmark --> Instances
 ```
 
-See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the control-plane vs data-plane decision.
+See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the control-plane vs data-plane decision. Planned Ollama-like wake/idle: [ADR 006](docs/adr/006-instance-wake-idle-offload.md).
 
 **Port allocation**
 
@@ -189,7 +189,7 @@ curl http://127.0.0.1:11380/health
 curl http://127.0.0.1:11380/v1/models
 ```
 
-Configure LiteLLM with a **single** `api_base: http://127.0.0.1:11380/v1` (or `host.docker.internal` from Docker) and one `model_list` entry per **gateway alias** (shown on each server card in the UI). Instances must be **Running** before inference (no auto-wake yet).
+Configure LiteLLM with a **single** `api_base: http://127.0.0.1:11380/v1` (or `host.docker.internal` from Docker) and one `model_list` entry per **gateway alias** (shown on each server card in the UI). Instances must be **Running** before inference today (auto-wake / idle offload specced in [ADR 006](docs/adr/006-instance-wake-idle-offload.md), MLX-38).
 
 ```bash
 curl http://127.0.0.1:11380/v1/chat/completions \

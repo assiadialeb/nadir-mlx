@@ -47,6 +47,12 @@ def proxy_timeout_seconds() -> float:
     return float(os.environ.get("NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS", "300"))
 
 
+def httpx_client_timeout() -> httpx.Timeout:
+    """Match httpx read deadline to NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS."""
+    seconds = proxy_timeout_seconds()
+    return httpx.Timeout(seconds)
+
+
 def forward_request_headers(headers: Any) -> dict[str, str]:
     forwarded: dict[str, str] = {}
     for key, value in headers.items():
@@ -133,7 +139,7 @@ async def proxy_binary_post(
     headers: dict[str, str],
 ) -> Response:
     """Forward a JSON POST and stream the upstream binary body without buffering."""
-    client = httpx.AsyncClient()
+    client = httpx.AsyncClient(timeout=httpx_client_timeout())
     try:
         async with asyncio.timeout(proxy_timeout_seconds()):
             request = client.build_request("POST", url, json=body, headers=headers)
@@ -187,7 +193,7 @@ async def proxy_json_post(
 ) -> Response:
     try:
         async with asyncio.timeout(proxy_timeout_seconds()):
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx_client_timeout()) as client:
                 response = await client.post(url, json=body, headers=headers)
     except (TimeoutError, httpx.TimeoutException):
         return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
@@ -217,7 +223,7 @@ async def stream_upstream_chunks(
     body: dict[str, Any],
     headers: dict[str, str],
 ) -> AsyncIterator[bytes]:
-    client = httpx.AsyncClient()
+    client = httpx.AsyncClient(timeout=httpx_client_timeout())
     try:
         async with asyncio.timeout(proxy_timeout_seconds()):
             request = client.build_request("POST", url, json=body, headers=headers)

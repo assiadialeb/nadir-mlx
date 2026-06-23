@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: June 2026 — MLX-37 (VLM vision E2E) done.
+Last updated: June 2026 — MLX-38 epic (wake / idle offload) specced; implementation next sprint.
 
 ## Cross-cutting (all modes)
 
@@ -14,7 +14,7 @@ Last updated: June 2026 — MLX-37 (VLM vision E2E) done.
 | Alias → RUNNING instance routing | ✅ |
 | Aggregated `GET /v1/models` | ✅ |
 | In-memory alias cache (avoid DB on every hit) | ✅ MLX-31 (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
-| Wake / idle stop for instances | ❌ next sprint |
+| Wake / idle stop for instances | 🚧 MLX-38 — [ADR 006](../adr/006-instance-wake-idle-offload.md), [runbook](instance-lifecycle.md) |
 | API key auth on gateway | ❌ (LiteLLM can enforce upstream) |
 | Multi-worker uvicorn | ❌ single process by default |
 
@@ -132,6 +132,7 @@ Last updated: June 2026 — MLX-37 (VLM vision E2E) done.
 - STT realtime spike: [ADR 002](../adr/002-stt-realtime-spike.md) (MLX-33)
 - Chat tools / JSON: [ADR 004](../adr/004-chat-tools-structured-output.md) (MLX-36)
 - VLM vision: [ADR 005](../adr/005-vlm-vision-gateway.md) (MLX-37)
+- Instance lifecycle: [ADR 006](../adr/006-instance-wake-idle-offload.md) (MLX-38)
 - Integration guide: [nadir-gateway-litellm.md](nadir-gateway-litellm.md)
 - E2E runbooks: [gateway-runbooks/](gateway-runbooks/)
 - ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)

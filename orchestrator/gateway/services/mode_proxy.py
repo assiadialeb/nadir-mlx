@@ -30,6 +30,7 @@ from orchestrator.gateway.services.http_proxy import (
     prepare_upstream_body,
     proxy_binary_post,
     proxy_json_post,
+    httpx_client_timeout,
     proxy_timeout_seconds,
     read_upstream_error,
     resolve_target_from_body,
@@ -114,7 +115,7 @@ async def _proxy_multipart_request(
     url = upstream_url_for_path(target, upstream_path)
     try:
         async with asyncio.timeout(timeout):
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx_client_timeout()) as client:
                 response = await client.post(
                     url,
                     data=multipart_data,
