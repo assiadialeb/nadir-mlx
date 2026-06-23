@@ -17,6 +17,18 @@ import os
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _load_dotenv_file() -> None:
+    """Load project .env before reading os.environ (shell exports win)."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(BASE_DIR / ".env", override=False)
+
+
+_load_dotenv_file()
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
