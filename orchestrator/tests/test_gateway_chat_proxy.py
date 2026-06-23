@@ -95,6 +95,13 @@ def _mock_streaming_client(
 class GatewayChatProxyTests(SimpleTestCase):
     def setUp(self) -> None:
         self.client = TestClient(create_app())
+        self._touch_patcher = patch(
+            "orchestrator.lifecycle_services.touch_instance_last_used_at",
+        )
+        self._touch_patcher.start()
+
+    def tearDown(self) -> None:
+        self._touch_patcher.stop()
 
     def test_prepare_upstream_body_rewrites_text_model(self) -> None:
         body = prepare_chat_upstream_body(

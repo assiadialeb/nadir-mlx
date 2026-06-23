@@ -88,6 +88,13 @@ def _mock_streaming_client(mock_client_cls: MagicMock, response: MagicMock) -> A
 class GatewayModeProxyTests(SimpleTestCase):
     def setUp(self) -> None:
         self.client = TestClient(create_app())
+        self._touch_patcher = patch(
+            "orchestrator.lifecycle_services.touch_instance_last_used_at",
+        )
+        self._touch_patcher.start()
+
+    def tearDown(self) -> None:
+        self._touch_patcher.stop()
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")

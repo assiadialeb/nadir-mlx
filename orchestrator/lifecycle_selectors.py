@@ -55,3 +55,40 @@ def instance_lifecycle_mode(instance: InferenceInstance) -> str:
 
 def instance_idle_minutes(instance: InferenceInstance) -> int:
     return get_idle_minutes(instance.server_config)
+
+
+def instance_status_badge(instance: InferenceInstance) -> tuple[str, str]:
+    """Return UI label and variant key for the instance list status badge."""
+    if is_on_demand_lifecycle(instance.server_config):
+        on_demand_labels = {
+            "STOPPED": ("Sleeping", "sleeping"),
+            "LOADING": ("Waking", "waking"),
+            "RUNNING": ("Ready", "ready"),
+        }
+        if instance.status in on_demand_labels:
+            return on_demand_labels[instance.status]
+
+    default_labels = {
+        "RUNNING": ("Running", "running"),
+        "LOADING": ("Loading", "loading"),
+        "STOPPED": ("Stopped", "stopped"),
+        "FAILED": ("Failed", "failed"),
+    }
+    return default_labels.get(instance.status, (instance.status.title(), "stopped"))
+
+
+def lifecycle_policy_summary(server_config: dict[str, Any] | None) -> str:
+    """Short lifecycle policy label for the servers list."""
+    if get_lifecycle_mode(server_config) == LIFECYCLE_MODE_ON_DEMAND:
+        return f"On demand · idle {get_idle_minutes(server_config)} min"
+    return "Always on"
+
+
+def enrich_instance_lifecycle_ui(instance: InferenceInstance) -> None:
+    """Attach lifecycle display attributes for templates (MLX-44)."""
+    instance.lifecycle_on_demand = is_on_demand_lifecycle(instance.server_config)
+    label, variant = instance_status_badge(instance)
+    instance.status_badge_label = label
+    instance.status_badge_variant = variant
+    instance.lifecycle_policy_label = lifecycle_policy_summary(instance.server_config)
+    instance.idle_minutes_display = instance_idle_minutes(instance)

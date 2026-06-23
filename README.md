@@ -436,6 +436,8 @@ mlx-server/
 
 Port range for inference instances defaults to **11400–11500**. The orchestrator UI runs on **8000** by default. The Nadir Gateway runs on **11380** (`NADIR_GATEWAY_PORT`).
 
+Instance form fields, lifecycle (`ops`), and **Advanced (JSON)** keys per launch mode: **[docs/usage/server-config-reference.md](docs/usage/server-config-reference.md)**.
+
 ---
 
 ## Benchmarks

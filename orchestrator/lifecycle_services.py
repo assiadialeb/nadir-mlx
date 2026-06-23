@@ -18,6 +18,8 @@ from orchestrator.lifecycle_selectors import is_on_demand_lifecycle
 from orchestrator.server_manager import start_instance
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from orchestrator.models import InferenceInstance
 
 _WAKE_LOCKS: dict[str, threading.Lock] = {}
@@ -169,6 +171,22 @@ def _ensure_under_wake_lock(instance: InferenceInstance, alias: str) -> GatewayT
         return _wake_on_demand_instance(instance, alias)
 
     raise _route_error_unavailable(alias, detail=f"Status is {instance.status.lower()}.")
+
+
+def touch_instance_last_used_at(instance_id: int) -> None:
+    """Record gateway activity for idle offload (MLX-42)."""
+    from orchestrator.models import InferenceInstance
+
+    InferenceInstance.objects.filter(pk=instance_id).update(last_used_at=timezone.now())
+
+
+def instance_activity_at(instance: InferenceInstance) -> datetime:
+    """Return the timestamp used to evaluate idle offload eligibility."""
+    if instance.last_used_at is not None:
+        return instance.last_used_at
+    if instance.stopped_at is not None:
+        return instance.stopped_at
+    return instance.created_at
 
 
 def ensure_instance_ready(alias: str) -> GatewayTarget:
