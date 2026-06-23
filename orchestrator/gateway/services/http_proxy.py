@@ -99,7 +99,7 @@ def validate_target_launch_mode(
 
 
 async def resolve_target_from_model(model: object) -> GatewayTarget:
-    from orchestrator.gateway.selectors import resolve_gateway_target
+    from orchestrator.lifecycle_services import ensure_instance_ready
 
     if not isinstance(model, str) or not model.strip():
         raise GatewayRouteError(
@@ -107,7 +107,7 @@ async def resolve_target_from_model(model: object) -> GatewayTarget:
             code="invalid_model",
             message="The model field is required.",
         )
-    return await sync_to_async(resolve_gateway_target, thread_sensitive=False)(model)
+    return await sync_to_async(ensure_instance_ready, thread_sensitive=False)(model)
 
 
 async def resolve_target_from_body(body: dict[str, Any]) -> GatewayTarget:

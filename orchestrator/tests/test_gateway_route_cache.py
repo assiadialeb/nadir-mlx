@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
@@ -28,7 +29,7 @@ class GatewayRouteCacheTests(TestCase):
         clear_gateway_route_cache()
 
     def test_gateway_route_cache_ttl_reads_settings(self) -> None:
-        with override_settings(NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS=45.0):
+        with patch.dict(os.environ, {"NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS": "45"}, clear=False):
             clear_gateway_route_cache()
             self.assertEqual(gateway_route_cache_ttl_seconds(), 45.0)
 
