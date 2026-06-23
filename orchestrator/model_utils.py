@@ -423,12 +423,44 @@ def prepare_model_for_multimodal_inference(model_path: os.PathLike[str] | str) -
         shutil.copy2(backup_path, config_path)
 
 
+def _safetensors_metadata(model_path: Path) -> dict[str, str]:
+    """Read safetensors header metadata from the primary weights file."""
+    weight_path = model_path / "model.safetensors"
+    if not weight_path.is_file():
+        return {}
+    try:
+        from safetensors import safe_open
+    except ImportError:
+        return {}
+    try:
+        with safe_open(str(weight_path), framework="np") as handle:
+            return dict(handle.metadata() or {})
+    except (OSError, RuntimeError, ValueError):
+        return {}
+
+
+def _requires_relaxed_gemma4_kv_shared_weights(model_path: Path) -> bool:
+    """Return True for mlx-community Gemma 4 E2B/E4B KV-shared checkpoints."""
+    config = _read_model_config(model_path)
+    if config.get("model_type") != "gemma4":
+        return False
+
+    text_config = config.get("text_config") or {}
+    if not text_config.get("num_kv_shared_layers"):
+        return False
+
+    return _safetensors_metadata(model_path).get("format") == "mlx"
+
+
 def requires_relaxed_weight_loading(model_path: os.PathLike[str] | str) -> bool:
-    """Return True when mlx_lm must ignore extra weight tensors."""
-    backup_path = Path(model_path) / CONFIG_JSON_ORIG
+    """Return True when mlx_lm / mlx_vlm must ignore extra weight tensors."""
+    path = Path(model_path)
+    backup_path = path / CONFIG_JSON_ORIG
     if backup_path.is_file():
         return True
-    return get_model_type(model_path) == "gemma4_unified"
+    if get_model_type(model_path) == "gemma4_unified":
+        return True
+    return _requires_relaxed_gemma4_kv_shared_weights(path)
 
 
 def sync_model_download_status() -> None:
