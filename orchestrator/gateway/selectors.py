@@ -11,6 +11,7 @@ from orchestrator.gateway.router import (
 )
 from orchestrator.gateway.route_cache import RouteCacheSnapshot, get_route_snapshot
 from orchestrator.gateway_aliases import instance_gateway_alias
+from orchestrator.lifecycle_selectors import get_lifecycle_mode
 from orchestrator.models import InferenceInstance
 from orchestrator.security_utils import validate_server_bind_host
 
@@ -52,6 +53,16 @@ def _gateway_target_from_instance(instance: InferenceInstance) -> GatewayTarget:
     )
 
 
+def _nadir_model_metadata(instance: InferenceInstance) -> dict[str, object]:
+    return {
+        "launch_mode": instance.launch_mode,
+        "nadir": {
+            "lifecycle_mode": get_lifecycle_mode(instance.server_config),
+            "status": instance.status.lower(),
+        },
+    }
+
+
 def build_route_snapshot_from_db() -> RouteCacheSnapshot:
     """Load all gateway routing data from the database in one pass."""
     running_targets: dict[str, GatewayTarget] = {}
@@ -74,7 +85,7 @@ def build_route_snapshot_from_db() -> RouteCacheSnapshot:
         except GatewayRouteError:
             continue
 
-    for instance in InferenceInstance.objects.filter(status="RUNNING").order_by("model_name"):
+    for instance in InferenceInstance.objects.all().order_by("model_name"):
         alias = instance_gateway_alias(instance)
         alias_key = alias.casefold()
         if alias_key in seen_model_aliases:
@@ -86,9 +97,7 @@ def build_route_snapshot_from_db() -> RouteCacheSnapshot:
                 "object": "model",
                 "created": created_at,
                 "owned_by": "nadir",
-                "metadata": {
-                    "launch_mode": instance.launch_mode,
-                },
+                "metadata": _nadir_model_metadata(instance),
             }
         )
 
@@ -142,6 +151,6 @@ def resolve_gateway_target(alias: str) -> GatewayTarget:
 
 
 def list_running_gateway_models() -> dict[str, object]:
-    """Build an OpenAI-compatible model list from RUNNING instances."""
+    """Build an OpenAI-compatible model list from registered gateway aliases."""
     snapshot = get_route_snapshot()
     return snapshot.models_payload

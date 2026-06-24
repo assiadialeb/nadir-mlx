@@ -88,8 +88,15 @@ def _mock_streaming_client(mock_client_cls: MagicMock, response: MagicMock) -> A
 class GatewayModeProxyTests(SimpleTestCase):
     def setUp(self) -> None:
         self.client = TestClient(create_app())
+        self._touch_patcher = patch(
+            "orchestrator.lifecycle_services.touch_instance_last_used_at",
+        )
+        self._touch_patcher.start()
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=EMBED_TARGET)
+    def tearDown(self) -> None:
+        self._touch_patcher.stop()
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_embeddings_proxies_to_upstream(
         self,
@@ -114,7 +121,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(upstream_body["model"], "local-embed")
         self.assertEqual(upstream_body["input"], "hello")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=EMBED_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_embeddings_batch_input_preserved(
         self,
@@ -137,7 +144,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         upstream_body = mock_client.post.await_args.kwargs["json"]
         self.assertEqual(upstream_body["input"], batch)
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     def test_embeddings_rejects_text_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/embeddings",
@@ -146,7 +153,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=IMAGE_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=IMAGE_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_image_generations_proxies_to_upstream(
         self,
@@ -168,7 +175,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(upstream_body["model"], "flux-local")
         self.assertEqual(upstream_body["prompt"], "a cat")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     def test_image_generations_rejects_text_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/images/generations",
@@ -177,7 +184,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=IMAGE_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=IMAGE_TARGET)
     def test_rerank_rejects_image_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/rerank",
@@ -190,7 +197,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target")
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready")
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_rerank_proxies_to_upstream(
         self,
@@ -229,7 +236,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(upstream_body["model"], "rerank-local")
         self.assertEqual(upstream_body["query"], "python")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     def test_rerank_rejects_text_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/rerank",
@@ -242,7 +249,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=EMBED_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     def test_rerank_rejects_embedding_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/rerank",
@@ -255,7 +262,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target")
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready")
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_audio_speech_streams_binary_payload(
         self,
@@ -294,7 +301,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         upstream_body = mock_client.build_request.call_args.kwargs["json"]
         self.assertEqual(upstream_body["response_format"], "opus")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target")
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready")
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_audio_speech_returns_binary_payload(
         self,
@@ -330,7 +337,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.content, b"RIFFaudio")
         self.assertEqual(response.headers.get("content-type"), "audio/wav")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=STT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=STT_TARGET)
     def test_audio_speech_rejects_stt_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/audio/speech",
@@ -339,7 +346,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target")
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready")
     @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
     def test_audio_translations_forwards_multipart_file(
         self,
@@ -366,7 +373,7 @@ class GatewayModeProxyTests(SimpleTestCase):
             "http://127.0.0.1:11445/v1/audio/translations",
         )
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target")
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready")
     @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
     def test_audio_transcriptions_forwards_multipart_file(
         self,
@@ -394,7 +401,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(file_field[1], b"RIFFtestdata")
         self.assertEqual(call_kwargs["data"]["model"], "whispers")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TTS_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TTS_TARGET)
     def test_audio_transcriptions_rejects_tts_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/audio/transcriptions",

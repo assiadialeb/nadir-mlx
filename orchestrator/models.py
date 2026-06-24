@@ -58,6 +58,11 @@ class InferenceInstance(models.Model):
     last_health_check_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     stopped_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last gateway-proxied request time (UTC); used for idle offload.",
+    )
 
     def __str__(self):
         return f"{self.model_name} on port {self.port} ({self.launch_mode}, PID: {self.pid})"

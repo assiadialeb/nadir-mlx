@@ -32,6 +32,7 @@ from .server_config_schema import (
     config_fields_for_ui_json,
     resolve_server_config_from_request,
 )
+from .lifecycle_selectors import enrich_instance_lifecycle_ui
 from .ui_selectors import (
     apply_installed_models_filters,
     fetch_hf_models,
@@ -235,6 +236,7 @@ def servers_view(request):
     for instance in instances:
         refresh_instance_health(instance)
         instance.server_config_json = json.dumps(instance.server_config or {})
+        enrich_instance_lifecycle_ui(instance)
 
     return render(request, 'orchestrator/servers.html', {
         'instances': instances,

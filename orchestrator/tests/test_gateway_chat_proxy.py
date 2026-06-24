@@ -95,6 +95,13 @@ def _mock_streaming_client(
 class GatewayChatProxyTests(SimpleTestCase):
     def setUp(self) -> None:
         self.client = TestClient(create_app())
+        self._touch_patcher = patch(
+            "orchestrator.lifecycle_services.touch_instance_last_used_at",
+        )
+        self._touch_patcher.start()
+
+    def tearDown(self) -> None:
+        self._touch_patcher.stop()
 
     def test_prepare_upstream_body_rewrites_text_model(self) -> None:
         body = prepare_chat_upstream_body(
@@ -103,7 +110,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         )
         self.assertEqual(body["model"], "default_model")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_chat_completions_non_streaming_proxies_upstream(
         self,
@@ -131,7 +138,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(call_args.args[0], "http://127.0.0.1:11400/v1/chat/completions")
         self.assertEqual(call_args.kwargs["json"]["model"], "default_model")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_chat_completions_streaming_forwards_sse_chunks(
         self,
@@ -160,7 +167,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertIn(b"data:", response.content)
 
     @patch(
-        "orchestrator.gateway.selectors.resolve_gateway_target",
+        "orchestrator.lifecycle_services.ensure_instance_ready",
         side_effect=GatewayRouteError(
             status_code=404,
             code="model_not_found",
@@ -179,7 +186,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(response.json()["error"]["type"], "model_not_found")
 
     @patch(
-        "orchestrator.gateway.selectors.resolve_gateway_target",
+        "orchestrator.lifecycle_services.ensure_instance_ready",
         side_effect=GatewayRouteError(
             status_code=503,
             code="model_unavailable",
@@ -196,7 +203,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         )
         self.assertEqual(response.status_code, 503)
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_text_completions_uses_completions_path(
         self,
@@ -218,7 +225,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         call_args = mock_client.post.await_args
         self.assertEqual(call_args.args[0], "http://127.0.0.1:11400/v1/completions")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=VLM_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=VLM_TARGET)
     def test_text_completions_rejects_multimodal_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/completions",
@@ -227,7 +234,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=EMBED_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     def test_chat_completions_rejects_embedding_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/chat/completions",
@@ -239,7 +246,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=IMAGE_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=IMAGE_TARGET)
     def test_chat_completions_rejects_image_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/chat/completions",
@@ -251,7 +258,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TTS_CHAT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TTS_CHAT_TARGET)
     def test_chat_completions_rejects_tts_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/chat/completions",
@@ -263,7 +270,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=STT_CHAT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=STT_CHAT_TARGET)
     def test_chat_completions_rejects_stt_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(
             "/v1/chat/completions",
@@ -275,7 +282,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=VLM_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=VLM_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_chat_completions_multimodal_instance_allowed(
         self,
@@ -300,7 +307,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         call_args = mock_client.post.await_args
         self.assertEqual(call_args.kwargs["json"]["model"], "vlm-alias")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_chat_completions_upstream_error_is_passthrough(
         self,
@@ -324,7 +331,7 @@ class GatewayChatProxyTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_chat_completions_forwards_tools_payload_unchanged(
         self,
@@ -385,7 +392,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         self.assertEqual(forwarded["tool_choice"], "auto")
         self.assertEqual(forwarded["model"], "default_model")
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=TEXT_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_chat_completions_forwards_json_schema_response_format(
         self,
@@ -426,7 +433,7 @@ class GatewayChatProxyTests(SimpleTestCase):
         forwarded = mock_client.post.await_args.kwargs["json"]
         self.assertEqual(forwarded["response_format"], response_format)
 
-    @patch("orchestrator.gateway.selectors.resolve_gateway_target", return_value=VLM_TARGET)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=VLM_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
     def test_chat_completions_multimodal_forwards_vision_messages(
         self,

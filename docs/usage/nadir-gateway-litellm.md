@@ -2,15 +2,16 @@
 
 Single OpenAI-compatible entrypoint on each Mac Studio: **`http://127.0.0.1:11380/v1`**.
 
-Clients (LiteLLM, Open WebUI, curl, SDKs) send the **gateway alias** in the `model` field. The gateway resolves the alias to a **RUNNING** MLX instance and proxies to the correct local backend.
+Clients (LiteLLM, Open WebUI, curl, SDKs) send the **gateway alias** in the `model` field. The gateway resolves the alias to an MLX instance and proxies to the correct local backend. **`on_demand`** instances are woken automatically on first request; **`always_on`** instances must already be running.
 
 !!! note "Control plane vs data plane"
     - **Django `:8000`** — download models, start/stop instances, benchmarks, UI.
     - **Nadir Gateway `:11380`** — inference only (`/v1/*`).
     - **MLX instances `:11400–11500`** — not exposed to cluster clients; reached via the gateway.
 
-!!! warning "Instances must be RUNNING"
-    The gateway does **not** wake stopped instances or load weights on demand (planned for a later sprint). Start each server from the UI (**Serveurs**) before calling the gateway.
+!!! note "Lifecycle modes (MLX-38)"
+    - **`always_on`** (default) — instance must be **Running** before inference; gateway returns `503 model_unavailable` if stopped.
+    - **`on_demand`** — gateway **wakes** a stopped instance on first request (cold start). Configure `timeout` / `stream_timeout` in LiteLLM ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s). See [instance-lifecycle.md](instance-lifecycle.md).
 
 ## Quick start
 
@@ -37,14 +38,15 @@ Health check:
 curl http://127.0.0.1:11380/health
 ```
 
-### 2. Start inference instances
+### 2. Configure inference instances
 
 For each model you want to expose:
 
-1. Open **http://127.0.0.1:8000** → **Serveurs**
-2. Pick launch mode (Texte, Embeddings, Image, …) and model
-3. Note the **Alias gateway** (defaults to the model folder name; editable before start)
-4. Wait until status is **Running**
+1. Open **http://127.0.0.1:8000** → **Servers**
+2. Pick launch mode (Text, Embeddings, Image, …) and model
+3. Note the **Gateway alias** (defaults to the model folder name; editable before start)
+4. Set **lifecycle** in server config: `always_on` (stay loaded) or `on_demand` (idle offload)
+5. For `always_on`, wait until status is **Running** before the first request. For `on_demand`, you may leave the instance **Stopped** — the gateway wakes it on first traffic.
 
 ### 3. Discover aliases
 
@@ -307,6 +309,10 @@ LiteLLM sits in front of several Mac Studios. Each Mac runs its own gateway on `
 | `NADIR_GATEWAY_PORT` | `11380` | Must stay **outside** `11400–11500` |
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
+| `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
+| `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
+| `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Stop idle `on_demand` instances in background |
+| `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | Idle watcher evaluation interval |
 
 !!! tip "Route cache"
     The gateway caches alias → instance resolution and `GET /v1/models` in memory for `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` (default 20s). After starting or stopping an instance, new routes may take up to one TTL window to appear. Lower the TTL in dev if you need faster feedback.
@@ -319,9 +325,10 @@ See also [ADR 001 — Nadir Gateway](../adr/001-nadir-gateway.md).
 |---------|--------|-----|
 | `{"detail":"Not Found"}` on `/v1/chat/completions` | Old gateway process | Restart: `python manage.py run_gateway` |
 | `404 model_not_found` | Unknown alias or typo | Check alias in UI; `GET /v1/models` |
-| `503 model_unavailable` | Instance stopped / loading / failed | Start server in UI; wait for **Running** |
+| `503 model_unavailable` | `always_on` instance stopped / loading / failed | Start server in UI; wait for **Running** |
+| `503 model_waking_timeout` | `on_demand` cold start exceeded wake timeout | Increase `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` and LiteLLM `timeout` |
 | `400 unsupported_endpoint` | Wrong route for launch mode | Use embeddings route for EMBEDDING alias, etc. |
-| Empty `/v1/models` | No RUNNING instances | Start at least one server |
+| Empty `/v1/models` | No instances registered | Create at least one server (stopped `on_demand` aliases still appear) |
 
 ## Direct instance ports (legacy)
 

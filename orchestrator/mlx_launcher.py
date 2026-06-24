@@ -7,6 +7,8 @@ import os
 import sys
 from pathlib import Path
 
+from orchestrator.tokenizer_compat import install_auto_fix_mistral_regex
+
 
 def _parse_cli_arg(argv: list[str], flag: str) -> str | None:
     for index, arg in enumerate(argv):
@@ -28,25 +30,9 @@ def _strip_cli_flag(flag: str) -> None:
             del sys.argv[index]
 
 
-def _patch_tokenizer_config() -> None:
-    """Ensure Mistral/Qwen-style tokenizers load with the correct regex fix."""
-    from mlx_lm.server import ModelProvider
-
-    original_init = ModelProvider.__init__
-
-    def patched_init(self, cli_args):
-        original_init(self, cli_args)
-        self._tokenizer_config["fix_mistral_regex"] = True
-
-    ModelProvider.__init__ = patched_init
-    return original_init
-
-
 def _install_gateway_alias_patch(
     api_model_id: str,
     local_model_path: Path,
-    *,
-    original_model_provider_init,
 ) -> None:
     """Map gateway alias names to the preloaded local model directory."""
     resolved_path = str(local_model_path.resolve())
@@ -55,8 +41,10 @@ def _install_gateway_alias_patch(
 
     from mlx_lm.server import APIHandler, ModelProvider
 
+    original_init = ModelProvider.__init__
+
     def patched_init(self, cli_args):
-        original_model_provider_init(self, cli_args)
+        original_init(self, cli_args)
         for alias in alias_names:
             if alias:
                 self._model_map[alias] = resolved_path
@@ -106,6 +94,8 @@ def _patch_load_model(model_path: Path) -> None:
 
 
 def main() -> None:
+    install_auto_fix_mistral_regex()
+
     argv = sys.argv[1:]
     model_path: Path | None = None
     for index, arg in enumerate(argv):
@@ -120,16 +110,11 @@ def main() -> None:
     )
     _strip_cli_flag("--model-id")
 
-    original_init = _patch_tokenizer_config()
     if model_path is not None:
         model_path = model_path.resolve()
         _patch_load_model(model_path)
         if api_model_id:
-            _install_gateway_alias_patch(
-                api_model_id,
-                model_path,
-                original_model_provider_init=original_init,
-            )
+            _install_gateway_alias_patch(api_model_id, model_path)
 
     from mlx_lm.server import main as server_main
 

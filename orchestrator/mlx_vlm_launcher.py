@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from orchestrator.model_utils import requires_relaxed_weight_loading
+from orchestrator.tokenizer_compat import install_auto_fix_mistral_regex
 
 
 def _parse_cli_arg(argv: list[str], flag: str) -> str | None:
@@ -111,6 +112,8 @@ def _install_model_alias_patch(local_model_path: Path, api_model_id: str | None 
 
 
 def main() -> None:
+    install_auto_fix_mistral_regex()
+
     argv = sys.argv[1:]
     model_path = _parse_model_path(argv)
     if model_path is None:

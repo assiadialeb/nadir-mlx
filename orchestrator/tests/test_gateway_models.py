@@ -11,7 +11,7 @@ class GatewayModelsSelectorTests(TestCase):
     def setUp(self) -> None:
         clear_gateway_route_cache()
 
-    def test_list_running_gateway_models_returns_running_aliases(self) -> None:
+    def test_list_gateway_models_includes_stopped_aliases_with_nadir_metadata(self) -> None:
         InferenceInstance.objects.create(
             model_name="Llama-3-8B",
             port=11400,
@@ -30,14 +30,20 @@ class GatewayModelsSelectorTests(TestCase):
             model_name="offline",
             port=11402,
             launch_mode="TEXT",
-            server_config={"model_id": "offline"},
+            server_config={
+                "model_id": "offline",
+                "ops": {"lifecycle_mode": "on_demand", "idle_minutes": 30},
+            },
             status="STOPPED",
         )
 
         payload = list_running_gateway_models()
         self.assertEqual(payload["object"], "list")
         ids = {entry["id"] for entry in payload["data"]}
-        self.assertEqual(ids, {"llama-chat", "local-embed"})
+        self.assertEqual(ids, {"llama-chat", "local-embed", "offline"})
+        stopped_entry = next(item for item in payload["data"] if item["id"] == "offline")
+        self.assertEqual(stopped_entry["metadata"]["nadir"]["status"], "stopped")
+        self.assertEqual(stopped_entry["metadata"]["nadir"]["lifecycle_mode"], "on_demand")
         text_entry = next(item for item in payload["data"] if item["id"] == "llama-chat")
         self.assertEqual(text_entry["owned_by"], "nadir")
         self.assertEqual(text_entry["metadata"]["launch_mode"], "TEXT")

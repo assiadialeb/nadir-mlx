@@ -19,6 +19,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from mlx_lm.utils import load_model, load_tokenizer
 from pydantic import BaseModel
+
+from orchestrator.tokenizer_compat import install_auto_fix_mistral_regex
 from safetensors.torch import save_file
 
 logger = logging.getLogger(__name__)
@@ -261,6 +263,8 @@ def main() -> None:
             "This server only supports JinaForRanking models. "
             "Use local-reranker for jinaai/jina-reranker-v3-mlx."
         )
+
+    install_auto_fix_mistral_regex()
 
     logger.info("Loading JinaForRanking model from %s", model_path)
     model, config = load_model(model_path, lazy=False, strict=False)

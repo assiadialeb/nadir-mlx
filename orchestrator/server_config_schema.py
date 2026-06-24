@@ -6,6 +6,13 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from orchestrator.lifecycle_selectors import (
+    DEFAULT_IDLE_MINUTES,
+    LIFECYCLE_MODE_ALWAYS_ON,
+    LIFECYCLE_MODE_CHOICES,
+    MAX_IDLE_MINUTES,
+    MIN_IDLE_MINUTES,
+)
 from orchestrator.kokoro_voices import (
     DEFAULT_KOKORO_LANG_CODE,
     DEFAULT_KOKORO_VOICE,
@@ -171,6 +178,25 @@ MODE_FIELDS: tuple[ConfigFieldSpec, ...] = (
 
 OPS_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
+        name="lifecycle_mode",
+        label="Lifecycle mode",
+        widget="select",
+        modes=ALL_LAUNCH_MODES,
+        default=LIFECYCLE_MODE_ALWAYS_ON,
+        choices=LIFECYCLE_MODE_CHOICES,
+        help_text="On demand stops the instance after idle_minutes without gateway traffic.",
+    ),
+    ConfigFieldSpec(
+        name="idle_minutes",
+        label="Idle minutes before offload",
+        widget="number",
+        modes=ALL_LAUNCH_MODES,
+        default=DEFAULT_IDLE_MINUTES,
+        min_value=MIN_IDLE_MINUTES,
+        max_value=MAX_IDLE_MINUTES,
+        help_text="Applies when lifecycle mode is on demand (5–1440).",
+    ),
+    ConfigFieldSpec(
         name="auto_restart",
         label="Auto-restart on failure",
         widget="checkbox",
@@ -259,7 +285,11 @@ def _merge_ops_config(
     for field in get_ops_fields_for_mode(launch_mode):
         if field.name in raw_config:
             ops[field.name] = _coerce_field_value(field, raw_config.pop(field.name))
-        elif field.name not in ops and field.default is not None:
+            continue
+        if field.name in ops:
+            ops[field.name] = _coerce_field_value(field, ops[field.name])
+            continue
+        if field.default is not None:
             ops[field.name] = field.default
     return ops
 

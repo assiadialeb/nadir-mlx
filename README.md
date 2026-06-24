@@ -115,7 +115,7 @@ flowchart TB
     Benchmark --> Instances
 ```
 
-See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the control-plane vs data-plane decision. Planned Ollama-like wake/idle: [ADR 006](docs/adr/006-instance-wake-idle-offload.md).
+See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the control-plane vs data-plane decision. Ollama-like wake on demand and idle offload: [ADR 006](docs/adr/006-instance-wake-idle-offload.md) · [operator guide](docs/usage/instance-lifecycle.md).
 
 **Port allocation**
 
@@ -189,7 +189,7 @@ curl http://127.0.0.1:11380/health
 curl http://127.0.0.1:11380/v1/models
 ```
 
-Configure LiteLLM with a **single** `api_base: http://127.0.0.1:11380/v1` (or `host.docker.internal` from Docker) and one `model_list` entry per **gateway alias** (shown on each server card in the UI). Instances must be **Running** before inference today (auto-wake / idle offload specced in [ADR 006](docs/adr/006-instance-wake-idle-offload.md), MLX-38).
+Configure LiteLLM with a **single** `api_base: http://127.0.0.1:11380/v1` (or `host.docker.internal` from Docker) and one `model_list` entry per **gateway alias** (shown on each server card in the UI). The gateway **wakes** `on_demand` instances on first request and **stops** them after idle time — see [instance-lifecycle.md](docs/usage/instance-lifecycle.md). Set LiteLLM `timeout` / `stream_timeout` ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s) for cold starts.
 
 ```bash
 curl http://127.0.0.1:11380/v1/chat/completions \
@@ -209,6 +209,10 @@ Environment variables (see `.env.example`):
 | `NADIR_GATEWAY_PORT` | `11380` | Gateway port (must stay outside `11400–11500`) |
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
+| `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for an `on_demand` instance to become healthy after wake |
+| `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
+| `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Background watcher stops idle `on_demand` instances |
+| `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | How often idle candidates are evaluated |
 
 ### 5. Download and launch a model
 
@@ -435,6 +439,8 @@ mlx-server/
 | `./venv/` | Python virtual environment |
 
 Port range for inference instances defaults to **11400–11500**. The orchestrator UI runs on **8000** by default. The Nadir Gateway runs on **11380** (`NADIR_GATEWAY_PORT`).
+
+Instance form fields, lifecycle (`ops`), and **Advanced (JSON)** keys per launch mode: **[docs/usage/server-config-reference.md](docs/usage/server-config-reference.md)**.
 
 ---
 
