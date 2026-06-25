@@ -1,6 +1,6 @@
 {% extends 'orchestrator/base.html' %}
 
-{% block title %}Sign in — Nadir{% endblock %}
+{% block title %}Sign in — Nadir MLX{% endblock %}
 
 {% block content %}
 <div class="min-h-[70vh] flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
@@ -9,13 +9,10 @@
         <div class="absolute -top-10 -left-10 w-40 h-40 bg-indigo-600/10 rounded-full blur-3xl"></div>
         <div class="absolute -bottom-10 -right-10 w-40 h-40 bg-purple-600/10 rounded-full blur-3xl"></div>
 
-        <div class="relative z-10 text-center">
-            <div class="mx-auto w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 mb-4">
-                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-                </svg>
+        <div class="relative z-10 flex flex-col items-center text-center">
+            <div class="mb-2">
+                {% include 'orchestrator/partials/brand_mark.html' %}
             </div>
-            <h2 class="text-3xl font-extrabold text-slate-900 tracking-tight">Nadir</h2>
             <p class="mt-2 text-sm text-slate-600">
                 Sign in to access the local MLX control plane.
             </p>

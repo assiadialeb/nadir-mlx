@@ -1,0 +1,14 @@
+{% load static %}
+<a href="{% url 'servers' %}" class="flex items-center space-x-2.5 group" title="Nadir MLX">
+    <img
+        src="{% static 'orchestrator/icons/nadir-mlx-logo.png' %}"
+        alt=""
+        class="w-9 h-9 rounded-xl object-contain shadow-md transition-shadow"
+        width="36"
+        height="36"
+        aria-hidden="true"
+    >
+    <span class="font-bold text-lg tracking-tight text-slate-900 group-hover:text-indigo-700 transition-colors">
+        Nadir <span class="text-indigo-600">MLX</span>
+    </span>
+</a>
