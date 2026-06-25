@@ -85,7 +85,13 @@
                 <div class="flex items-center space-x-4">
                     <div class="hidden sm:flex flex-col text-right">
                         <span class="text-xs text-slate-500">Signed in as</span>
+                        {% if user.is_staff %}
+                        <a href="{% url 'admin:index' %}" class="text-sm font-medium text-slate-700 hover:text-indigo-700 transition-colors" title="Django admin">
+                            {{ user.username }}
+                        </a>
+                        {% else %}
                         <span class="text-sm font-medium text-slate-700">{{ user.username }}</span>
+                        {% endif %}
                     </div>
                     <a href="{% url 'logout' %}" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 transition-all">
                         Sign out
