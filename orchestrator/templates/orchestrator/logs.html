@@ -18,12 +18,16 @@
         </div>
         <div class="flex items-center space-x-3">
             <span class="inline-flex items-center px-2 py-1 rounded text-xxs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200" id="status-tag">
-                Auto-refresh: On (2s)
+                Auto-refresh: On (10s)
             </span>
             <button onclick="fetchLogs()" 
-                class="p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 hover:text-indigo-700 transition-all shadow-sm active:scale-95" 
-                title="Refresh manually">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.2M4 9h5v5"></path></svg>
+                class="p-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-slate-600 hover:text-indigo-700 transition-all shadow-sm active:scale-95" 
+                title="Refresh manually"
+                type="button"
+                aria-label="Refresh logs">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
             </button>
         </div>
     </div>
@@ -43,6 +47,8 @@
 
 <script>
     const terminal = document.getElementById('log-terminal');
+    const LOG_REFRESH_INTERVAL_MS = 10000;
+    const LOG_REFRESH_LABEL = `Auto-refresh: On (${LOG_REFRESH_INTERVAL_MS / 1000}s)`;
     
     // Auto-scroll to bottom of the terminal on load
     function scrollToBottom() {
@@ -81,7 +87,7 @@
             // Reset status tag
             statusTag.classList.remove('text-amber-700', 'border-amber-200', 'bg-amber-50');
             statusTag.classList.add('text-indigo-700', 'border-indigo-200', 'bg-indigo-50');
-            statusTag.innerText = "Auto-refresh: On (2s)";
+            statusTag.innerText = LOG_REFRESH_LABEL;
         })
         .catch(err => {
             console.error("Failed to fetch logs:", err);
@@ -91,7 +97,6 @@
         });
     }
 
-    // Poll every 2 seconds
-    setInterval(fetchLogs, 2000);
+    setInterval(fetchLogs, LOG_REFRESH_INTERVAL_MS);
 </script>
 {% endblock %}
