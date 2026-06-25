@@ -114,41 +114,68 @@ class BenchmarkResult:
 
     @property
     def successes(self):
-        """取得所有成功的請求結果"""
-        return [r for r in self.results if r.success]
+        """Return requests that completed with measurable output tokens."""
+        return [
+            r for r in self.results
+            if r.success and r.completion_tokens > 0
+        ]
 
-    def summary(self) -> dict:
-        """彙整統計數據：延遲百分位數、吞吐量等"""
+    def summary(self, wall_sec: float | None = None) -> dict:
+        """Aggregate latency and throughput for a scenario."""
         ok = self.successes
+        failed = self.num_requests - len(ok)
         if not ok:
-            return {"error": "all requests failed"}
-        total_ms_list = [r.total_ms for r in ok]
-        tps_list      = [r.tokens_per_sec for r in ok]
-        ttft_list     = [r.ttft_ms for r in ok if r.ttft_ms > 0]
+            return {
+                "error": "all requests failed",
+                "failed_requests": failed,
+            }
 
-        # 以最慢請求的完成時間作為牆鐘時間估算（近似值）
-        elapsed_wall = max(r.total_ms for r in ok) / 1000
+        total_ms_list = [r.total_ms for r in ok]
+        tps_list = [r.tokens_per_sec for r in ok if r.tokens_per_sec > 0]
+        ttft_list = [r.ttft_ms for r in ok if r.ttft_ms > 0]
         total_tokens = sum(r.completion_tokens for r in ok)
 
+        if wall_sec and wall_sec > 0:
+            elapsed_wall = wall_sec
+        else:
+            elapsed_wall = max(r.total_ms for r in ok) / 1000
+
+        sorted_ms = sorted(total_ms_list)
+        p95_index = min(len(sorted_ms) - 1, int(len(sorted_ms) * 0.95))
+        p99_index = min(len(sorted_ms) - 1, int(len(sorted_ms) * 0.99))
+
         return {
-            "scenario":           self.scenario,
-            "concurrency":        self.concurrency,
-            "num_requests":       self.num_requests,
-            "prompt_category":    self.prompt_category,
-            "success_rate":       f"{len(ok)}/{self.num_requests}",
-            "latency_p50_ms":     round(statistics.median(total_ms_list), 1),   # 中位數延遲
-            "latency_p95_ms":     round(sorted(total_ms_list)[int(len(total_ms_list) * 0.95)], 1),  # P95 延遲
-            "latency_p99_ms":     round(sorted(total_ms_list)[int(len(total_ms_list) * 0.99)], 1),  # P99 延遲
-            "ttft_p50_ms":        round(statistics.median(ttft_list), 1) if ttft_list else "N/A",   # 首個 token 中位數時間
-            "tps_per_req_median": round(statistics.median(tps_list), 1),        # 單一請求中位數 tok/s
-            "total_tokens_out":   total_tokens,                                  # 總輸出 token 數
-            "aggregate_tps":      round(total_tokens / elapsed_wall, 1) if elapsed_wall > 0 else 0,  # 總吞吐量 tok/s
+            "scenario": self.scenario,
+            "concurrency": self.concurrency,
+            "num_requests": self.num_requests,
+            "prompt_category": self.prompt_category,
+            "success_rate": f"{len(ok)}/{self.num_requests}",
+            "failed_requests": failed,
+            "latency_p50_ms": round(statistics.median(total_ms_list), 1),
+            "latency_p95_ms": round(sorted_ms[p95_index], 1),
+            "latency_p99_ms": round(sorted_ms[p99_index], 1),
+            "ttft_p50_ms": round(statistics.median(ttft_list), 1) if ttft_list else "N/A",
+            "tps_per_req_median": round(statistics.median(tps_list), 1) if tps_list else 0.0,
+            "total_tokens_out": total_tokens,
+            "aggregate_tps": round(total_tokens / elapsed_wall, 1) if elapsed_wall > 0 else 0,
         }
 
 
 # ---------------------------------------------------------------------------
 # 核心基準測試邏輯
 # ---------------------------------------------------------------------------
+def _delta_text(delta: object) -> str:
+    """Collect visible streamed text (content + reasoning fields)."""
+    if not isinstance(delta, dict):
+        return ""
+    parts: list[str] = []
+    for key in ("content", "reasoning", "reasoning_content"):
+        piece = delta.get(key)
+        if isinstance(piece, str) and piece:
+            parts.append(piece)
+    return "".join(parts)
+
+
 async def _stream_chat_completion(
     client: httpx.AsyncClient,
     base_url: str,
@@ -158,27 +185,27 @@ async def _stream_chat_completion(
     prompt_tokens = 0
     completion_tokens = 0
     ttft_ms = 0.0
+    saw_output = False
     async with client.stream(
         "POST", f"{base_url}/v1/chat/completions",
         json=payload, timeout=120,
     ) as resp:
         resp.raise_for_status()
-        first_chunk = True
         async for line in resp.aiter_lines():
             if not line.startswith("data: ") or line == "data: [DONE]":
                 continue
-            if first_chunk:
-                ttft_ms = (time.perf_counter() - t0) * 1000
-                first_chunk = False
             chunk = json.loads(line[6:])
             if chunk.get("choices"):
-                delta = chunk["choices"][0]["delta"].get("content", "")
-                if delta:
-                    completion_tokens += 1
+                delta = chunk["choices"][0].get("delta") or {}
+                text = _delta_text(delta)
+                if text:
+                    if not saw_output:
+                        ttft_ms = (time.perf_counter() - t0) * 1000
+                        saw_output = True
             usage = chunk.get("usage") or {}
-            if usage.get("completion_tokens"):
-                prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
-                completion_tokens = usage["completion_tokens"]
+            if usage.get("completion_tokens") is not None:
+                prompt_tokens = int(usage.get("prompt_tokens", prompt_tokens) or 0)
+                completion_tokens = int(usage["completion_tokens"])
     return prompt_tokens, completion_tokens, ttft_ms
 
 
@@ -216,7 +243,9 @@ async def single_request(
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": stream,
-        # include_usage=True：要求 Ollama/MLX-LM 在串流結束時回傳正確的 token 計數
+        # Disable thinking for reproducible throughput on mlx_vlm / Qwen templates.
+        "chat_template_kwargs": {"enable_thinking": False},
+        # include_usage=True：要求伺服器在串流結束時回傳 token 計數
         "stream_options": {"include_usage": True} if stream else None,
     }
 
@@ -234,6 +263,15 @@ async def single_request(
             )
 
         total_ms = (time.perf_counter() - t0) * 1000
+        if completion_tokens <= 0:
+            return RequestResult(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,
+                ttft_ms=ttft_ms,
+                total_ms=total_ms,
+                success=False,
+                error="No completion tokens reported by the server.",
+            )
         return RequestResult(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -428,8 +466,8 @@ async def main():
                 prompt_category=category,
                 results=results,
             )
-            summ = br.summary()
-            summ["wall_sec"] = round(wall_sec, 2)  # 實際牆鐘時間（秒）
+            summ = br.summary(wall_sec=wall_sec)
+            summ["wall_sec"] = round(wall_sec, 2)
             all_summaries.append(summ)
 
             ok = len(br.successes)
