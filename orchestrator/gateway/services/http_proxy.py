@@ -13,6 +13,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from orchestrator.gateway.router import GatewayRouteError, GatewayTarget
+from orchestrator.gateway.upstream_concurrency import (
+    MSG_QUEUE_TIMEOUT,
+    UpstreamQueueTimeoutError,
+    upstream_concurrency_slot,
+)
 
 CONTENT_TYPE_JSON = "application/json"
 MSG_UPSTREAM_TIMEOUT = "Upstream request timed out."
@@ -139,11 +144,24 @@ def read_upstream_error(response: httpx.Response) -> JSONResponse:
 
 
 async def proxy_binary_post(
+    target: GatewayTarget,
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],
 ) -> Response:
     """Forward a JSON POST and stream the upstream binary body without buffering."""
+    try:
+        async with upstream_concurrency_slot(target):
+            return await _proxy_binary_post_impl(url, body, headers)
+    except UpstreamQueueTimeoutError as exc:
+        return gateway_error(503, "upstream_queue_timeout", exc.message)
+
+
+async def _proxy_binary_post_impl(
+    url: str,
+    body: dict[str, Any],
+    headers: dict[str, str],
+) -> Response:
     client = httpx.AsyncClient(timeout=httpx_client_timeout())
     try:
         async with asyncio.timeout(proxy_timeout_seconds()):
@@ -192,6 +210,19 @@ async def proxy_binary_post(
 
 
 async def proxy_json_post(
+    target: GatewayTarget,
+    url: str,
+    body: dict[str, Any],
+    headers: dict[str, str],
+) -> Response:
+    try:
+        async with upstream_concurrency_slot(target):
+            return await _proxy_json_post_impl(url, body, headers)
+    except UpstreamQueueTimeoutError as exc:
+        return gateway_error(503, "upstream_queue_timeout", exc.message)
+
+
+async def _proxy_json_post_impl(
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],
@@ -224,6 +255,20 @@ async def proxy_json_post(
 
 
 async def stream_upstream_chunks(
+    target: GatewayTarget,
+    url: str,
+    body: dict[str, Any],
+    headers: dict[str, str],
+) -> AsyncIterator[bytes]:
+    try:
+        async with upstream_concurrency_slot(target):
+            async for chunk in _stream_upstream_chunks_impl(url, body, headers):
+                yield chunk
+    except UpstreamQueueTimeoutError:
+        yield _encode_sse_error(MSG_QUEUE_TIMEOUT)
+
+
+async def _stream_upstream_chunks_impl(
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],

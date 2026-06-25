@@ -67,6 +67,7 @@ class GatewayTarget:
     port: int
     upstream_model: str
     api_path: str
+    max_concurrent_upstream: int | None = None
 
     @property
     def base_url(self) -> str:

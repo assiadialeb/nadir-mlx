@@ -308,11 +308,16 @@ LiteLLM sits in front of several Mac Studios. Each Mac runs its own gateway on `
 | `NADIR_GATEWAY_HOST` | `127.0.0.1` | Gateway bind address |
 | `NADIR_GATEWAY_PORT` | `11380` | Must stay **outside** `11400–11500` |
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
+| `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` | `16` | Max parallel upstream requests per instance (`0` = unlimited) |
+| `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `300` | Max wait in gateway queue when all slots are busy |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
 | `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Stop idle `on_demand` instances in background |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | Idle watcher evaluation interval |
+
+!!! tip "Upstream concurrency queue"
+    When more clients hit the gateway than MLX can serve in parallel, excess requests **wait in a queue** (like Ollama) instead of failing immediately. Tune `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` for your hardware, or set **Max concurrent upstream requests** per instance in the server form. Use `0` globally or per instance to disable the cap (legacy pass-through).
 
 !!! tip "Route cache"
     The gateway caches alias → instance resolution and `GET /v1/models` in memory for `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` (default 20s). After starting or stopping an instance, new routes may take up to one TTL window to appear. Lower the TTL in dev if you need faster feedback.

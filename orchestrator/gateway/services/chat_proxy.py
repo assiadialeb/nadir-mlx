@@ -33,10 +33,10 @@ async def proxy_chat_completions(body: dict[str, Any], headers: Any) -> Response
 
     if body.get("stream"):
         return StreamingResponse(
-            stream_upstream_chunks(url, upstream_body, request_headers),
+            stream_upstream_chunks(target, url, upstream_body, request_headers),
             media_type="text/event-stream",
         )
-    return await proxy_json_post(url, upstream_body, request_headers)
+    return await proxy_json_post(target, url, upstream_body, request_headers)
 
 
 async def proxy_text_completions(body: dict[str, Any], headers: Any) -> Response:
@@ -49,7 +49,7 @@ async def proxy_text_completions(body: dict[str, Any], headers: Any) -> Response
 
     if body.get("stream"):
         return StreamingResponse(
-            stream_upstream_chunks(url, upstream_body, request_headers),
+            stream_upstream_chunks(target, url, upstream_body, request_headers),
             media_type="text/event-stream",
         )
-    return await proxy_json_post(url, upstream_body, request_headers)
+    return await proxy_json_post(target, url, upstream_body, request_headers)

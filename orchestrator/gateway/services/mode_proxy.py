@@ -38,6 +38,10 @@ from orchestrator.gateway.services.http_proxy import (
     upstream_url_for_path,
     validate_target_launch_mode,
 )
+from orchestrator.gateway.upstream_concurrency import (
+    UpstreamQueueTimeoutError,
+    upstream_concurrency_slot,
+)
 import httpx
 
 EMBEDDING_MODES = frozenset({"EMBEDDING"})
@@ -114,13 +118,16 @@ async def _proxy_multipart_request(
     timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, upstream_path)
     try:
-        async with asyncio.timeout(timeout):
-            async with httpx.AsyncClient(timeout=httpx_client_timeout()) as client:
-                response = await client.post(
-                    url,
-                    data=multipart_data,
-                    files=multipart_files or None,
-                )
+        async with upstream_concurrency_slot(target):
+            async with asyncio.timeout(timeout):
+                async with httpx.AsyncClient(timeout=httpx_client_timeout()) as client:
+                    response = await client.post(
+                        url,
+                        data=multipart_data,
+                        files=multipart_files or None,
+                    )
+    except UpstreamQueueTimeoutError as exc:
+        return gateway_error(503, "upstream_queue_timeout", exc.message)
     except (TimeoutError, httpx.TimeoutException):
         return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
     except httpx.HTTPError:
@@ -162,6 +169,7 @@ async def proxy_audio_speech(body: dict[str, Any], headers: Any) -> Response:
     request_headers = forward_request_headers(headers)
     url = upstream_url_for_path(target, AUDIO_SPEECH_PATH)
     return await proxy_binary_post(
+        target,
         url,
         prepare_upstream_body(body, target),
         request_headers,
@@ -194,4 +202,4 @@ async def _proxy_json_for_target(
 ) -> Response:
     request_headers = forward_request_headers(headers)
     url = upstream_url_for_path(target, upstream_path)
-    return await proxy_json_post(url, upstream_body, request_headers)
+    return await proxy_json_post(target, url, upstream_body, request_headers)

@@ -33,6 +33,15 @@ def _downstream_model(instance: InferenceInstance, alias: str) -> str:
     return str(config.get("model_id") or instance.model_name or alias)
 
 
+def _instance_max_concurrent_upstream(instance: InferenceInstance) -> int | None:
+    """Per-instance override; None inherits gateway default, 0 disables the cap."""
+    config = instance.server_config or {}
+    raw = config.get("max_concurrent_upstream")
+    if raw is None or raw == "":
+        return None
+    return int(raw)
+
+
 def _gateway_target_from_instance(instance: InferenceInstance) -> GatewayTarget:
     resolved_alias = instance_gateway_alias(instance)
     api_path = LAUNCH_MODE_API_PATH.get(instance.launch_mode)
@@ -50,6 +59,7 @@ def _gateway_target_from_instance(instance: InferenceInstance) -> GatewayTarget:
         port=instance.port,
         upstream_model=_downstream_model(instance, resolved_alias),
         api_path=api_path,
+        max_concurrent_upstream=_instance_max_concurrent_upstream(instance),
     )
 
 

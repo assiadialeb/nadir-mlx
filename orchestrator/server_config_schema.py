@@ -88,6 +88,19 @@ MODE_FIELDS: tuple[ConfigFieldSpec, ...] = (
         help_text="Default cap when the client omits max_tokens.",
     ),
     ConfigFieldSpec(
+        name="max_concurrent_upstream",
+        label="Max concurrent upstream requests",
+        widget="number",
+        modes=("TEXT", "MULTIMODAL"),
+        placeholder="Gateway default",
+        min_value=0,
+        max_value=512,
+        help_text=(
+            "Queue excess gateway requests instead of overloading MLX. "
+            "0 = unlimited for this instance. Empty = use NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM."
+        ),
+    ),
+    ConfigFieldSpec(
         name="max_kv_size",
         label="Max KV cache size",
         widget="number",
