@@ -7,10 +7,26 @@ from unittest.mock import MagicMock, patch
 from django.test import TestCase, override_settings
 
 from orchestrator.benchmark_service import (
+    BENCHMARK_MAX_REQUESTS_PER_SCENARIO,
     _resolve_target,
+    parse_benchmark_form,
     resolve_benchmark_model_id,
 )
 from orchestrator.models import InferenceInstance
+
+
+class ParseBenchmarkFormTests(TestCase):
+    def test_num_requests_rejects_values_above_cap(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_benchmark_form(
+                {
+                    "target_type": "INSTANCE",
+                    "instance_id": "1",
+                    "num_requests": str(BENCHMARK_MAX_REQUESTS_PER_SCENARIO + 1),
+                    "concurrency": "1",
+                    "categories": ["medium"],
+                }
+            )
 
 
 class ResolveBenchmarkModelIdTests(TestCase):

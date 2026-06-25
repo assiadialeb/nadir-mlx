@@ -25,6 +25,7 @@ from .security_utils import (
 
 LLMBENCH_SCRIPT = Path(__file__).resolve().parent / "vendor" / "llmbench.py"
 BENCHMARK_TIMEOUT_SECONDS = 3600
+BENCHMARK_MAX_REQUESTS_PER_SCENARIO = 500
 
 
 def _benchmark_output_path(run_id: int) -> Path:
@@ -291,6 +292,10 @@ def parse_benchmark_form(data: dict[str, str]) -> dict[str, Any]:
     num_requests = int(data.get("num_requests", "5"))
     if num_requests < 1:
         raise ValueError("Number of requests must be at least 1.")
+    if num_requests > BENCHMARK_MAX_REQUESTS_PER_SCENARIO:
+        raise ValueError(
+            f"Number of requests cannot exceed {BENCHMARK_MAX_REQUESTS_PER_SCENARIO} per scenario."
+        )
 
     return {
         "target_type": target_type,

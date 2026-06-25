@@ -43,7 +43,12 @@ from .ui_selectors import (
     models_by_server_type_json,
     SORT_OPTIONS,
 )
-from .benchmark_service import parse_benchmark_form, start_benchmark, delete_benchmark_run
+from .benchmark_service import (
+    BENCHMARK_MAX_REQUESTS_PER_SCENARIO,
+    parse_benchmark_form,
+    start_benchmark,
+    delete_benchmark_run,
+)
 from .benchmark_selectors import (
     benchmark_endpoint_kind,
     benchmark_run_label,
@@ -441,6 +446,7 @@ def benchmark_view(request):
         "runs": runs,
         "selected_instance_id": selected_instance_id,
         "gateway_port": settings.NADIR_GATEWAY_PORT,
+        "max_requests_per_scenario": BENCHMARK_MAX_REQUESTS_PER_SCENARIO,
     })
 
 
