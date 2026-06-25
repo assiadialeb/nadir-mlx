@@ -21,7 +21,7 @@ charset-normalizer==3.4.7
 click==8.4.1
 datasets==5.0.0
 dill==0.4.1
-Django==5.2.15
+psycopg[binary]==3.3.3
 einops==0.8.2
 fastapi==0.138.0
 filelock==3.29.4

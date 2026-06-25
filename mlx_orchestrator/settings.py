@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 import os
 
+from mlx_orchestrator.database import build_database_config
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -27,6 +29,27 @@ def _load_dotenv_file() -> None:
 
 
 _load_dotenv_file()
+
+
+def _env_csv(name: str) -> list[str]:
+    raw = os.environ.get(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _build_csrf_trusted_origins(allowed_hosts: list[str]) -> list[str]:
+    """Build CSRF origins for DEBUG=False (required since Django 4.0)."""
+    explicit = _env_csv("DJANGO_CSRF_TRUSTED_ORIGINS")
+    if explicit:
+        return explicit
+
+    http_port = os.environ.get("DJANGO_HTTP_PORT", "8000")
+    origins: list[str] = []
+    for host in allowed_hosts:
+        if not host or host == "*" or host.startswith("."):
+            continue
+        origins.append(f"http://{host}:{http_port}")
+        origins.append(f"https://{host}:{http_port}")
+    return origins
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -56,8 +79,9 @@ elif DEBUG:
 else:
     ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
+CSRF_TRUSTED_ORIGINS = _build_csrf_trusted_origins(ALLOWED_HOSTS)
 
-# Application definition
+
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -102,12 +126,7 @@ WSGI_APPLICATION = 'mlx_orchestrator.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
+DATABASES = build_database_config(BASE_DIR)
 
 
 # Password validation
