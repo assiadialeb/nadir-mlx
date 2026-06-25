@@ -173,6 +173,13 @@ def _parse_concurrency(raw_value: str) -> list[int]:
     return levels
 
 
+def _default_model_id_for_instance(instance: InferenceInstance) -> str:
+    """Return the chat model id for a local mlx_lm / mlx_vlm instance."""
+    if instance.launch_mode == "EMBEDDING":
+        return instance.model_name
+    return "default_model"
+
+
 def resolve_benchmark_model_id(
     host: str,
     port: int,
@@ -181,13 +188,17 @@ def resolve_benchmark_model_id(
 ) -> str:
     """Resolve the model ID passed to llmbench.
 
-    mlx_lm text servers often return an empty /v1/models list for local
-    ./models folders (outside the HF cache). Those servers still accept
-    ``default_model`` for the preloaded weights.
+    Local mlx_lm / mlx_vlm instances preload one checkpoint and accept
+    ``default_model`` for chat. Their ``/v1/models`` response is unreliable
+    (empty for some mlx_lm folders; unrelated embedding ids for some mlx_vlm
+    builds). Prefer ``default_model`` for INSTANCE targets before probing the API.
     """
     cleaned = user_model_id.strip()
     if cleaned:
         return cleaned
+
+    if instance is not None and instance.launch_mode in ("TEXT", "MULTIMODAL"):
+        return _default_model_id_for_instance(instance)
 
     safe_host = validate_outbound_http_host(host)
     base_url = f"http://{safe_host}:{port}"
@@ -201,11 +212,7 @@ def resolve_benchmark_model_id(
         pass
 
     if instance is not None:
-        if instance.launch_mode == "TEXT":
-            return "default_model"
-        if instance.launch_mode == "EMBEDDING":
-            return instance.model_name
-        return instance.model_name
+        return _default_model_id_for_instance(instance)
 
     raise ValueError(
         "Could not auto-detect model ID from /v1/models. "
