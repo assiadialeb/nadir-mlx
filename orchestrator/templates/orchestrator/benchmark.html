@@ -11,7 +11,7 @@
         </p>
         <div class="flex flex-wrap gap-3 mt-3">
             <a href="{% url 'benchmark_history' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Full history & charts &rarr;</a>
-            <a href="{% url 'benchmark_compare' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">MLX vs external compare &rarr;</a>
+            <a href="{% url 'benchmark_compare' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Compare runs &rarr;</a>
         </div>
     </div>
 
@@ -30,7 +30,7 @@
                     <button type="button" onclick="applyPreset('standard')"
                         class="text-left px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 transition-all">
                         <span class="block text-sm font-semibold text-indigo-900">Standard (recommended)</span>
-                        <span class="block field-hint mt-0.5">~5 min · medium · conc 1,4 · 20 req</span>
+                        <span class="block field-hint mt-0.5">~5 min · MLX via gateway · conc 1,4 · 20 req</span>
                     </button>
                     <button type="button" onclick="applyPreset('full')"
                         class="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 transition-all">
@@ -66,8 +66,8 @@
                             </label>
                         </div>
                         <div class="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600 leading-relaxed">
-                            <strong class="text-slate-700">MLX instance</strong> — benchmarks a server already launched from the Servers page (mlx_lm or mlx_vlm).<br>
-                            <strong class="text-slate-700">Custom endpoint</strong> — compare against Ollama (<code class="text-slate-800">:11434</code>), LM Studio, vLLM, or any OpenAI-compatible API.
+                            <strong class="text-slate-700">MLX instance</strong> — benchmarks via the Nadir gateway (<code class="text-slate-800">:{{ gateway_port }}</code>) using the instance gateway alias. Compare these runs against Ollama or other external APIs.<br>
+                            <strong class="text-slate-700">Custom endpoint</strong> — any other OpenAI-compatible API (Ollama <code class="text-slate-800">:11434</code>, LM Studio, vLLM, etc.).
                         </div>
                     </div>
 
@@ -107,10 +107,9 @@
                         <label for="field-model-id" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Model ID (optional)</label>
                         <input type="text" name="model_id" id="field-model-id"
                             class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            placeholder="Auto-resolved for MLX instances">
+                            placeholder="Auto-resolved (gateway alias for MLX instances)">
                         <div class="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600 leading-relaxed">
-                            Model name sent in API requests. Leave empty to auto-detect via <code class="text-slate-800">/v1/models</code>, or use
-                            <code class="text-slate-800">default_model</code> for mlx_lm text servers.
+                            Model name sent in API requests. MLX instances use their gateway alias automatically.
                             For Ollama, set the tag explicitly (e.g. <code class="text-slate-800">llama3.2</code>, <code class="text-slate-800">gemma3:4b</code>).
                         </div>
                     </div>

@@ -6,6 +6,7 @@ from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
+from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.utils.http import url_has_allowed_host_and_scheme
 from .models import InferenceInstance, BenchmarkRun, ModelDownload
@@ -44,10 +45,13 @@ from .ui_selectors import (
 )
 from .benchmark_service import parse_benchmark_form, start_benchmark, delete_benchmark_run
 from .benchmark_selectors import (
+    benchmark_endpoint_kind,
+    benchmark_run_label,
     benchmark_run_list_row,
     build_benchmark_history_query,
     build_comparison_snapshot,
     chart_series_for_runs,
+    comparison_pair_label,
     comparison_rows,
     filter_benchmark_runs,
     find_comparison_candidates,
@@ -56,6 +60,7 @@ from .benchmark_selectors import (
     paginate_benchmark_runs,
     parse_benchmark_history_query,
     runs_for_chart_filters,
+    benchmark_history_model_query,
 )
 
 _startup_reconciled = False
@@ -435,6 +440,7 @@ def benchmark_view(request):
         "running_instances": instances,
         "runs": runs,
         "selected_instance_id": selected_instance_id,
+        "gateway_port": settings.NADIR_GATEWAY_PORT,
     })
 
 
@@ -471,6 +477,7 @@ def benchmark_detail_view(request, run_id: int):
     run = get_object_or_404(BenchmarkRun, id=run_id)
     return render(request, "orchestrator/benchmark_detail.html", {
         "run": run,
+        "history_model_query": benchmark_history_model_query(run),
     })
 
 
@@ -546,7 +553,12 @@ def benchmark_compare_view(request):
     filters = parse_benchmark_history_query(request.GET)
     preset_key = filters.get("preset_key") or None
     completed = BenchmarkRun.objects.filter(status="COMPLETED").select_related("instance")
-    suggested_pairs = find_comparison_candidates(completed, preset_key=preset_key)
+    gateway_port = settings.NADIR_GATEWAY_PORT
+    suggested_pairs = find_comparison_candidates(
+        completed,
+        preset_key=preset_key,
+        gateway_port=gateway_port,
+    )
 
     run_a_id = str(request.GET.get("run_a") or "").strip()
     run_b_id = str(request.GET.get("run_b") or "").strip()
@@ -558,16 +570,24 @@ def benchmark_compare_view(request):
         run_a = get_object_or_404(BenchmarkRun, id=int(run_a_id), status="COMPLETED")
         run_b = get_object_or_404(BenchmarkRun, id=int(run_b_id), status="COMPLETED")
         rows = comparison_rows(run_a, run_b)
-        chart_overlay_json = json.dumps(_comparison_chart_payload(run_a, run_b))
+        chart_overlay_json = json.dumps(_comparison_chart_payload(run_a, run_b, gateway_port))
 
-    mlx_runs = list(completed.filter(target_type="INSTANCE").order_by("-completed_at")[:50])
-    external_runs = list(completed.filter(target_type="ENDPOINT").order_by("-completed_at")[:50])
+    completed_runs = list(completed.order_by("-completed_at")[:100])
+    completed_run_options = [
+        {"id": run.id, "label": benchmark_run_label(run, gateway_port)}
+        for run in completed_runs
+    ]
+    suggested_pair_labels = [
+        (run_a, run_b, comparison_pair_label(run_a, run_b, gateway_port))
+        for run_a, run_b in suggested_pairs
+    ]
 
     return render(request, "orchestrator/benchmark_compare.html", {
         "filters": filters,
-        "suggested_pairs": suggested_pairs,
-        "mlx_runs": mlx_runs,
-        "external_runs": external_runs,
+        "suggested_pairs": suggested_pair_labels,
+        "completed_runs": completed_runs,
+        "completed_run_options": completed_run_options,
+        "gateway_port": gateway_port,
         "run_a": run_a,
         "run_b": run_b,
         "comparison_rows": rows,
@@ -597,7 +617,11 @@ def benchmark_compare_export_view(request):
     return response
 
 
-def _comparison_chart_payload(run_a: BenchmarkRun, run_b: BenchmarkRun) -> dict:
+def _comparison_chart_payload(
+    run_a: BenchmarkRun,
+    run_b: BenchmarkRun,
+    gateway_port: int,
+) -> dict:
     """Build grouped bar chart data for two benchmark runs."""
     rows = comparison_rows(run_a, run_b)
     labels = [row["scenario"] for row in rows]
@@ -615,8 +639,8 @@ def _comparison_chart_payload(run_a: BenchmarkRun, run_b: BenchmarkRun) -> dict:
 
     return {
         "labels": labels,
-        "left_label": _run_chart_label(run_a),
-        "right_label": _run_chart_label(run_b),
+        "left_label": _run_chart_label(run_a, gateway_port),
+        "right_label": _run_chart_label(run_b, gateway_port),
         "ttft_p50_ms": {
             "left": [metric(row["left"], "ttft_p50_ms") for row in rows],
             "right": [metric(row["right"], "ttft_p50_ms") for row in rows],
@@ -628,6 +652,7 @@ def _comparison_chart_payload(run_a: BenchmarkRun, run_b: BenchmarkRun) -> dict:
     }
 
 
-def _run_chart_label(run: BenchmarkRun) -> str:
+def _run_chart_label(run: BenchmarkRun, gateway_port: int) -> str:
     model = run.instance.model_name if run.instance_id else (run.model_id or "endpoint")
-    return f"#{run.id} {run.target_type} · {model}"
+    kind = benchmark_endpoint_kind(run, gateway_port)
+    return f"#{run.id} {kind} · {model}"

@@ -13,9 +13,9 @@
                 Filter past runs by model, instance, launch mode, or preset. Charts show metric evolution when enough completed runs match.
             </p>
         </div>
-        <a href="{% url 'benchmark_compare' %}{% if history_query %}?{{ history_query }}{% endif %}"
+            <a href="{% url 'benchmark_compare' %}{% if history_query %}?{{ history_query }}{% endif %}"
             class="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold bg-white border border-slate-200 text-slate-700 hover:border-indigo-200 hover:text-indigo-700 transition-all">
-            MLX vs external compare &rarr;
+            Compare runs &rarr;
         </a>
     </div>
 

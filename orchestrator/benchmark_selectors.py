@@ -301,30 +301,86 @@ def _run_snapshot(run: BenchmarkRun) -> dict[str, Any]:
     }
 
 
+def benchmark_run_model_key(run: BenchmarkRun) -> str:
+    """Normalized model identity for grouping runs (instance folder or API model id)."""
+    if run.instance_id and run.instance:
+        return run.instance.model_name.strip().lower()
+    return (run.model_id or "").strip().lower()
+
+
+def benchmark_endpoint_kind(run: BenchmarkRun, gateway_port: int) -> str:
+    """Short target label for compare UI."""
+    if run.target_type == "INSTANCE":
+        return "nadir"
+    url = (run.endpoint_url or "").lower()
+    if f":{gateway_port}" in url:
+        return "gateway"
+    return "external"
+
+
+def benchmark_run_label(run: BenchmarkRun, gateway_port: int = 11380) -> str:
+    """Human-readable label for compare dropdowns."""
+    model = run.instance.model_name if run.instance_id else (run.model_id or "—")
+    kind = benchmark_endpoint_kind(run, gateway_port)
+    stamp = run.completed_at or run.created_at
+    time_str = stamp.strftime("%d/%m %H:%M") if stamp else ""
+    return f"#{run.id} · {model} · {kind} · {time_str}"
+
+
+def comparison_pair_label(
+    run_a: BenchmarkRun,
+    run_b: BenchmarkRun,
+    gateway_port: int = 11380,
+) -> str:
+    """Short label for a suggested comparison pair."""
+    kind_a = benchmark_endpoint_kind(run_a, gateway_port)
+    kind_b = benchmark_endpoint_kind(run_b, gateway_port)
+    return f"#{run_a.id} {kind_a} vs #{run_b.id} {kind_b}"
+
+
+def benchmark_history_model_query(run: BenchmarkRun) -> str:
+    """Model filter value for history charts linking from a run detail page."""
+    if run.instance_id and run.instance:
+        return run.instance.model_name
+    return run.model_id or ""
+
+
 def find_comparison_candidates(
     queryset: QuerySet[BenchmarkRun],
     *,
     preset_key: str | None = None,
+    gateway_port: int = 11380,
 ) -> list[tuple[BenchmarkRun, BenchmarkRun]]:
-    """Pair INSTANCE and ENDPOINT runs that share the same preset."""
+    """Pair completed runs that share preset + model but use different endpoints."""
     completed = list(
         queryset.filter(status="COMPLETED").select_related("instance").order_by("-completed_at")
     )
-    groups: dict[str, dict[str, list[BenchmarkRun]]] = {}
+    groups: dict[tuple[str, str], list[BenchmarkRun]] = {}
     for run in completed:
-        key = benchmark_preset_key(run.params)
-        if preset_key and key != preset_key:
+        preset = benchmark_preset_key(run.params)
+        if preset_key and preset != preset_key:
             continue
-        bucket = groups.setdefault(key, {"INSTANCE": [], "ENDPOINT": []})
-        bucket[run.target_type].append(run)
+        model_key = benchmark_run_model_key(run)
+        if not model_key:
+            continue
+        groups.setdefault((preset, model_key), []).append(run)
 
     pairs: list[tuple[BenchmarkRun, BenchmarkRun]] = []
-    for bucket in groups.values():
-        mlx_runs = bucket.get("INSTANCE") or []
-        external_runs = bucket.get("ENDPOINT") or []
-        for mlx_run in mlx_runs[:3]:
-            for external_run in external_runs[:3]:
-                pairs.append((mlx_run, external_run))
+    seen_ids: set[tuple[int, int]] = set()
+    for runs in groups.values():
+        if len(runs) < 2:
+            continue
+        for index, run_a in enumerate(runs):
+            for run_b in runs[index + 1 :]:
+                if run_a.endpoint_url == run_b.endpoint_url:
+                    continue
+                pair_ids = tuple(sorted((run_a.id, run_b.id)))
+                if pair_ids in seen_ids:
+                    continue
+                seen_ids.add(pair_ids)
+                pairs.append((run_a, run_b))
+                if len(pairs) >= 12:
+                    return pairs
     return pairs
 
 

@@ -14,6 +14,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
+from .gateway_aliases import instance_gateway_alias
 from .models import BenchmarkRun, InferenceInstance
 from .security_utils import (
     public_error_message,
@@ -137,6 +138,14 @@ def _benchmark_thread(run_id: int) -> None:
         _mark_failed(run, public_error_message(exc, fallback="Benchmark failed."))
 
 
+def _gateway_benchmark_endpoint() -> tuple[str, int]:
+    """Host/port for INSTANCE benchmarks (always via the Nadir gateway)."""
+    raw_host = str(settings.NADIR_GATEWAY_HOST or "127.0.0.1").strip()
+    connect_host = "127.0.0.1" if raw_host == "0.0.0.0" else raw_host
+    safe_host = validate_outbound_http_host(connect_host)
+    return safe_host, int(settings.NADIR_GATEWAY_PORT)
+
+
 def _resolve_target(
     target_type: str,
     instance_id: int | None,
@@ -151,7 +160,8 @@ def _resolve_target(
             raise ValueError("The selected instance must be RUNNING.")
         if instance.launch_mode not in ("TEXT", "MULTIMODAL"):
             raise ValueError("Benchmark is only available for TEXT or MULTIMODAL instances.")
-        return "localhost", instance.port, instance
+        gateway_host, gateway_port = _gateway_benchmark_endpoint()
+        return gateway_host, gateway_port, instance
 
     if not host or not host.strip():
         raise ValueError("Host is required for a custom endpoint.")
@@ -174,10 +184,8 @@ def _parse_concurrency(raw_value: str) -> list[int]:
 
 
 def _default_model_id_for_instance(instance: InferenceInstance) -> str:
-    """Return the chat model id for a local mlx_lm / mlx_vlm instance."""
-    if instance.launch_mode == "EMBEDDING":
-        return instance.model_name
-    return "default_model"
+    """Return the gateway alias used as the OpenAI model id for this instance."""
+    return instance_gateway_alias(instance)
 
 
 def resolve_benchmark_model_id(
@@ -188,10 +196,9 @@ def resolve_benchmark_model_id(
 ) -> str:
     """Resolve the model ID passed to llmbench.
 
-    Local mlx_lm / mlx_vlm instances preload one checkpoint and accept
-    ``default_model`` for chat. Their ``/v1/models`` response is unreliable
-    (empty for some mlx_lm folders; unrelated embedding ids for some mlx_vlm
-    builds). Prefer ``default_model`` for INSTANCE targets before probing the API.
+  INSTANCE targets are benchmarked through the Nadir gateway; use the gateway
+  alias (``server_config.model_id`` or folder name). ENDPOINT targets probe
+  ``/v1/models`` when no model id is provided.
     """
     cleaned = user_model_id.strip()
     if cleaned:

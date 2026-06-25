@@ -3,6 +3,8 @@
 from django.test import TestCase
 
 from orchestrator.benchmark_selectors import (
+    benchmark_endpoint_kind,
+    benchmark_history_model_query,
     benchmark_preset_key,
     benchmark_run_list_row,
     build_comparison_snapshot,
@@ -166,12 +168,58 @@ class BenchmarkSelectorsTests(TestCase):
         external_run = BenchmarkRun.objects.create(
             target_type="ENDPOINT",
             endpoint_url="http://127.0.0.1:11434/v1",
+            model_id="gemma-test",
             params=self.params,
             status="COMPLETED",
             results=_sample_results(),
         )
         pairs = find_comparison_candidates(BenchmarkRun.objects.all())
         self.assertEqual(pairs, [(mlx_run, external_run)])
+
+    def test_find_comparison_candidates_pairs_nadir_instance_and_external(self) -> None:
+        nadir_run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11380/v1",
+            model_id="gemma-test",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        external_run = BenchmarkRun.objects.create(
+            target_type="ENDPOINT",
+            endpoint_url="http://127.0.0.1:11434/v1",
+            model_id="gemma-test",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        pairs = find_comparison_candidates(BenchmarkRun.objects.all(), gateway_port=11380)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual({pairs[0][0].id, pairs[0][1].id}, {nadir_run.id, external_run.id})
+
+    def test_benchmark_history_model_query_uses_model_id_for_endpoint(self) -> None:
+        run = BenchmarkRun.objects.create(
+            target_type="ENDPOINT",
+            endpoint_url="http://127.0.0.1:11380/v1",
+            model_id="Qwen3.6-35B-A3B-4bit",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        self.assertEqual(benchmark_history_model_query(run), "Qwen3.6-35B-A3B-4bit")
+
+    def test_benchmark_endpoint_kind_labels_instance_as_nadir(self) -> None:
+        nadir_run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11380",
+            model_id="qwen",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        self.assertEqual(benchmark_endpoint_kind(nadir_run, 11380), "nadir")
 
     def test_build_comparison_snapshot_contains_both_runs(self) -> None:
         mlx_run = BenchmarkRun.objects.create(

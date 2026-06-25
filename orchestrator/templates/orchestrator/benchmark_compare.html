@@ -7,20 +7,20 @@
 <div class="space-y-8">
     <div>
         <a href="{% url 'benchmark_history' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">&larr; Back to history</a>
-        <h1 class="text-3xl font-bold tracking-tight text-slate-900 mt-2">MLX vs external compare</h1>
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900 mt-2">Compare benchmark runs</h1>
         <p class="text-sm text-slate-600 mt-1">
-            Compare two completed runs with the same llmbench preset — typically a local MLX instance against Ollama or another OpenAI-compatible endpoint.
+            Compare Nadir (MLX instance via gateway) against an external endpoint, or any two runs with the same preset.
         </p>
     </div>
 
     {% if suggested_pairs %}
     <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-        <h2 class="text-sm font-bold text-slate-900 mb-3">Suggested pairs (same preset)</h2>
+        <h2 class="text-sm font-bold text-slate-900 mb-3">Suggested pairs (same preset &amp; model)</h2>
         <div class="flex flex-wrap gap-2">
-            {% for mlx_run, external_run in suggested_pairs %}
-            <a href="{% url 'benchmark_compare' %}?run_a={{ mlx_run.id }}&run_b={{ external_run.id }}"
+            {% for run_a, run_b, pair_label in suggested_pairs %}
+            <a href="{% url 'benchmark_compare' %}?run_a={{ run_a.id }}&run_b={{ run_b.id }}"
                 class="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:border-indigo-200 hover:bg-indigo-50 text-slate-700">
-                #{{ mlx_run.id }} MLX vs #{{ external_run.id }} external
+                {{ pair_label }}
             </a>
             {% endfor %}
         </div>
@@ -30,25 +30,25 @@
     <form method="get" class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-                <label for="compare-run-a" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">MLX run (INSTANCE)</label>
+                <label for="compare-run-a" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Run A</label>
                 <select name="run_a" id="compare-run-a"
                     class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                    <option value="">— Select MLX run —</option>
-                    {% for run in mlx_runs %}
-                    <option value="{{ run.id }}" {% if run_a and run_a.id == run.id %}selected{% endif %}>
-                        #{{ run.id }} · {{ run.instance.model_name|default:run.model_id }} · {{ run.completed_at|date:"d/m H:i" }}
+                    <option value="">— Select run A —</option>
+                    {% for option in completed_run_options %}
+                    <option value="{{ option.id }}" {% if run_a and run_a.id == option.id %}selected{% endif %}>
+                        {{ option.label }}
                     </option>
                     {% endfor %}
                 </select>
             </div>
             <div>
-                <label for="compare-run-b" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">External run (ENDPOINT)</label>
+                <label for="compare-run-b" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Run B</label>
                 <select name="run_b" id="compare-run-b"
                     class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                    <option value="">— Select external run —</option>
-                    {% for run in external_runs %}
-                    <option value="{{ run.id }}" {% if run_b and run_b.id == run.id %}selected{% endif %}>
-                        #{{ run.id }} · {{ run.endpoint_url }} · {{ run.completed_at|date:"d/m H:i" }}
+                    <option value="">— Select run B —</option>
+                    {% for option in completed_run_options %}
+                    <option value="{{ option.id }}" {% if run_b and run_b.id == option.id %}selected{% endif %}>
+                        {{ option.label }}
                     </option>
                     {% endfor %}
                 </select>
@@ -63,9 +63,9 @@
     {% if run_a and run_b %}
     <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="text-sm text-slate-600">
-            <span class="font-semibold text-indigo-700">Left:</span> #{{ run_a.id }} {{ run_a.endpoint_url }}
+            <span class="font-semibold text-indigo-700">Run A:</span> #{{ run_a.id }} {{ run_a.endpoint_url }}
             <span class="mx-2 text-slate-300">|</span>
-            <span class="font-semibold text-amber-700">Right:</span> #{{ run_b.id }} {{ run_b.endpoint_url }}
+            <span class="font-semibold text-amber-700">Run B:</span> #{{ run_b.id }} {{ run_b.endpoint_url }}
         </div>
         <a href="{% url 'benchmark_compare_export' %}?run_a={{ run_a.id }}&run_b={{ run_b.id }}"
             class="inline-flex items-center px-3 py-2 rounded-lg text-xs font-semibold border border-slate-200 text-slate-700 hover:border-indigo-200 hover:text-indigo-700">
@@ -90,12 +90,12 @@
             <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
                 <tr>
                     <th class="py-2 pr-3">Scenario</th>
-                    <th class="py-2 pr-3 text-indigo-700">MLX TTFT</th>
-                    <th class="py-2 pr-3 text-amber-700">External TTFT</th>
-                    <th class="py-2 pr-3 text-indigo-700">MLX tok/s</th>
-                    <th class="py-2 pr-3 text-amber-700">External tok/s</th>
-                    <th class="py-2 pr-3">MLX p95</th>
-                    <th class="py-2">External p95</th>
+                    <th class="py-2 pr-3 text-indigo-700">Run A TTFT</th>
+                    <th class="py-2 pr-3 text-amber-700">Run B TTFT</th>
+                    <th class="py-2 pr-3 text-indigo-700">Run A tok/s</th>
+                    <th class="py-2 pr-3 text-amber-700">Run B tok/s</th>
+                    <th class="py-2 pr-3">Run A p95</th>
+                    <th class="py-2">Run B p95</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
@@ -121,11 +121,11 @@
             </tbody>
         </table>
     </div>
-    {% elif mlx_runs and external_runs %}
-    <p class="text-sm text-slate-500 text-center py-8">Select an MLX run and an external run above, or use a suggested pair.</p>
+    {% elif completed_run_options|length >= 2 %}
+    <p class="text-sm text-slate-500 text-center py-8">Select two completed runs above, or use a suggested pair.</p>
     {% else %}
     <p class="text-sm text-slate-500 text-center py-8">
-        Need at least one completed INSTANCE run and one completed ENDPOINT run. Run the same preset on MLX and on Ollama first.
+        Need at least two completed runs. Run the same preset twice (e.g. gateway vs direct, or gateway vs Ollama) to compare.
     </p>
     {% endif %}
 </div>
