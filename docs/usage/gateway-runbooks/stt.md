@@ -10,7 +10,7 @@ Validate `POST /v1/audio/transcriptions` and `POST /v1/audio/translations` (mult
 - **ffmpeg** on the host for M4A / FLAC / OGG / Opus / WebM uploads (`brew install ffmpeg`)
 
 !!! note "Restart gateway"
-    Multipart relay requires gateway code that detects Starlette `UploadFile` correctly. After updating mlx-server, run `python manage.py run_gateway` again.
+    Multipart relay requires gateway code that detects Starlette `UploadFile` correctly. After updating Nadir MLX, run `python manage.py run_gateway` again.
 
 ## 1. Discovery
 

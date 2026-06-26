@@ -7,7 +7,7 @@
 
 MLX-34 asked for OpenAI-compatible `POST /v1/images/edits` and `POST /v1/images/variations` in addition to `response_format: url` for generations.
 
-Local image inference uses **mflux** with **txt2img** profiles only (`orchestrator/image_model_loader.py`). There is no img2img / inpainting path wired for FLUX, Z-Image, or Klein in mlx-server today.
+Local image inference uses **mflux** with **txt2img** profiles only (`orchestrator/image_model_loader.py`). There is no img2img / inpainting path wired for FLUX, Z-Image, or Klein in Nadir MLX today.
 
 ## Decision
 

@@ -141,8 +141,8 @@ See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the contr
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/assiadialeb/mlx-server.git
-cd mlx-server
+git clone https://github.com/assiadialeb/nadir-mlx.git
+cd nadir-mlx
 
 python3 -m venv venv
 source venv/bin/activate
@@ -308,7 +308,7 @@ List installed Kokoro voices: `GET /v1/audio/voices`.
 
 ### Speech-to-text (STT mode)
 
-Recommended model: `mlx-community/whisper-large-v3-turbo-asr-fp16`. Legacy `whisper-*-mlx` checkpoints work after mlx-server bootstraps tokenizer/processor files from OpenAI.
+Recommended model: `mlx-community/whisper-large-v3-turbo-asr-fp16`. Legacy `whisper-*-mlx` checkpoints work after Nadir MLX bootstraps tokenizer/processor files from OpenAI.
 
 WAV and MP3 uploads are decoded in memory (no temp re-encode). For **M4A / WebM / AAC**, install **ffmpeg** on the host: `brew install ffmpeg`.
 
@@ -385,7 +385,7 @@ curl http://127.0.0.1:4000/v1/audio/speech \
 | API Key | any non-empty string (`sk-local`) |
 | Mode | **Audio Speech** (`audio_speech`) — not Chat |
 
-`voice: alloy` is fine: mlx-server maps OpenAI voices to Kokoro (`alloy` → `ff_siwis` in French).
+`voice: alloy` is fine: Nadir MLX maps OpenAI voices to Kokoro (`alloy` → `ff_siwis` in French).
 
 **Sanity check without proxy** (from the LiteLLM venv):
 
@@ -405,7 +405,7 @@ litellm.speech(
 ## Project structure
 
 ```
-mlx-server/
+nadir-mlx/
 ├── manage.py                 # Django entrypoint
 ├── mlx_orchestrator/         # Django project settings
 ├── orchestrator/             # Main application
@@ -549,7 +549,7 @@ See repository license file. Third-party components retain their own licenses (`
 
 ## Contributing
 
-Issues and pull requests are welcome on [GitHub](https://github.com/assiadialeb/mlx-server).
+Issues and pull requests are welcome on [GitHub](https://github.com/assiadialeb/nadir-mlx).
 
 ```bash
 # Run migrations after pulling
