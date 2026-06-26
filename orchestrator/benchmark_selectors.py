@@ -14,6 +14,7 @@ BENCHMARK_HISTORY_PER_PAGE = 25
 
 VALID_STATUSES = frozenset({"PENDING", "RUNNING", "COMPLETED", "FAILED"})
 VALID_TARGET_TYPES = frozenset({"INSTANCE", "ENDPOINT"})
+VALID_BENCHMARK_KINDS = frozenset({"PERF", "QUALITY", "COMPLETE"})
 VALID_LAUNCH_MODES = frozenset(
     {"TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"}
 )
@@ -55,6 +56,7 @@ def parse_benchmark_history_query(params: dict[str, Any]) -> dict[str, Any]:
     launch_mode = _parse_optional_enum(params.get("launch_mode"), VALID_LAUNCH_MODES)
     status = _parse_optional_enum(params.get("status"), VALID_STATUSES)
     target_type = _parse_optional_enum(params.get("target_type"), VALID_TARGET_TYPES)
+    benchmark_kind = _parse_optional_enum(params.get("benchmark_kind"), VALID_BENCHMARK_KINDS)
     instance_id = _parse_positive_int(params.get("instance_id"))
     scenario = str(params.get("scenario") or "medium_conc4").strip() or "medium_conc4"
     page = _parse_history_page(params.get("page"))
@@ -64,6 +66,7 @@ def parse_benchmark_history_query(params: dict[str, Any]) -> dict[str, Any]:
         "launch_mode": launch_mode,
         "status": status,
         "target_type": target_type,
+        "benchmark_kind": benchmark_kind,
         "instance_id": instance_id,
         "scenario": scenario,
         "preset_key": str(params.get("preset") or "").strip(),
@@ -93,6 +96,11 @@ def filter_benchmark_runs(filters: dict[str, Any]) -> QuerySet[BenchmarkRun]:
 
     if filters.get("target_type"):
         queryset = queryset.filter(target_type=filters["target_type"])
+
+    if filters.get("benchmark_kind"):
+        queryset = queryset.filter(benchmark_kind=filters["benchmark_kind"])
+
+    queryset = queryset.filter(parent_run__isnull=True)
 
     if filters.get("preset_key"):
         matching_ids = [
@@ -137,27 +145,48 @@ def summary_for_scenario(run: BenchmarkRun, scenario: str) -> dict[str, Any] | N
 def benchmark_run_list_row(run: BenchmarkRun, scenario: str = "medium_conc4") -> dict[str, Any]:
     """Serialize a run for the history table."""
     summary = summary_for_scenario(run, scenario)
+    quality = run.quality_metrics
+    headline_quality = _headline_quality_metric(quality)
     return {
         "id": run.id,
         "status": run.status,
+        "benchmark_kind": run.benchmark_kind,
         "target_type": run.target_type,
         "endpoint_url": run.endpoint_url,
         "model_name": run.instance.model_name if run.instance_id else run.model_id,
         "launch_mode": run.instance.launch_mode if run.instance_id else "",
         "preset_key": benchmark_preset_key(run.params),
-        "preset_label": format_preset_label(run.params),
+        "preset_label": format_preset_label(run.params, run.benchmark_kind),
         "created_at": run.created_at,
         "completed_at": run.completed_at,
         "ttft_p50_ms": summary.get("ttft_p50_ms") if summary else None,
         "latency_p50_ms": summary.get("latency_p50_ms") if summary else None,
         "latency_p95_ms": summary.get("latency_p95_ms") if summary else None,
         "aggregate_tps": summary.get("aggregate_tps") if summary else None,
+        "quality_headline": headline_quality,
         "scenario": summary.get("scenario") if summary else scenario,
     }
 
 
-def format_preset_label(params: dict[str, Any] | None) -> str:
+def _headline_quality_metric(metrics: dict[str, Any]) -> str | None:
+    if not metrics:
+        return None
+    for key in ("ifeval_strict_acc", "gsm8k_exact_match", "mmlu_acc", "text_platform_pass_rate"):
+        if metrics.get(key) is not None:
+            return f"{key.replace('_', ' ')}: {metrics[key]}%"
+    for key, value in metrics.items():
+        if value is not None:
+            return f"{key}: {value}%"
+    return None
+
+
+def format_preset_label(params: dict[str, Any] | None, benchmark_kind: str = "PERF") -> str:
     """Human-readable preset description."""
+    if benchmark_kind == "QUALITY":
+        preset = (params or {}).get("quality_preset", "industry_lite")
+        return f"Quality · {preset}"
+    if benchmark_kind == "COMPLETE":
+        return "Complete · perf → quality"
     raw = params or {}
     categories = ", ".join(raw.get("categories") or ["medium"])
     concurrency = ", ".join(str(level) for level in (raw.get("concurrency") or [1]))
@@ -171,7 +200,7 @@ def list_distinct_preset_keys(queryset: QuerySet[BenchmarkRun]) -> list[tuple[st
     for run in queryset.filter(status="COMPLETED"):
         key = benchmark_preset_key(run.params)
         if key not in seen:
-            seen[key] = format_preset_label(run.params)
+            seen[key] = format_preset_label(run.params, run.benchmark_kind)
     return sorted(seen.items(), key=lambda item: item[1])
 
 
@@ -183,6 +212,7 @@ def list_filter_options() -> dict[str, Any]:
         "launch_modes": sorted(VALID_LAUNCH_MODES),
         "statuses": sorted(VALID_STATUSES),
         "target_types": sorted(VALID_TARGET_TYPES),
+        "benchmark_kinds": sorted(VALID_BENCHMARK_KINDS),
     }
 
 
@@ -194,6 +224,7 @@ def build_benchmark_history_query(**kwargs: Any) -> str:
         "launch_mode": "launch_mode",
         "status": "status",
         "target_type": "target_type",
+        "benchmark_kind": "benchmark_kind",
         "instance_id": "instance_id",
         "scenario": "scenario",
         "preset_key": "preset",
@@ -279,7 +310,7 @@ def build_comparison_snapshot(run_a: BenchmarkRun, run_b: BenchmarkRun) -> dict[
     return {
         "generated_at": stamp.isoformat() if stamp else "",
         "preset_key": benchmark_preset_key(run_a.params),
-        "preset_label": format_preset_label(run_a.params),
+        "preset_label": format_preset_label(run_a.params, run_a.benchmark_kind),
         "scenario_alignment": comparison_rows(run_a, run_b),
         "runs": {
             "left": _run_snapshot(run_a),

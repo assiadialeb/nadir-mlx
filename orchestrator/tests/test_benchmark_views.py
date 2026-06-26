@@ -3,6 +3,7 @@
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
+from unittest.mock import patch
 
 from orchestrator.models import BenchmarkRun, InferenceInstance
 
@@ -68,6 +69,31 @@ class BenchmarkViewsTests(TestCase):
         response = self.client.get(reverse("benchmark"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'value="ENDPOINT"')
+
+    def test_benchmark_view_shows_benchmark_kind_selector(self) -> None:
+        response = self.client.get(reverse("benchmark"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="QUALITY"')
+        self.assertContains(response, 'value="COMPLETE"')
+
+    @patch("orchestrator.benchmark_service._start_benchmark_thread")
+    def test_start_benchmark_accepts_quality_kind(self, mock_thread: object) -> None:
+        response = self.client.post(
+            reverse("start_benchmark"),
+            {
+                "target_type": "INSTANCE",
+                "instance_id": str(self.instance.id),
+                "benchmark_kind": "QUALITY",
+                "quality_preset": "industry_lite",
+                "num_requests": "5",
+                "concurrency": "1",
+                "categories": "medium",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        run = BenchmarkRun.objects.get()
+        self.assertEqual(run.benchmark_kind, "QUALITY")
+        mock_thread.assert_called_once()
 
     @override_settings(DEBUG=False, NADIR_BENCHMARK_ENDPOINT_ENABLED=False)
     def test_start_benchmark_rejects_endpoint_post_in_production(self) -> None:

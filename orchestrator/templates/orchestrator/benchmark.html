@@ -54,6 +54,38 @@
                     {% csrf_token %}
 
                     <div>
+                        <p class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Benchmark type</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <label class="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50/40">
+                                <input type="radio" name="benchmark_kind" value="PERF" checked
+                                    class="text-indigo-600 focus:ring-indigo-500" onchange="toggleBenchmarkKindFields()">
+                                <span>Performance</span>
+                            </label>
+                            <label class="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer px-3 py-2 rounded-lg border border-slate-200">
+                                <input type="radio" name="benchmark_kind" value="QUALITY"
+                                    class="text-indigo-600 focus:ring-indigo-500" onchange="toggleBenchmarkKindFields()">
+                                <span>Quality</span>
+                            </label>
+                            <label class="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer px-3 py-2 rounded-lg border border-slate-200">
+                                <input type="radio" name="benchmark_kind" value="COMPLETE"
+                                    class="text-indigo-600 focus:ring-indigo-500" onchange="toggleBenchmarkKindFields()">
+                                <span>Complete</span>
+                            </label>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-2">
+                            <strong>Complete</strong> runs performance first, then quality (industry + platform) on the same instance.
+                        </p>
+                    </div>
+
+                    <div id="quality-preset-fields" class="hidden">
+                        <label for="field-quality-preset" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Quality preset</label>
+                        <select name="quality_preset" id="field-quality-preset"
+                            class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                            <option value="industry_lite" selected>industry_lite (IFEval, GSM8K ×100)</option>
+                        </select>
+                    </div>
+
+                    <div>
                         <p class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Target</p>
                         <div class="space-y-2">
                             <label class="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
@@ -124,7 +156,7 @@
                         </div>
                     </div>
 
-                    <fieldset>
+                    <fieldset id="perf-only-fields">
                         <legend class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Prompt categories</legend>
                         <div class="flex flex-wrap gap-3 text-sm" id="category-checkboxes">
                             <label class="flex items-center space-x-1.5">
@@ -150,7 +182,7 @@
                         </div>
                     </fieldset>
 
-                    <div class="grid grid-cols-2 gap-3">
+                    <div id="perf-only-grid" class="grid grid-cols-2 gap-3">
                         <div>
                             <label for="field-concurrency" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Concurrency</label>
                             <input type="text" name="concurrency" id="field-concurrency" value="1,4"
@@ -364,6 +396,14 @@ const PRESETS = {
     },
 };
 
+function toggleBenchmarkKindFields() {
+    const kind = document.querySelector('input[name="benchmark_kind"]:checked')?.value || 'PERF';
+    const isQualityOnly = kind === 'QUALITY';
+    document.getElementById('quality-preset-fields').classList.toggle('hidden', kind === 'PERF');
+    document.getElementById('perf-only-fields').classList.toggle('hidden', isQualityOnly);
+    document.getElementById('perf-only-grid').classList.toggle('hidden', isQualityOnly);
+}
+
 function toggleTargetFields() {
     const isInstance = document.querySelector('input[name="target_type"][value="INSTANCE"]').checked;
     document.getElementById('instance-fields').classList.toggle('hidden', !isInstance);
@@ -399,7 +439,10 @@ function applyPreset(name) {
     showPresetToast();
 }
 
-document.addEventListener('DOMContentLoaded', toggleTargetFields);
+document.addEventListener('DOMContentLoaded', () => {
+    toggleTargetFields();
+    toggleBenchmarkKindFields();
+});
 </script>
 {% include 'orchestrator/partials/benchmark_delete_modal.html' %}
 {% endblock %}

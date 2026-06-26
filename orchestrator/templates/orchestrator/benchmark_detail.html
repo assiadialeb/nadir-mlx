@@ -7,7 +7,10 @@
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <a href="{% url 'benchmark' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">&larr; Back to benchmarks</a>
-            <h1 class="text-2xl font-bold tracking-tight text-slate-900 mt-2">Benchmark #{{ run.id }}</h1>
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900 mt-2">
+                Benchmark #{{ run.id }}
+                <span class="ml-2 text-sm font-semibold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">{{ run.get_benchmark_kind_display }}</span>
+            </h1>
             <p class="text-sm text-slate-600 mt-1 font-mono">{{ run.endpoint_url }}</p>
             <div class="flex flex-wrap gap-3 mt-2">
                 {% if history_model_query %}
@@ -53,17 +56,70 @@
         <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
             <p class="text-xxs uppercase tracking-wider text-slate-500 font-semibold">Config</p>
             <p class="text-sm font-medium text-slate-900 mt-1">
+                {% if run.benchmark_kind == 'QUALITY' or run.benchmark_kind == 'COMPLETE' %}
+                preset={{ run.params.quality_preset|default:"industry_lite" }}
+                {% else %}
                 conc={{ run.params.concurrency|join:", " }} &bull; {{ run.params.num_requests }} req/scenario
+                {% endif %}
             </p>
         </div>
     </div>
 
-    <div id="error-panel" class="{% if not run.error_message %}hidden{% endif %} p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+    {% if run.benchmark_kind == 'COMPLETE' and run.child_runs.exists %}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {% if perf_child %}
+        <a href="{% url 'benchmark_detail' perf_child.id %}" class="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-200">
+            <p class="text-xxs uppercase tracking-wider text-slate-500 font-semibold">Phase 1 — Performance</p>
+            <p class="text-sm font-medium text-slate-900 mt-1">Run #{{ perf_child.id }} · {{ perf_child.status }}</p>
+        </a>
+        {% endif %}
+        {% if quality_child %}
+        <a href="{% url 'benchmark_detail' quality_child.id %}" class="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-200">
+            <p class="text-xxs uppercase tracking-wider text-slate-500 font-semibold">Phase 2 — Quality</p>
+            <p class="text-sm font-medium text-slate-900 mt-1">Run #{{ quality_child.id }} · {{ quality_child.status }}</p>
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if run.benchmark_kind == 'COMPLETE' and run.quality_metrics %}
+    <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+        <h2 class="text-lg font-bold text-slate-900 mb-4">Complete run summary</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+            {% if run.results.perf_summary.aggregate_tps %}
+            <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-100">
+                <p class="text-xxs uppercase text-emerald-800 font-semibold">Perf tok/s</p>
+                <p class="text-lg font-bold text-emerald-900">{{ run.results.perf_summary.aggregate_tps }}</p>
+            </div>
+            {% endif %}
+            {% for key, value in run.quality_metrics.items %}
+            <div class="p-3 rounded-lg bg-indigo-50 border border-indigo-100">
+                <p class="text-xxs uppercase text-indigo-800 font-semibold">{{ key }}</p>
+                <p class="text-lg font-bold text-indigo-900">{{ value }}%</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div id="error-panel" class="{% if run.status != 'FAILED' or not run.error_message %}hidden{% endif %} p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm">
         <strong>Error:</strong> <span id="error-text">{{ run.error_message }}</span>
     </div>
 
-    <div id="results-panel" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl {% if not run.summaries %}hidden{% endif %}">
-        <h2 class="text-lg font-bold text-slate-900 mb-4">Results</h2>
+  {% if run.benchmark_kind == 'QUALITY' or run.benchmark_kind == 'COMPLETE' %}
+    <div id="warnings-panel" class="{% if not run.quality_warnings %}hidden{% endif %} p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm">
+        <strong>Warning:</strong>
+        <ul id="warnings-list" class="mt-1 list-disc list-inside space-y-1">
+            {% for warning in run.quality_warnings %}
+            <li>{{ warning }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <div id="results-panel" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl {% if not run.summaries and not run.quality_metrics %}hidden{% endif %}">
+        {% if run.summaries %}
+        <h2 class="text-lg font-bold text-slate-900 mb-4">Performance results</h2>
         <div class="overflow-x-auto">
             <table class="w-full text-sm text-left" id="results-table">
                 <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
@@ -118,6 +174,55 @@
                 Scenario name format: <code class="text-slate-700">{category}_conc{N}</code> (e.g. <code class="text-slate-700">medium_conc4</code> = medium prompts, 4 parallel requests).
             </p>
         </details>
+        {% endif %}
+
+        {% if run.quality_metrics or run.benchmark_kind == 'QUALITY' %}
+        <h2 class="text-lg font-bold text-slate-900 mb-4 {% if run.summaries %}mt-8{% endif %}">Quality metrics</h2>
+        {% if run.quality_metrics %}
+        <div class="overflow-x-auto mb-4">
+            <table class="w-full text-sm text-left">
+                <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
+                    <tr>
+                        <th class="py-2 pr-3">Metric</th>
+                        <th class="py-2">Score</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for key, value in run.quality_metrics.items %}
+                    <tr>
+                        <td class="py-3 pr-3 font-mono text-xs">{{ key }}</td>
+                        <td class="py-3 font-semibold text-indigo-700">{{ value }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-sm text-slate-500">Quality metrics will appear when the run completes.</p>
+        {% endif %}
+
+        {% if run.results.platform.suites.text_platform %}
+        <details class="mt-4 group">
+            <summary class="text-xs font-semibold text-slate-500 cursor-pointer hover:text-indigo-600 select-none">
+                Platform suite — text_platform ({{ run.results.platform.suites.text_platform.passed }}/{{ run.results.platform.suites.text_platform.total }})
+            </summary>
+            <div class="mt-3 space-y-2 text-xs">
+                {% for case in run.results.platform.suites.text_platform.cases %}
+                <div class="flex items-center justify-between p-2 rounded-lg border {% if case.passed %}border-emerald-100 bg-emerald-50/40{% else %}border-rose-100 bg-rose-50/40{% endif %}">
+                    <span class="font-mono text-slate-700">{{ case.id }}</span>
+                    <span class="font-semibold {% if case.passed %}text-emerald-700{% else %}text-rose-700{% endif %}">
+                        {% if case.passed %}PASS{% else %}FAIL{% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
+
+        {% if run.results.industry.skipped %}
+        <p class="text-xs text-amber-700 mt-3">Industry benchmarks skipped: {{ run.results.industry.reason }}</p>
+        {% endif %}
+        {% endif %}
     </div>
 
     <div id="waiting-panel" class="{% if run.status != 'RUNNING' and run.status != 'PENDING' %}hidden{% endif %} p-12 text-center bg-slate-50 border border-slate-200 rounded-xl text-slate-500">
@@ -164,6 +269,16 @@ function pollStatus() {
                     '<span class="inline-flex items-center px-3 py-1 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Completed</span>';
                 if (data.summaries && data.summaries.length) {
                     renderSummaries(data.summaries);
+                }
+                if (data.warnings && data.warnings.length) {
+                    const warningsPanel = document.getElementById('warnings-panel');
+                    const warningsList = document.getElementById('warnings-list');
+                    if (warningsPanel && warningsList) {
+                        warningsList.innerHTML = data.warnings
+                            .map((warning) => `<li>${warning}</li>`)
+                            .join('');
+                        warningsPanel.classList.remove('hidden');
+                    }
                 }
                 return;
             }

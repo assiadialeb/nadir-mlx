@@ -465,10 +465,12 @@ def start_benchmark_view(request):
             port=form_data["port"],
             model_id=form_data["model_id"],
             params=form_data["params"],
+            benchmark_kind=form_data["benchmark_kind"],
         )
+        kind_label = form_data["benchmark_kind"].title()
         messages.success(
             request,
-            f"Benchmark #{run.id} started against {run.endpoint_url}.",
+            f"{kind_label} benchmark #{run.id} started against {run.endpoint_url}.",
         )
         return redirect("benchmark_detail", run_id=run.id)
     except ValueError as exc:
@@ -482,8 +484,20 @@ def start_benchmark_view(request):
 @login_required
 def benchmark_detail_view(request, run_id: int):
     run = get_object_or_404(BenchmarkRun, id=run_id)
+    child_runs = list(run.child_runs.order_by("id"))
+    perf_child = next((item for item in child_runs if item.benchmark_kind == "PERF"), None)
+    quality_child = next((item for item in child_runs if item.benchmark_kind == "QUALITY"), None)
+    display_run = run
+    if run.benchmark_kind == "QUALITY":
+        display_run = run
+    elif run.benchmark_kind == "COMPLETE" and perf_child and quality_child:
+        display_run = run
+
     return render(request, "orchestrator/benchmark_detail.html", {
         "run": run,
+        "display_run": display_run,
+        "perf_child": perf_child,
+        "quality_child": quality_child,
         "history_model_query": benchmark_history_model_query(run),
     })
 
@@ -491,12 +505,21 @@ def benchmark_detail_view(request, run_id: int):
 @login_required
 def benchmark_status_view(request, run_id: int):
     run = get_object_or_404(BenchmarkRun, id=run_id)
+    perf_child = run.child_runs.filter(benchmark_kind="PERF").first()
+    quality_child = run.child_runs.filter(benchmark_kind="QUALITY").first()
     return JsonResponse({
         "id": run.id,
         "status": run.status,
+        "benchmark_kind": run.benchmark_kind,
         "error_message": run.error_message,
+        "warnings": run.quality_warnings,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "summaries": run.summaries,
+        "quality_metrics": run.quality_metrics,
+        "perf_child_id": perf_child.id if perf_child else None,
+        "quality_child_id": quality_child.id if quality_child else None,
+        "perf_summaries": perf_child.summaries if perf_child else [],
+        "quality_metrics_child": quality_child.quality_metrics if quality_child else {},
     })
 
 

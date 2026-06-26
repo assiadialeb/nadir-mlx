@@ -80,6 +80,16 @@
                 </select>
             </div>
             <div>
+                <label for="filter-benchmark-kind" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Benchmark type</label>
+                <select name="benchmark_kind" id="filter-benchmark-kind"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="">All types</option>
+                    {% for kind in filter_options.benchmark_kinds %}
+                    <option value="{{ kind }}" {% if filters.benchmark_kind == kind %}selected{% endif %}>{{ kind }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
                 <label for="filter-scenario" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Chart scenario</label>
                 <input type="text" name="scenario" id="filter-scenario" value="{{ filters.scenario }}"
                     class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -111,6 +121,7 @@
                     <tr>
                         <th class="py-2 pr-3">#</th>
                         <th class="py-2 pr-3">Date</th>
+                        <th class="py-2 pr-3">Type</th>
                         <th class="py-2 pr-3">Model</th>
                         <th class="py-2 pr-3">Mode</th>
                         <th class="py-2 pr-3">Target</th>
@@ -127,6 +138,7 @@
                         <td class="py-3 pr-3 text-xs text-slate-500 whitespace-nowrap">
                             {{ row.completed_at|default:row.created_at|date:"d/m/Y H:i" }}
                         </td>
+                        <td class="py-3 pr-3 text-xs font-semibold text-slate-700">{{ row.benchmark_kind }}</td>
                         <td class="py-3 pr-3">
                             <div class="font-medium text-slate-900 truncate max-w-[160px]" title="{{ row.model_name }}">{{ row.model_name|default:"—" }}</div>
                             <div class="field-hint">{{ row.preset_label }}</div>
@@ -147,7 +159,9 @@
                         <td class="py-3 pr-3 font-semibold text-indigo-700 text-xs">
                             {% if row.ttft_p50_ms != None and row.ttft_p50_ms != "N/A" %}{{ row.ttft_p50_ms }} ms{% else %}—{% endif %}
                         </td>
-                        <td class="py-3 pr-3 font-semibold text-emerald-700 text-xs">{{ row.aggregate_tps|default:"—" }}</td>
+                        <td class="py-3 pr-3 font-semibold text-emerald-700 text-xs">
+                            {% if row.aggregate_tps %}{{ row.aggregate_tps }}{% elif row.quality_headline %}{{ row.quality_headline }}{% else %}—{% endif %}
+                        </td>
                         <td class="py-3 whitespace-nowrap">
                             <a href="{% url 'benchmark_detail' row.id %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">View</a>
                             {% if row.status == 'RUNNING' or row.status == 'PENDING' %}

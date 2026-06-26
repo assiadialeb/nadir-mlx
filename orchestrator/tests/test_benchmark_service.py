@@ -77,6 +77,34 @@ class ParseBenchmarkFormTests(TestCase):
         self.assertEqual(parsed["target_type"], "ENDPOINT")
         self.assertEqual(parsed["host"], "localhost")
 
+    def test_parse_benchmark_form_accepts_quality_kind(self) -> None:
+        parsed = parse_benchmark_form(
+            {
+                "target_type": "INSTANCE",
+                "instance_id": "1",
+                "benchmark_kind": "QUALITY",
+                "quality_preset": "industry_lite",
+                "num_requests": "5",
+                "concurrency": "1",
+                "categories": ["medium"],
+            }
+        )
+        self.assertEqual(parsed["benchmark_kind"], "QUALITY")
+        self.assertEqual(parsed["params"]["quality_preset"], "industry_lite")
+
+    def test_parse_benchmark_form_rejects_invalid_kind(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_benchmark_form(
+                {
+                    "target_type": "INSTANCE",
+                    "instance_id": "1",
+                    "benchmark_kind": "INVALID",
+                    "num_requests": "5",
+                    "concurrency": "1",
+                    "categories": ["medium"],
+                }
+            )
+
 
 class ResolveBenchmarkModelIdTests(TestCase):
     def _instance(self, launch_mode: str, model_name: str = "example-model") -> InferenceInstance:

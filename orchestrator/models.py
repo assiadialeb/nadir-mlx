@@ -73,6 +73,11 @@ class BenchmarkRun(models.Model):
         ("INSTANCE", "MLX instance"),
         ("ENDPOINT", "Custom endpoint"),
     ]
+    BENCHMARK_KIND_CHOICES = [
+        ("PERF", "Performance"),
+        ("QUALITY", "Quality"),
+        ("COMPLETE", "Complete"),
+    ]
     STATUS_CHOICES = [
         ("PENDING", "Pending"),
         ("RUNNING", "Running"),
@@ -80,6 +85,11 @@ class BenchmarkRun(models.Model):
         ("FAILED", "Failed"),
     ]
 
+    benchmark_kind = models.CharField(
+        max_length=20,
+        choices=BENCHMARK_KIND_CHOICES,
+        default="PERF",
+    )
     target_type = models.CharField(max_length=20, choices=TARGET_CHOICES)
     instance = models.ForeignKey(
         InferenceInstance,
@@ -87,6 +97,13 @@ class BenchmarkRun(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="benchmark_runs",
+    )
+    parent_run = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="child_runs",
     )
     endpoint_url = models.CharField(max_length=512)
     model_id = models.CharField(max_length=255, blank=True)
@@ -107,9 +124,32 @@ class BenchmarkRun(models.Model):
     def summaries(self) -> list[dict]:
         if not self.results:
             return []
+        if self.benchmark_kind in ("QUALITY", "COMPLETE"):
+            return []
         summaries = []
         for entry in self.results.get("results", []):
             summary = entry.get("summary")
             if summary:
                 summaries.append(summary)
         return summaries
+
+    @property
+    def quality_warnings(self) -> list[str]:
+        """Non-fatal phase warnings stored on completed quality runs."""
+        if not self.results or self.status != "COMPLETED":
+            return []
+        warnings = self.results.get("warnings")
+        if not isinstance(warnings, list):
+            return []
+        return [str(item) for item in warnings if item]
+
+    @property
+    def quality_metrics(self) -> dict:
+        """Normalized industry + platform metrics for quality or complete runs."""
+        if not self.results:
+            return {}
+        if self.benchmark_kind == "QUALITY":
+            return self.results.get("metrics", {})
+        if self.benchmark_kind == "COMPLETE":
+            return self.results.get("quality_summary", {})
+        return {}

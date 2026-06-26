@@ -455,6 +455,20 @@ From the dashboard, start a benchmark against any **RUNNING** TEXT or MULTIMODAL
 
 Results are stored in `logs/benchmarks/` and displayed with TTFT, tokens/sec, and latency percentiles.
 
+### Quality & complete benchmarks
+
+Three modes are available from the benchmark form:
+
+| Mode | What it measures |
+|------|------------------|
+| **Performance** | TTFT, latency, tok/s (llmbench) |
+| **Quality** | Industry tasks + Nadir platform suites |
+| **Complete** | Performance first, then quality on the same instance |
+
+Optional industry metrics require `pip install -r requirements-quality.txt` (lm-evaluation-harness). Platform suites run without extra dependencies.
+
+See [docs/usage/quality-benchmarks.md](docs/usage/quality-benchmarks.md) for presets, artifacts, and interpretation.
+
 ### History & charts
 
 Open **Benchmark → Full history** (`/benchmark/history/`) to:

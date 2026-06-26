@@ -1,0 +1,5 @@
+# Optional quality benchmarks (lm-evaluation-harness). Not required for core Nadir.
+lm-eval[api]>=0.4.7
+# IFEval task dependencies (not pulled in by lm-eval extras)
+langdetect>=1.0.9
+immutabledict>=4.0.0

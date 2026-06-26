@@ -1,0 +1,74 @@
+{
+  "name": "text_platform",
+  "description": "Nadir platform qualification — instruction following and JSON structure.",
+  "cases": [
+    {
+      "id": "instruction_yes",
+      "prompt": "Reply with exactly the word YES in uppercase and nothing else.",
+      "scorer": {"type": "regex", "pattern": "^YES$"},
+      "max_tokens": 16
+    },
+    {
+      "id": "instruction_color",
+      "prompt": "What color is the sky on a clear day? Answer with one word only: blue",
+      "scorer": {"type": "contains", "value": "blue"},
+      "max_tokens": 16
+    },
+    {
+      "id": "json_person",
+      "prompt": "Return a JSON object with keys \"name\" (string) and \"age\" (integer). Use name Ada and age 30.",
+      "scorer": {
+        "type": "json_schema_valid",
+        "required_keys": ["name", "age"],
+        "types": {"name": "string", "age": "integer"}
+      },
+      "max_tokens": 64
+    },
+    {
+      "id": "json_array",
+      "prompt": "Return a JSON array of exactly two strings: [\"alpha\", \"beta\"]",
+      "scorer": {"type": "regex", "pattern": "^\\[\"alpha\",\\s*\"beta\"\\]$"},
+      "max_tokens": 32
+    },
+    {
+      "id": "instruction_count",
+      "prompt": "List exactly three prime numbers below 10, comma-separated, no spaces.",
+      "scorer": {"type": "contains", "value": "2,3,5"},
+      "max_tokens": 32
+    },
+    {
+      "id": "instruction_word",
+      "prompt": "Translate hello to French. Reply with one word only.",
+      "scorer": {"type": "regex", "pattern": "(?i)^bonjour$"},
+      "max_tokens": 16
+    },
+    {
+      "id": "json_status",
+      "prompt": "Return JSON: {\"status\": \"ok\", \"code\": 200}",
+      "scorer": {
+        "type": "json_schema_valid",
+        "required_keys": ["status", "code"],
+        "types": {"status": "string", "code": "integer"}
+      },
+      "max_tokens": 48
+    },
+    {
+      "id": "instruction_negative",
+      "prompt": "Do not mention apples. What is 3+4? Reply with the number only.",
+      "scorer": {"type": "regex", "pattern": "^7$"},
+      "max_tokens": 16
+    },
+    {
+      "id": "instruction_echo",
+      "prompt": "Echo back exactly: Nadir benchmark",
+      "scorer": {"type": "contains", "value": "Nadir benchmark"},
+      "max_tokens": 24
+    },
+    {
+      "id": "json_empty_object",
+      "prompt": "Return an empty JSON object: {}",
+      "scorer": {"type": "regex", "pattern": "^\\{\\}$"},
+      "max_tokens": 16
+    }
+  ]
+}
