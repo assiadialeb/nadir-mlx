@@ -1,8 +1,8 @@
-# Nadir Gateway & LiteLLM integration
+# Nadir Gateway
 
 Single OpenAI-compatible entrypoint on each Mac Studio: **`http://127.0.0.1:11380/v1`**.
 
-Clients (LiteLLM, Open WebUI, curl, SDKs) send the **gateway alias** in the `model` field. The gateway resolves the alias to an MLX instance and proxies to the correct local backend. **`on_demand`** instances are woken automatically on first request; **`always_on`** instances must already be running.
+Clients (Open WebUI, curl, OpenAI SDKs, custom scripts) send the **gateway alias** in the `model` field. The gateway resolves the alias to an MLX instance and proxies to the correct local backend. **`on_demand`** instances are woken automatically on first request; **`always_on`** instances must already be running.
 
 !!! note "Control plane vs data plane"
     - **Django `:8000`** — download models, start/stop instances, benchmarks, UI.
@@ -11,7 +11,7 @@ Clients (LiteLLM, Open WebUI, curl, SDKs) send the **gateway alias** in the `mod
 
 !!! note "Lifecycle modes (MLX-38)"
     - **`always_on`** (default) — instance must be **Running** before inference; gateway returns `503 model_unavailable` if stopped.
-    - **`on_demand`** — gateway **wakes** a stopped instance on first request (cold start). Configure `timeout` / `stream_timeout` in LiteLLM ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s). See [instance-lifecycle.md](instance-lifecycle.md).
+    - **`on_demand`** — gateway **wakes** a stopped instance on first request (cold start). Set client request timeouts ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s). See [instance-lifecycle.md](instance-lifecycle.md).
 
 ## Quick start
 
@@ -75,17 +75,49 @@ Only **RUNNING** instances appear. Internal ports are never returned.
 
 ## Gateway routes by launch mode
 
-| Launch mode | Gateway route | LiteLLM `model_info.mode` (typical) |
-|-------------|---------------|-------------------------------------|
-| **TEXT** | `POST /v1/chat/completions`, `POST /v1/completions` | chat (default) |
-| **MULTIMODAL** | `POST /v1/chat/completions` | chat |
-| **EMBEDDING** | `POST /v1/embeddings` | `embedding` |
-| **RERANKER** | `POST /v1/rerank` | rerank (provider-specific) |
-| **IMAGE** | `POST /v1/images/generations` | image generation |
-| **TTS** | `POST /v1/audio/speech` | `audio_speech` |
-| **STT** | `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | transcription (multipart) |
+| Launch mode | Gateway route | Notes |
+|-------------|---------------|-------|
+| **TEXT** | `POST /v1/chat/completions`, `POST /v1/completions` | default chat |
+| **MULTIMODAL** | `POST /v1/chat/completions` | vision in messages |
+| **EMBEDDING** | `POST /v1/embeddings` | batch input |
+| **RERANKER** | `POST /v1/rerank` | OpenAI-compatible rerank |
+| **IMAGE** | `POST /v1/images/generations` | `b64_json` or URL |
+| **TTS** | `POST /v1/audio/speech` | binary audio response |
+| **STT** | `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | multipart upload |
 
 If you call a route with an alias whose launch mode does not match (e.g. chat on an IMAGE alias), the gateway returns **400** `unsupported_endpoint`.
+
+## Client configuration
+
+| Setting | Value |
+|---------|--------|
+| **API Base** | `http://127.0.0.1:11380/v1` (host) or `http://host.docker.internal:11380/v1` (client in Docker on macOS) |
+| **API Key** | Any non-empty string (`sk-local`) — gateway does not validate keys today |
+| **Model** | Gateway alias exactly as shown in the UI or `GET /v1/models` |
+
+Example with the OpenAI Python SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:11380/v1",
+    api_key="sk-local",
+)
+
+response = client.chat.completions.create(
+    model="gemma-4-12B-it-4bit",
+    messages=[{"role": "user", "content": "Hello!"}],
+    max_tokens=64,
+)
+print(response.choices[0].message.content)
+```
+
+For **`on_demand`** models, set client timeouts high enough for cold starts (180–300s for large VLMs).
+
+### Multi-Mac / cluster
+
+Each Mac Studio runs its own gateway on `:11380`. Point clients at the appropriate host (VPN IP or internal DNS) and use the gateway alias registered on that machine.
 
 ## curl examples (via gateway)
 
@@ -222,85 +254,6 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 !!! note "Input formats"
     WAV and MP3 decode in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on the MLX host. Realtime WebSocket STT is not supported — see [ADR 002](../adr/002-stt-realtime-spike.md).
 
-## LiteLLM configuration
-
-Use **one API base** for all local MLX models on a Mac:
-
-| Setting | Value |
-|---------|--------|
-| **API Base** | `http://127.0.0.1:11380/v1` (host) or `http://host.docker.internal:11380/v1` (LiteLLM in Docker on macOS) |
-| **API Key** | Any non-empty string (`sk-local`) — gateway does not validate keys today |
-| **Model** | Gateway alias (`openai/<alias>` in LiteLLM) |
-
-### `config.yaml` — multiple modes, one gateway
-
-```yaml
-model_list:
-  # TEXT — chat
-  - model_name: gemma-chat
-    litellm_params:
-      model: openai/gemma-4-12B-it-4bit
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-
-  # EMBEDDING
-  - model_name: local-embed
-    litellm_params:
-      model: openai/nomic-embed-text
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: embedding
-
-  # RERANKER — OpenAI-compatible /v1/rerank on gateway
-  - model_name: local-rerank
-    litellm_params:
-      model: openai/jina-reranker
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: rerank
-
-  # IMAGE
-  - model_name: flux-local
-    litellm_params:
-      model: openai/flux-schnell
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-
-  # TTS — mode must be audio_speech, not chat
-  - model_name: kokoro-tts
-    litellm_params:
-      model: openai/kokoro-82m
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: audio_speech
-
-  # STT — transcription via OpenAI-compatible API
-  - model_name: whisper-local
-    litellm_params:
-      model: openai/whisper-large-v3
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: audio_transcription
-```
-
-Replace alias strings (`gemma-4-12B-it-4bit`, `nomic-embed-text`, …) with the **exact gateway aliases** from the MLX Server UI.
-
-### LiteLLM UI checklist (per model)
-
-1. **Provider**: OpenAI (OpenAI-compatible)
-2. **API Base**: `http://host.docker.internal:11380/v1` — must end with `/v1`
-3. **LiteLLM model name**: your proxy name (e.g. `gemma-chat`)
-4. **Upstream model**: `openai/<gateway-alias>`
-5. **Mode**: match the table above (`chat`, `embedding`, `audio_speech`, …)
-
-### Cluster / multi-Mac
-
-LiteLLM sits in front of several Mac Studios. Each Mac runs its own gateway on `:11380`. Register one LiteLLM model entry per `(mac, alias)` with the appropriate `api_base` (VPN IP or internal DNS).
-
 ## Environment variables
 
 | Variable | Default | Description |
@@ -331,13 +284,13 @@ See also [ADR 001 — Nadir Gateway](../adr/001-nadir-gateway.md).
 | `{"detail":"Not Found"}` on `/v1/chat/completions` | Old gateway process | Restart: `python manage.py run_gateway` |
 | `404 model_not_found` | Unknown alias or typo | Check alias in UI; `GET /v1/models` |
 | `503 model_unavailable` | `always_on` instance stopped / loading / failed | Start server in UI; wait for **Running** |
-| `503 model_waking_timeout` | `on_demand` cold start exceeded wake timeout | Increase `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` and LiteLLM `timeout` |
+| `503 model_waking_timeout` | `on_demand` cold start exceeded wake timeout | Increase `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` and client timeout |
 | `400 unsupported_endpoint` | Wrong route for launch mode | Use embeddings route for EMBEDDING alias, etc. |
 | Empty `/v1/models` | No instances registered | Create at least one server (stopped `on_demand` aliases still appear) |
 
-## Direct instance ports (legacy)
+## Direct instance ports (debugging)
 
-You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gateway** for LiteLLM and production clients so aliases stay stable and ports stay private.
+You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gateway** for production clients so aliases stay stable and ports stay private.
 
 ## Per-mode runbooks (E2E validation)
 
@@ -351,4 +304,4 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 | TTS | [gateway-runbooks/tts.md](gateway-runbooks/tts.md) |
 | STT | [gateway-runbooks/stt.md](gateway-runbooks/stt.md) |
 
-See also the [API coverage matrix](nadir-gateway-coverage-matrix.md) for gaps vs OpenAI / LiteLLM (streaming, audio formats, etc.).
+See also the [API coverage matrix](nadir-gateway-coverage-matrix.md) for gaps vs the OpenAI API (streaming, audio formats, etc.).

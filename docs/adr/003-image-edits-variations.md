@@ -23,7 +23,7 @@ Local image inference uses **mflux** with **txt2img** profiles only (`orchestrat
 
 ## Consequences
 
-- LiteLLM / OpenAI clients that require edits must use `b64_json` generations or an external provider.
+- OpenAI-compatible clients that require edits must use `b64_json` generations or an external provider.
 - `url` responses always point at the **gateway** base (`NADIR_GATEWAY_PUBLIC_BASE_URL`), not instance ports.
 
 ## References

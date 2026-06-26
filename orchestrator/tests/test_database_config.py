@@ -23,7 +23,6 @@ class BuildDatabaseConfigTests(unittest.TestCase):
         base_dir = Path("/tmp/nadir-test")
         env = {
             "NADIR_DB_HOST": "127.0.0.1",
-            "NADIR_DB_PORT": "5433",
             "NADIR_DB_NAME": "nadir_db",
             "NADIR_DB_USER": "nadir_user",
             "NADIR_DB_PASSWORD": "secret",
@@ -33,7 +32,7 @@ class BuildDatabaseConfigTests(unittest.TestCase):
         self.assertEqual(config["default"]["ENGINE"], "django.db.backends.postgresql")
         self.assertEqual(config["default"]["NAME"], "nadir_db")
         self.assertEqual(config["default"]["HOST"], "127.0.0.1")
-        self.assertEqual(config["default"]["PORT"], "5433")
+        self.assertEqual(config["default"]["PORT"], "5432")
 
     def test_builds_csrf_origins_from_allowed_hosts(self) -> None:
         with patch.dict(
@@ -57,7 +56,7 @@ class BuildDatabaseConfigTests(unittest.TestCase):
     def test_database_url_overrides_discrete_vars(self) -> None:
         base_dir = Path("/tmp/nadir-test")
         env = {
-            "NADIR_DATABASE_URL": "postgresql://nadir_user:pw@127.0.0.1:5433/nadir_db",
+            "NADIR_DATABASE_URL": "postgresql://nadir_user:pw@127.0.0.1:5432/nadir_db",
             "NADIR_DB_HOST": "ignored",
         }
         with patch.dict(os.environ, env, clear=True):

@@ -58,7 +58,7 @@ file /tmp/nadir-tts-test.aac
 
 ## 5. Chunked streaming relay
 
-The gateway streams the upstream audio body with chunked transfer (no full buffering). LiteLLM `audio_speech` consumes this as a byte stream.
+The gateway streams the upstream audio body with chunked transfer (no full buffering). OpenAI-compatible clients consume this as a byte stream.
 
 Optional upstream flag `stream: true` on the MLX TTS server also chunks the encoded file after synthesis.
 
@@ -81,30 +81,6 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 ```
 
 **Expected:** HTTP **400**.
-
-## 8. LiteLLM
-
-```yaml
-model_list:
-  - model_name: local-kokoro
-    litellm_params:
-      model: openai/kokoro
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: audio_speech
-```
-
-```python
-import litellm
-
-response = litellm.speech(
-    model="local-kokoro",
-    input="Hello world",
-    voice="alloy",
-)
-# Save bytes from response
-```
 
 ## Troubleshooting
 

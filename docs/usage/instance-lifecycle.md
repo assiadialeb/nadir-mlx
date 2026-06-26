@@ -3,7 +3,7 @@
 Operator guide for Ollama-like **sleep / wake** behaviour on Nadir (MLX Server).
 
 !!! note "Prerequisite"
-    Nadir Gateway (`:11380`) must be running. See [nadir-gateway-litellm.md](nadir-gateway-litellm.md).
+    Nadir Gateway (`:11380`) must be running. See [nadir-gateway.md](nadir-gateway.md).
 
 **Epic:** MLX-38 · **ADR:** [006-instance-wake-idle-offload.md](../adr/006-instance-wake-idle-offload.md)
 
@@ -42,7 +42,7 @@ Recommendations:
 
 ```mermaid
 sequenceDiagram
-    participant Client as Client / LiteLLM
+    participant Client as Client
     participant GW as Nadir Gateway :11380
     participant LC as lifecycle_services
     participant SM as server_manager
@@ -61,23 +61,11 @@ sequenceDiagram
     GW-->>Client: response / stream
 ```
 
-## LiteLLM
+## Client timeouts
 
-Point all model routes to the same gateway:
+For **`on_demand`** instances, set client request timeouts ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s). Large VLMs may need 180–300s on first request after sleep.
 
-```yaml
-model_list:
-  - model_name: nadir-gemma
-    litellm_params:
-      model: openai/gemma-chat
-      api_base: http://127.0.0.1:11380/v1
-      timeout: 300
-      stream_timeout: 300
-```
-
-- Set **`timeout`** and **`stream_timeout`** ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` for `on_demand` models.
-- Large VLMs may need 180–300s on first request after sleep.
-- LiteLLM only needs the **alias** in `model`; no per-instance port.
+Clients only need the **gateway alias** in `model` and `api_base` `http://<host>:11380/v1` — no per-instance port.
 
 ## Gateway errors
 
@@ -99,7 +87,7 @@ model_list:
 | Symptom | Check |
 |---------|--------|
 | Immediate 503 on stopped alias | `lifecycle_mode` still `always_on` |
-| Timeout on first request | Increase LiteLLM timeout and `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` |
+| Timeout on first request | Increase client timeout and `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` |
 | Instance never sleeps | Traffic still hitting instance port directly (bypass gateway) |
 | Instance sleeps during long stream | Bug — report; `last_used_at` should update at stream start |
 

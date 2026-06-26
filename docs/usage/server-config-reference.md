@@ -171,7 +171,7 @@ Allowed keys: `adapter_path`, `draft_model`, `draft_kind`, `draft_block_size`, `
 | `thinking_budget` | `--thinking-budget` | int | Max tokens inside a thinking block (client can override per request). |
 
 !!! warning "Agents and streaming clients"
-    With `enable_thinking: true`, most output may land in `reasoning` instead of `content`. Ensure your client (e.g. Hermès, LiteLLM) aggregates `reasoning` / `reasoning_content`, not only `content`.
+    With `enable_thinking: true`, most output may land in `reasoning` instead of `content`. Ensure your client aggregates `reasoning` / `reasoning_content`, not only `content`.
 
 **Example — Gemma 4 VLM with thinking:**
 
@@ -248,7 +248,7 @@ On-demand instances that were offloaded wake on the next gateway request with th
 - [instance-lifecycle.md](instance-lifecycle.md) — wake, idle offload, `ops` fields
 - [chat-tools-model-matrix.md](chat-tools-model-matrix.md) — tools / structured output per model family
 - [vlm-vision-model-matrix.md](vlm-vision-model-matrix.md) — vision inputs for MULTIMODAL
-- [nadir-gateway-litellm.md](nadir-gateway-litellm.md) — gateway aliases and LiteLLM setup
+- [nadir-gateway.md](nadir-gateway.md) — gateway aliases and client setup
 
 ## Source of truth (code)
 

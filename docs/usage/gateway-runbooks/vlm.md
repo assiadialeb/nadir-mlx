@@ -132,46 +132,7 @@ curl -N http://127.0.0.1:11380/v1/chat/completions \
 
 **Expected:** `text/event-stream` chunks. First-token latency is higher than text-only chat.
 
-## 7. LiteLLM vision
-
-```yaml
-model_list:
-  - model_name: local-vlm
-    litellm_params:
-      model: openai/<vlm-alias>
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: chat
-```
-
-```python
-import base64
-import litellm
-
-with open("<path-to-image.png>", "rb") as image_file:
-    encoded = base64.b64encode(image_file.read()).decode("ascii")
-
-response = litellm.completion(
-    model="local-vlm",
-    messages=[
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "What is in this image?"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{encoded}"},
-                },
-            ],
-        }
-    ],
-    max_tokens=128,
-)
-print(response.choices[0].message.content)
-```
-
-## 8. Negative tests
+## 7. Negative tests
 
 ```bash
 # Legacy completions on VLM alias → 400

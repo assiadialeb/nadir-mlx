@@ -8,7 +8,7 @@
 
 MULTIMODAL instances run **mlx-vlm** and are reachable through `POST /v1/chat/completions` on the gateway (`:11380`). Clients send OpenAI-style messages with `content` arrays containing `image_url` blocks (base64 data URIs, local paths, or HTTP URLs).
 
-MLX-37 required end-to-end qualification: gateway relay, streaming, LiteLLM compatibility, and documented limits — without implementing vision in the gateway itself.
+MLX-37 required end-to-end qualification: gateway relay, streaming, OpenAI-compatible client support, and documented limits — without implementing vision in the gateway itself.
 
 ## Decision
 
@@ -39,7 +39,7 @@ MLX-37 required end-to-end qualification: gateway relay, streaming, LiteLLM comp
 
 ## Consequences
 
-- **Positive:** LiteLLM vision routes work through Nadir with zero gateway changes.
+- **Positive:** Vision chat routes work through Nadir with zero gateway changes.
 - **Positive:** Operators have curl + Python examples for Mac Studio QA.
 - **Negative:** Very large inline images can hit `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` (default 300s).
 - **Negative:** Model-specific vision quality still varies (Gemma 3/4 VLM, Qwen-VL, etc.).

@@ -5,13 +5,13 @@
 
 ## Context
 
-MLX Server today exposes a Django control plane on port `8000` and launches one OpenAI-compatible backend per model on ports `11400–11500`. Clients (LiteLLM, Open WebUI, custom scripts) must know each instance port and backend quirks (for example `default_model` on mlx-lm text servers).
+MLX Server today exposes a Django control plane on port `8000` and launches one OpenAI-compatible backend per model on ports `11400–11500`. Clients (Open WebUI, custom scripts, OpenAI SDKs) must know each instance port and backend quirks (for example `default_model` on mlx-lm text servers).
 
 We need a **single stable OpenAI-compatible entrypoint** on each Mac that:
 
 - Routes requests by **gateway alias** (`model` field = `server_config.model_id`, see MLX-19)
 - Proxies to the correct local MLX backend without putting Django/Gunicorn on the hot inference path
-- Stays compatible with LiteLLM as the cluster-facing router in production
+- Works with any OpenAI-compatible client in production
 
 Wake-from-idle and automatic model loading are **out of scope** for the first gateway sprint.
 
@@ -34,7 +34,7 @@ Routing flow:
 
 ```mermaid
 flowchart LR
-    Client[LiteLLM / Client]
+    Client[OpenAI-compatible client]
     GW[Nadir Gateway :11380]
     Django[Django :8000]
     Inst[MLX instance :114xx]
@@ -59,7 +59,7 @@ Port allocation policy:
 |--------|--------------|
 | Django views as proxy | WSGI sync overhead; couples hot path to web admin process |
 | Gunicorn + Django for `/v1` | Same as above; harder to stream SSE efficiently |
-| LiteLLM-only routing (no local gateway) | Each Mac still needs per-port model entries; no unified alias registry tied to orchestrator state |
+| Per-port client routing (no local gateway) | Each Mac still needs per-port model entries; no unified alias registry tied to orchestrator state |
 | New DB column for alias | `server_config.model_id` already exists and is validated (MLX-19) |
 
 ## Consequences
@@ -83,4 +83,4 @@ Port allocation policy:
 - MLX-20: gateway worker bootstrap
 - MLX-21: alias → instance router
 - MLX-22–24: chat proxy, multi-mode proxy, `/v1/models`
-- **Operator guide:** [Nadir Gateway & LiteLLM](../usage/nadir-gateway-litellm.md)
+- **Operator guide:** [Nadir Gateway](../usage/nadir-gateway.md)

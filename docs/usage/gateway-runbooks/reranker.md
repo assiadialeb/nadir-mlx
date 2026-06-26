@@ -66,34 +66,6 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 
 **Expected:** HTTP **400**.
 
-## 5. LiteLLM
-
-LiteLLM rerank API varies by version. OpenAI-compatible gateway route:
-
-```yaml
-model_list:
-  - model_name: local-rerank
-    litellm_params:
-      model: openai/<alias>
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: rerank
-```
-
-Direct curl to LiteLLM proxy (adjust port/key):
-
-```bash
-curl http://127.0.0.1:4000/rerank \
-  -H "Authorization: Bearer sk-vela-litellm-dev" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "local-rerank",
-    "query": "What is Python?",
-    "documents": ["Python is a language.", "Sunny weather."]
-  }'
-```
-
 ## Troubleshooting
 
 | HTTP | Cause | Action |

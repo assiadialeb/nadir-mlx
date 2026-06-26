@@ -79,7 +79,7 @@ Watchdog `auto_restart` remains independent: it recovers **DOWN** running instan
 
 | Topic | Behaviour |
 |-------|-----------|
-| `GET /v1/models` | Include **all** registered aliases; add extension `nadir.lifecycle_mode`, `nadir.status` (`stopped` / `loading` / `running` / `failed`) so LiteLLM can show sleeping models |
+| `GET /v1/models` | Include **all** registered aliases; add extension `nadir.lifecycle_mode`, `nadir.status` (`stopped` / `loading` / `running` / `failed`) so clients can show sleeping models |
 | Errors | `503 model_waking` while **LOADING** after wake triggered; `503 model_waking_timeout` on wake timeout |
 | `Retry-After` | Optional header on `model_waking` when not holding connection (future); v1 holds connection |
 
@@ -89,12 +89,12 @@ Watchdog `auto_restart` remains independent: it recovers **DOWN** running instan
 - List badges: **Sleeping** (STOPPED + on_demand), **Waking** (LOADING), **Ready** (RUNNING), unchanged for always_on.
 - Manual Start/Stop unchanged; stopping an always_on instance stays operator-driven.
 
-### 7. LiteLLM / operator guidance
+### 7. Operator guidance
 
 Document in `docs/usage/instance-lifecycle.md`:
 
-- Increase LiteLLM `timeout` / `stream_timeout` for cold starts (large VLMs may need 120–300s).
-- Single `api_base` to gateway suffices; no per-model port in LiteLLM when all aliases are on gateway.
+- Increase client request timeouts for cold starts (large VLMs may need 120–300s).
+- Single `api_base` to gateway suffices; no per-model port when all aliases are on gateway.
 - Recommend `on_demand` for TTS, STT, IMAGE, secondary rerankers; `always_on` for primary chat.
 
 ## Alternatives
@@ -105,7 +105,7 @@ Document in `docs/usage/instance-lifecycle.md`:
 | Gateway calls `subprocess` directly | Duplicates `server_manager`; breaks single source of truth for ports/PIDs |
 | Unload in gateway process only | Gateway restart would lose idle timers; Django DB is source of truth |
 | New status `WAKING` | Extra migration/UI; **LOADING** already exists and matches startup |
-| Immediate 503 + client retry only | Poor DX vs Ollama; LiteLLM may not retry cold models |
+| Immediate 503 + client retry only | Poor DX vs Ollama; many clients do not retry cold models |
 | Global idle timeout in settings only | Operators need per-model tuning (7B vs 27B VLM) |
 
 ## Consequences
@@ -113,7 +113,7 @@ Document in `docs/usage/instance-lifecycle.md`:
 **Positive**
 
 - Frees tens of GB on idle secondary models without changing client URLs.
-- LiteLLM cluster can point all Mac backends to `:11380` with heterogeneous sleep policies.
+- Cluster clients can point all Mac backends to `:11380` with heterogeneous sleep policies.
 - Reuses proven `start_instance` / `stop_instance` and watchdog patterns.
 
 **Negative**
@@ -145,7 +145,7 @@ Document in `docs/usage/instance-lifecycle.md`:
 | MLX-42 | `last_used_at` updates on proxy (incl. streaming) |
 | MLX-43 | `instance_idle_watcher` + env toggles |
 | MLX-44 | UI lifecycle fields + status badges |
-| MLX-45 | Operator runbook + coverage matrix + LiteLLM section |
+| MLX-45 | Operator runbook + coverage matrix + client timeout guidance |
 | MLX-46 | Unit + integration tests (wake, timeout, idle, always_on guard) |
 
 ## References

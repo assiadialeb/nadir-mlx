@@ -16,7 +16,7 @@ Running MLX locally usually means juggling CLI commands, virtual environments, a
 - **Launch** one or more inference servers on dedicated ports (`11400–11500`)
 - **Monitor** live logs and instance status from the browser
 - **Benchmark** throughput and latency with integrated [llmbenchmark](https://github.com/tcs211/llmbenchmark)
-- **Integrate** with [LiteLLM](https://github.com/BerriAI/litellm), Open WebUI, or any OpenAI-compatible client
+- **Integrate** with any OpenAI-compatible client (curl, SDKs, Open WebUI, etc.)
 
 Everything runs on your machine. Model weights, logs, and SQLite state stay local.
 
@@ -96,7 +96,7 @@ flowchart TB
         STT[stt_server]
     end
 
-    Client[LiteLLM / OpenAI client]
+    Client[OpenAI-compatible client]
     Models[(./models/)]
     Logs[(./logs/)]
     DB[(db.sqlite3)]
@@ -193,7 +193,7 @@ cp .env.example .env
 
 Edit `.env` as needed. Minimal local setup works with defaults; production-like installs should set `DJANGO_SECRET_KEY` and `DJANGO_DEBUG=false` with matching `DJANGO_CSRF_TRUSTED_ORIGINS`.
 
-PostgreSQL (e.g. Vela Stack on port `5433`) is optional — SQLite is used when `NADIR_DB_HOST` is unset. See commented keys in `.env.example`.
+PostgreSQL is optional — SQLite is the default when `NADIR_DB_HOST` is unset. For production or multi-user setups, point `NADIR_DATABASE_URL` or the `NADIR_DB_*` variables at an external PostgreSQL instance. See `.env.example`.
 
 ### 6. Initialize the database
 
@@ -210,7 +210,7 @@ python manage.py runserver
 
 Open **http://127.0.0.1:8000** and sign in with your superuser account.
 
-### 8. Start the gateway (recommended with LiteLLM)
+### 8. Start the gateway (recommended)
 
 In a **second terminal**, start the OpenAI-compatible gateway on port `11380`:
 
@@ -220,7 +220,7 @@ python manage.py run_gateway
 # equivalent: python -m orchestrator.gateway
 ```
 
-Full integration guide (all launch modes — chat, embeddings, rerank, image, TTS, STT): **[docs/usage/nadir-gateway-litellm.md](docs/usage/nadir-gateway-litellm.md)**.
+Operator guide (all launch modes — chat, embeddings, rerank, image, TTS, STT): **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)**.
 
 Health check:
 
@@ -229,7 +229,7 @@ curl http://127.0.0.1:11380/health
 curl http://127.0.0.1:11380/v1/models
 ```
 
-Configure LiteLLM with a **single** `api_base: http://127.0.0.1:11380/v1` (or `host.docker.internal` from Docker) and one `model_list` entry per **gateway alias** (shown on each server card in the UI). The gateway **wakes** `on_demand` instances on first request and **stops** them after idle time — see [instance-lifecycle.md](docs/usage/instance-lifecycle.md). Set LiteLLM `timeout` / `stream_timeout` ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s) for cold starts.
+Use **`http://127.0.0.1:11380/v1`** as `api_base` in your client. Pass the **gateway alias** (shown on each server card) in the `model` field. The gateway **wakes** `on_demand` instances on first request and **stops** them after idle time — see [instance-lifecycle.md](docs/usage/instance-lifecycle.md). For cold starts, set client timeouts ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s).
 
 ```bash
 curl http://127.0.0.1:11380/v1/chat/completions \
@@ -326,7 +326,7 @@ Kokoro requires **`misaki[en]`** for G2P (English + espeak for French, Spanish, 
 
 **Multilingual:** set `lang_code` in the server UI (`f` = French, `a` = American English, …). Default is French (`ff_siwis`).
 
-LiteLLM and other OpenAI clients often send voices like `alloy` or `nova`. The TTS server **maps them automatically** to the closest Kokoro voice for the configured language (e.g. `alloy` + French → `ff_siwis`).
+OpenAI-compatible clients often send voices like `alloy` or `nova`. The TTS server **maps them automatically** to the closest Kokoro voice for the configured language (e.g. `alloy` + French → `ff_siwis`).
 
 For long French texts, split paragraphs with newlines — espeak-based languages truncate very long inputs.
 
@@ -359,86 +359,15 @@ curl http://127.0.0.1:11442/v1/audio/transcriptions \
   -F "response_format=json"
 ```
 
-### LiteLLM proxy (Nadir Gateway)
+### Nadir Gateway
 
-**Recommended:** point every local MLX model at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
+**Recommended:** point clients at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
 
-See **[docs/usage/nadir-gateway-litellm.md](docs/usage/nadir-gateway-litellm.md)** for:
+See **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)** for curl samples per launch mode, environment variables, and troubleshooting (`404`, `503`, wrong route for mode).
 
-- `config.yaml` examples per launch mode
-- curl samples via gateway (not per-instance ports)
-- Docker `host.docker.internal` notes
-- Troubleshooting (`404`, `503`, wrong route for mode)
+#### Direct instance port (debugging)
 
-#### Legacy: direct instance port
-
-The sections below still work for debugging a single backend on its `:114xx` port. Prefer the gateway for LiteLLM and cluster routing.
-
-#### Reranker (direct port)
-
-Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
-
-1. **Credentials** → provider **vLLM (Hosted vLLM)**
-2. **API Base**: `http://127.0.0.1:<port>/v1`
-3. **Add Model** → `hosted_vllm/your-model-name`, mode **Rerank**
-
-Then call LiteLLM's `/rerank` endpoint with your proxy model name.
-
-#### Text-to-speech (Kokoro)
-
-Use provider **`openai`** (OpenAI-compatible), **not** chat mode. The backend model id is whatever `/v1/models` returns (often `kokoro`).
-
-`config.yaml` example (LiteLLM in Docker → use `host.docker.internal` instead of `127.0.0.1`):
-
-```yaml
-model_list:
-  - model_name: kokoro-tts
-    litellm_params:
-      model: openai/kokoro
-      api_base: http://host.docker.internal:11444/v1
-      api_key: sk-local
-    model_info:
-      mode: audio_speech
-```
-
-Test through LiteLLM proxy:
-
-```bash
-curl http://127.0.0.1:4000/v1/audio/speech \
-  -H "Authorization: Bearer sk-1234" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "kokoro-tts",
-    "input": "Bonjour depuis LiteLLM.",
-    "voice": "alloy"
-  }' \
-  --output speech.wav
-```
-
-**UI checklist**
-
-| Field | Value |
-|-------|--------|
-| Provider | **OpenAI** (or OpenAI-compatible) |
-| LiteLLM model | `openai/kokoro` |
-| API Base | `http://host.docker.internal:11444/v1` (must end with `/v1`) |
-| API Key | any non-empty string (`sk-local`) |
-| Mode | **Audio Speech** (`audio_speech`) — not Chat |
-
-`voice: alloy` is fine: Nadir MLX maps OpenAI voices to Kokoro (`alloy` → `ff_siwis` in French).
-
-**Sanity check without proxy** (from the LiteLLM venv):
-
-```python
-import litellm
-litellm.speech(
-    model="openai/kokoro",
-    api_base="http://127.0.0.1:11444/v1",
-    api_key="sk-fake",
-    voice="alloy",
-    input="Bonjour test direct",
-).stream_to_file("test.wav")
-```
+The usage examples above call each backend on its `:114xx` port. That is useful for debugging a single server. For day-to-day use, prefer the gateway so aliases stay stable and instance ports stay private.
 
 ---
 

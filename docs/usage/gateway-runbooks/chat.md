@@ -136,41 +136,6 @@ curl -N http://127.0.0.1:11380/v1/chat/completions \
 
 **Expected:** `text/event-stream` chunks; tool call fragments depend on mlx-lm streaming support.
 
-## 7. LiteLLM tool use
-
-```yaml
-model_list:
-  - model_name: local-chat-tools
-    litellm_params:
-      model: openai/<alias>
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: chat
-```
-
-```python
-import litellm
-
-response = litellm.completion(
-    model="local-chat-tools",
-    messages=[{"role": "user", "content": "Weather in Lyon?"}],
-    tools=[
-        {
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"city": {"type": "string"}},
-                },
-            },
-        }
-    ],
-)
-print(response.choices[0].message)
-```
-
 ## Troubleshooting
 
 | HTTP | Cause | Action |

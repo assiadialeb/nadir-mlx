@@ -109,33 +109,6 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 
 **Expected:** HTTP **400** (`unsupported_endpoint`).
 
-## 7. LiteLLM
-
-Add to `config.yaml` (Docker → `host.docker.internal`):
-
-```yaml
-model_list:
-  - model_name: local-embed
-    litellm_params:
-      model: openai/<alias>
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: embedding
-```
-
-Test:
-
-```python
-import litellm
-
-response = litellm.embedding(
-    model="local-embed",
-    input=["hello world"],
-)
-assert len(response.data[0]["embedding"]) > 0
-```
-
 ## Troubleshooting
 
 | HTTP | Cause | Action |

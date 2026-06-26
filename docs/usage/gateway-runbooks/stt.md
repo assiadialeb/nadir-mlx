@@ -120,19 +120,6 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 
 **Expected:** HTTP **400**.
 
-## 9. LiteLLM
-
-```yaml
-model_list:
-  - model_name: local-whisper
-    litellm_params:
-      model: openai/whispers
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: audio_transcription
-```
-
 ## Realtime STT
 
 OpenAI Realtime / WebSocket STT is **not supported** in v1. See [ADR 002 — STT realtime spike](../adr/002-stt-realtime-spike.md) (no-go; batch only).

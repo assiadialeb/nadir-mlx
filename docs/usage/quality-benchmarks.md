@@ -93,4 +93,4 @@ Use **Benchmark history** to filter by `benchmark_kind` (PERF / QUALITY / COMPLE
 ## Related docs
 
 - [Instance lifecycle](instance-lifecycle.md) — ensure the instance stays RUNNING for long quality jobs
-- [Nadir gateway](nadir-gateway-litellm.md) — alias routing used by all benchmark modes
+- [Nadir gateway](nadir-gateway.md) — alias routing used by all benchmark modes
