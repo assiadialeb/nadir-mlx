@@ -515,7 +515,9 @@ Check `./logs/` and the Downloads section on the dashboard. Incomplete folders i
 
 ## License
 
-See repository license file. Third-party components retain their own licenses (`mlx-lm`, `mlx-vlm`, `local-reranker`, etc.).
+Nadir MLX is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+
+Third-party components retain their own licenses (`mlx-lm`, `mlx-vlm`, `local-reranker`, etc.).
 
 ---
 
