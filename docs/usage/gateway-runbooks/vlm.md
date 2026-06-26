@@ -157,6 +157,5 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/completions \
 
 ## References
 
-- [vlm-vision-model-matrix.md](../vlm-vision-model-matrix.md)
-- [ADR 005](../../adr/005-vlm-vision-gateway.md)
+- [chat-tools-model-matrix.md](../chat-tools-model-matrix.md)
 - [gateway-runbooks/chat.md](chat.md) (tools / JSON on VLM)

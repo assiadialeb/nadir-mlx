@@ -79,5 +79,4 @@ Inspect `choices[0].message.tool_calls` and instance logs for mlx-lm warnings.
 ## References
 
 - [gateway-runbooks/chat.md](gateway-runbooks/chat.md)
-- [ADR 004](../adr/004-chat-tools-structured-output.md)
 - mlx-lm: [PR #217](https://github.com/ml-explore/mlx-lm/pull/217)

@@ -252,7 +252,7 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 ```
 
 !!! note "Input formats"
-    WAV and MP3 decode in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on the MLX host. Realtime WebSocket STT is not supported — see [ADR 002](../adr/002-stt-realtime-spike.md).
+    WAV and MP3 decode in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on the MLX host. Realtime WebSocket STT is not supported in v1.
 
 ## Environment variables
 
@@ -275,7 +275,7 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 !!! tip "Route cache"
     The gateway caches alias → instance resolution and `GET /v1/models` in memory for `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` (default 20s). After starting or stopping an instance, new routes may take up to one TTL window to appear. Lower the TTL in dev if you need faster feedback.
 
-See also [ADR 001 — Nadir Gateway](../adr/001-nadir-gateway.md).
+See [instance-lifecycle.md](instance-lifecycle.md) for wake and idle offload behaviour.
 
 ## Troubleshooting
 

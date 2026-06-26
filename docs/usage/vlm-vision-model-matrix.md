@@ -80,5 +80,4 @@ Pass criteria: HTTP 200 and a color-related answer (model may say *red*, *black*
 ## References
 
 - [gateway-runbooks/vlm.md](gateway-runbooks/vlm.md)
-- [ADR 005](../adr/005-vlm-vision-gateway.md)
 - mlx-vlm issue [#1084](https://github.com/Blaizzy/mlx-vlm/issues/1084) (multi-image)

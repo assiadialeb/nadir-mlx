@@ -117,7 +117,7 @@ flowchart TB
     Benchmark --> Instances
 ```
 
-See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the control-plane vs data-plane decision. Ollama-like wake on demand and idle offload: [ADR 006](docs/adr/006-instance-wake-idle-offload.md) · [operator guide](docs/usage/instance-lifecycle.md).
+See [Nadir Gateway](docs/usage/nadir-gateway.md) for the control-plane vs data-plane split. Ollama-like wake on demand and idle offload: [instance lifecycle](docs/usage/instance-lifecycle.md).
 
 **Port allocation**
 

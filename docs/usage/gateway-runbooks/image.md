@@ -36,7 +36,7 @@ NADIR_GATEWAY_PUBLIC_BASE_URL=http://127.0.0.1:11380
 IMAGE_OUTPUT_TTL_SECONDS=3600
 ```
 
-`POST /v1/images/edits` and `/v1/images/variations` return **501** in v1 (mflux txt2img only). See [ADR 003](../../adr/003-image-edits-variations.md).
+`POST /v1/images/edits` and `/v1/images/variations` return **501** in v1 (mflux txt2img only).
 
 ## 1. Discovery
 

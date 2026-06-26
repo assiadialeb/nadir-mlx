@@ -150,4 +150,3 @@ curl -N http://127.0.0.1:11380/v1/chat/completions \
 ## References
 
 - [chat-tools-model-matrix.md](../chat-tools-model-matrix.md)
-- [ADR 004](../../adr/004-chat-tools-structured-output.md)

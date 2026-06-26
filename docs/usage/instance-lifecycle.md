@@ -1,11 +1,9 @@
 # Instance lifecycle — wake on demand & idle offload
 
-Operator guide for Ollama-like **sleep / wake** behaviour on Nadir (MLX Server).
+Operator guide for Ollama-like **sleep / wake** behaviour on Nadir MLX.
 
 !!! note "Prerequisite"
     Nadir Gateway (`:11380`) must be running. See [nadir-gateway.md](nadir-gateway.md).
-
-**ADR:** [006-instance-wake-idle-offload.md](../adr/006-instance-wake-idle-offload.md)
 
 ## Concepts
 
@@ -94,4 +92,4 @@ Clients only need the **gateway alias** in `model` and `api_base` `http://<host>
 ## Related
 
 - [Coverage matrix](nadir-gateway-coverage-matrix.md)
-- [ADR 001 — Gateway](../adr/001-nadir-gateway.md)
+- [Nadir Gateway](nadir-gateway.md)

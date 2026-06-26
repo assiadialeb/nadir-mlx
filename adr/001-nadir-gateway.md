@@ -83,4 +83,4 @@ Port allocation policy:
 - Gateway worker bootstrap (`python -m orchestrator.gateway`)
 - Alias → instance router
 - Chat proxy, multi-mode proxy, `/v1/models`
-- **Operator guide:** [Nadir Gateway](../usage/nadir-gateway.md)
+- **Operator guide:** [Nadir Gateway](../docs/usage/nadir-gateway.md)

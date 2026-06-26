@@ -14,7 +14,7 @@ Last updated: June 2026 — wake on demand and idle offload implemented.
 | Alias → RUNNING instance routing | ✅ |
 | Aggregated `GET /v1/models` | ✅ |
 | In-memory alias cache (avoid DB on every hit) | ✅ (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
-| Wake / idle stop for instances | ✅ [ADR 006](../adr/006-instance-wake-idle-offload.md), [runbook](instance-lifecycle.md) |
+| Wake / idle stop for instances | ✅ [runbook](instance-lifecycle.md) |
 | API key auth on gateway | ❌ (enforce at reverse proxy or client if needed) |
 | Multi-worker uvicorn | ❌ single process by default |
 
@@ -71,7 +71,7 @@ Last updated: June 2026 — wake on demand and idle offload implemented.
 | `b64_json` | ✅ |
 | `response_format: url` | ✅ (local gateway URL, no CDN) |
 | **Streaming** | ❌ |
-| edits / variations / inpainting | ❌ v1 — [ADR 003](../adr/003-image-edits-variations.md) (501) |
+| edits / variations / inpainting | ❌ v1 (501 Not Implemented) |
 | Long generation timeout | ⚠️ `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` (default 300s) |
 
 ## TTS (Kokoro)
@@ -93,7 +93,7 @@ Last updated: June 2026 — wake on demand and idle offload implemented.
 | `response_format`: json, text, verbose_json, **srt**, **vtt** | ✅ |
 | Input **WAV / MP3** | ✅ |
 | **M4A, FLAC, OGG, Opus, WebM** | ✅ with ffmpeg (documented) |
-| **Streaming / realtime** | ❌ no-go v1 — [ADR 002](../adr/002-stt-realtime-spike.md) |
+| **Streaming / realtime** | ❌ not supported in v1 |
 | `/v1/audio/translations` | ✅ (Whisper translate → English) |
 | Segments + optional `word_timestamps` | ✅ |
 | `prompt`, `temperature` (Whisper) | ✅ forwarded to mlx-audio |
@@ -128,10 +128,5 @@ Last updated: June 2026 — wake on demand and idle offload implemented.
 
 ## References
 
-- STT realtime spike: [ADR 002](../adr/002-stt-realtime-spike.md)
-- Chat tools / JSON: [ADR 004](../adr/004-chat-tools-structured-output.md)
-- VLM vision: [ADR 005](../adr/005-vlm-vision-gateway.md)
-- Instance lifecycle: [ADR 006](../adr/006-instance-wake-idle-offload.md)
 - Integration guide: [nadir-gateway.md](nadir-gateway.md)
 - E2E runbooks: see [Nadir Gateway — Per-mode runbooks](nadir-gateway.md#per-mode-runbooks-e2e-validation)
-- ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)
