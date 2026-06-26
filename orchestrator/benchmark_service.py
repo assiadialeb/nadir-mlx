@@ -225,7 +225,9 @@ def _complete_thread(parent_id: int) -> None:
         "perf_run_id": perf_run.id,
         "quality_run_id": quality_run.id,
         "perf_summary": _perf_headline(perf_run),
+        "perf_summaries": perf_run.summaries,
         "quality_summary": quality_run.results.get("metrics", {}) if quality_run.results else {},
+        "quality_results": quality_run.results or {},
     }
     parent.status = "COMPLETED"
     parent.error_message = ""

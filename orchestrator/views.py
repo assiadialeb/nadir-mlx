@@ -55,11 +55,18 @@ from .benchmark_selectors import (
     benchmark_run_list_row,
     build_benchmark_history_query,
     build_comparison_snapshot,
+    build_benchmark_status_payload,
+    benchmark_detail_phase_message,
     chart_series_for_runs,
+    detail_render_ready,
+    resolve_perf_summaries,
+    resolve_quality_metrics,
+    resolve_quality_results,
     comparison_pair_label,
     comparison_rows,
     filter_benchmark_runs,
     find_comparison_candidates,
+    quality_metric_label,
     list_distinct_preset_keys,
     list_filter_options,
     paginate_benchmark_runs,
@@ -493,11 +500,32 @@ def benchmark_detail_view(request, run_id: int):
     elif run.benchmark_kind == "COMPLETE" and perf_child and quality_child:
         display_run = run
 
+    perf_summaries = resolve_perf_summaries(run, perf_child)
+    quality_metrics = resolve_quality_metrics(run, quality_child)
+    quality_results = resolve_quality_results(run, quality_child)
+    quality_metric_items = [
+        {"key": key, "label": quality_metric_label(key), "value": value}
+        for key, value in quality_metrics.items()
+    ]
+    render_ready = detail_render_ready(run, perf_child, quality_child)
+    needs_live_update = run.status in ("PENDING", "RUNNING") or (
+        run.status == "COMPLETED" and not render_ready
+    )
+    status_payload = build_benchmark_status_payload(run, perf_child, quality_child)
+
     return render(request, "orchestrator/benchmark_detail.html", {
         "run": run,
         "display_run": display_run,
         "perf_child": perf_child,
         "quality_child": quality_child,
+        "perf_summaries": perf_summaries,
+        "quality_metrics": quality_metrics,
+        "quality_metric_items": quality_metric_items,
+        "quality_results": quality_results,
+        "waiting_message": benchmark_detail_phase_message(run, perf_child, quality_child),
+        "needs_live_update": needs_live_update,
+        "render_ready": render_ready,
+        "status_payload_json": json.dumps(status_payload),
         "history_model_query": benchmark_history_model_query(run),
     })
 
@@ -507,20 +535,7 @@ def benchmark_status_view(request, run_id: int):
     run = get_object_or_404(BenchmarkRun, id=run_id)
     perf_child = run.child_runs.filter(benchmark_kind="PERF").first()
     quality_child = run.child_runs.filter(benchmark_kind="QUALITY").first()
-    return JsonResponse({
-        "id": run.id,
-        "status": run.status,
-        "benchmark_kind": run.benchmark_kind,
-        "error_message": run.error_message,
-        "warnings": run.quality_warnings,
-        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-        "summaries": run.summaries,
-        "quality_metrics": run.quality_metrics,
-        "perf_child_id": perf_child.id if perf_child else None,
-        "quality_child_id": quality_child.id if quality_child else None,
-        "perf_summaries": perf_child.summaries if perf_child else [],
-        "quality_metrics_child": quality_child.quality_metrics if quality_child else {},
-    })
+    return JsonResponse(build_benchmark_status_payload(run, perf_child, quality_child))
 
 
 @login_required

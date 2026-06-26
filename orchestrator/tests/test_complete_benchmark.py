@@ -86,3 +86,6 @@ class CompleteBenchmarkTests(TestCase):
         self.assertEqual(self.parent.status, "COMPLETED")
         self.assertEqual(self.parent.child_runs.count(), 2)
         self.assertIn("quality_summary", self.parent.results)
+        self.assertIn("perf_summaries", self.parent.results)
+        self.assertIn("quality_results", self.parent.results)
+        self.assertEqual(len(self.parent.results["perf_summaries"]), 1)

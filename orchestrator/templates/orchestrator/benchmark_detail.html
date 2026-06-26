@@ -1,4 +1,5 @@
 {% extends 'orchestrator/base.html' %}
+{% load static %}
 
 {% block title %}Benchmark #{{ run.id }} — Nadir MLX{% endblock %}
 
@@ -17,7 +18,10 @@
                 <a href="{% url 'benchmark_history' %}?model={{ history_model_query|urlencode }}"
                     class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Model history &rarr;</a>
                 {% endif %}
-                {% if run.status == 'COMPLETED' %}
+                {% if run.status == 'COMPLETED' and perf_child %}
+                <a href="{% url 'benchmark_compare' %}?run_a={{ perf_child.id }}"
+                    class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Compare perf run &rarr;</a>
+                {% elif run.status == 'COMPLETED' and run.benchmark_kind == 'PERF' %}
                 <a href="{% url 'benchmark_compare' %}?run_a={{ run.id }}"
                     class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Compare with another run &rarr;</a>
                 {% endif %}
@@ -56,8 +60,11 @@
         <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
             <p class="text-xxs uppercase tracking-wider text-slate-500 font-semibold">Config</p>
             <p class="text-sm font-medium text-slate-900 mt-1">
-                {% if run.benchmark_kind == 'QUALITY' or run.benchmark_kind == 'COMPLETE' %}
+                {% if run.benchmark_kind == 'QUALITY' %}
                 preset={{ run.params.quality_preset|default:"industry_lite" }}
+                {% elif run.benchmark_kind == 'COMPLETE' %}
+                perf: conc={{ run.params.concurrency|join:", " }} &bull; {{ run.params.num_requests }} req
+                &bull; quality: {{ run.params.quality_preset|default:"industry_lite" }}
                 {% else %}
                 conc={{ run.params.concurrency|join:", " }} &bull; {{ run.params.num_requests }} req/scenario
                 {% endif %}
@@ -65,39 +72,22 @@
         </div>
     </div>
 
-    {% if run.benchmark_kind == 'COMPLETE' and run.child_runs.exists %}
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {% if perf_child %}
-        <a href="{% url 'benchmark_detail' perf_child.id %}" class="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-200">
-            <p class="text-xxs uppercase tracking-wider text-slate-500 font-semibold">Phase 1 — Performance</p>
-            <p class="text-sm font-medium text-slate-900 mt-1">Run #{{ perf_child.id }} · {{ perf_child.status }}</p>
-        </a>
-        {% endif %}
-        {% if quality_child %}
-        <a href="{% url 'benchmark_detail' quality_child.id %}" class="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-200">
-            <p class="text-xxs uppercase tracking-wider text-slate-500 font-semibold">Phase 2 — Quality</p>
-            <p class="text-sm font-medium text-slate-900 mt-1">Run #{{ quality_child.id }} · {{ quality_child.status }}</p>
-        </a>
-        {% endif %}
-    </div>
-    {% endif %}
-
-    {% if run.benchmark_kind == 'COMPLETE' and run.quality_metrics %}
-    <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
-        <h2 class="text-lg font-bold text-slate-900 mb-4">Complete run summary</h2>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-            {% if run.results.perf_summary.aggregate_tps %}
-            <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-100">
-                <p class="text-xxs uppercase text-emerald-800 font-semibold">Perf tok/s</p>
-                <p class="text-lg font-bold text-emerald-900">{{ run.results.perf_summary.aggregate_tps }}</p>
+    {% if run.benchmark_kind == 'COMPLETE' %}
+    <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <p class="text-xxs uppercase tracking-wider text-slate-500 font-semibold mb-3">Pipeline progress</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div id="phase-perf-card" class="rounded-lg border border-slate-200 p-3">
+                <p class="text-sm font-semibold text-slate-900">1 — Performance</p>
+                <p id="phase-perf-status" class="text-xs text-slate-500 mt-1">
+                    {% if perf_child %}{{ perf_child.status }}{% else %}Pending{% endif %}
+                </p>
             </div>
-            {% endif %}
-            {% for key, value in run.quality_metrics.items %}
-            <div class="p-3 rounded-lg bg-indigo-50 border border-indigo-100">
-                <p class="text-xxs uppercase text-indigo-800 font-semibold">{{ key }}</p>
-                <p class="text-lg font-bold text-indigo-900">{{ value }}%</p>
+            <div id="phase-quality-card" class="rounded-lg border border-slate-200 p-3">
+                <p class="text-sm font-semibold text-slate-900">2 — Quality</p>
+                <p id="phase-quality-status" class="text-xs text-slate-500 mt-1">
+                    {% if quality_child %}{{ quality_child.status }}{% else %}Waiting{% endif %}
+                </p>
             </div>
-            {% endfor %}
         </div>
     </div>
     {% endif %}
@@ -106,196 +96,340 @@
         <strong>Error:</strong> <span id="error-text">{{ run.error_message }}</span>
     </div>
 
-  {% if run.benchmark_kind == 'QUALITY' or run.benchmark_kind == 'COMPLETE' %}
-    <div id="warnings-panel" class="{% if not run.quality_warnings %}hidden{% endif %} p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm">
+    <div id="warnings-panel" class="{% if not run.quality_warnings %}{% if not quality_child or not quality_child.quality_warnings %}hidden{% endif %}{% endif %} p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm">
         <strong>Warning:</strong>
-        <ul id="warnings-list" class="mt-1 list-disc list-inside space-y-1">
-            {% for warning in run.quality_warnings %}
-            <li>{{ warning }}</li>
-            {% endfor %}
-        </ul>
-    </div>
-    {% endif %}
-
-    <div id="results-panel" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl {% if not run.summaries and not run.quality_metrics %}hidden{% endif %}">
-        {% if run.summaries %}
-        <h2 class="text-lg font-bold text-slate-900 mb-4">Performance results</h2>
-        <div class="overflow-x-auto">
-            <table class="w-full text-sm text-left" id="results-table">
-                <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
-                    <tr>
-                        <th class="py-2 pr-3">Scenario</th>
-                        <th class="py-2 pr-3">Conc.</th>
-                        <th class="py-2 pr-3">Success</th>
-                        <th class="py-2 pr-3">TTFT p50</th>
-                        <th class="py-2 pr-3">Latency p50</th>
-                        <th class="py-2 pr-3">Latency p95</th>
-                        <th class="py-2 pr-3">Tok/s req</th>
-                        <th class="py-2">Agg. tok/s</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100" id="results-body">
-                    {% for summary in run.summaries %}
-                    <tr>
-                        <td class="py-3 pr-3 font-mono text-xs">{{ summary.scenario }}</td>
-                        <td class="py-3 pr-3">{{ summary.concurrency }}</td>
-                        <td class="py-3 pr-3">{{ summary.success_rate }}</td>
-                        <td class="py-3 pr-3 font-semibold text-indigo-700">
-                            {% if summary.ttft_p50_ms != "N/A" %}{{ summary.ttft_p50_ms }} ms{% else %}N/A{% endif %}
-                        </td>
-                        <td class="py-3 pr-3">{{ summary.latency_p50_ms }} ms</td>
-                        <td class="py-3 pr-3">{{ summary.latency_p95_ms }} ms</td>
-                        <td class="py-3 pr-3">{{ summary.tps_per_req_median }}</td>
-                        <td class="py-3 font-semibold text-emerald-700">{{ summary.aggregate_tps }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        <details class="mt-4 group">
-            <summary class="text-xs font-semibold text-slate-500 cursor-pointer hover:text-indigo-600 select-none">
-                What do these columns mean?
-            </summary>
-            <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600">
-                <div class="p-2 rounded-lg bg-indigo-50/50 border border-indigo-100">
-                    <strong class="text-indigo-900">TTFT p50</strong> — time until the first streamed token (responsiveness).
-                </div>
-                <div class="p-2 rounded-lg bg-slate-50 border border-slate-100">
-                    <strong class="text-slate-800">Latency p50 / p95</strong> — full response time; p95 = tail latency.
-                </div>
-                <div class="p-2 rounded-lg bg-slate-50 border border-slate-100">
-                    <strong class="text-slate-800">Tok/s req</strong> — decoding speed per individual request.
-                </div>
-                <div class="p-2 rounded-lg bg-emerald-50/50 border border-emerald-100">
-                    <strong class="text-emerald-900">Agg. tok/s</strong> — total throughput under load (best for comparing servers).
-                </div>
-            </div>
-            <p class="field-hint mt-2">
-                Scenario name format: <code class="text-slate-700">{category}_conc{N}</code> (e.g. <code class="text-slate-700">medium_conc4</code> = medium prompts, 4 parallel requests).
-            </p>
-        </details>
-        {% endif %}
-
-        {% if run.quality_metrics or run.benchmark_kind == 'QUALITY' %}
-        <h2 class="text-lg font-bold text-slate-900 mb-4 {% if run.summaries %}mt-8{% endif %}">Quality metrics</h2>
-        {% if run.quality_metrics %}
-        <div class="overflow-x-auto mb-4">
-            <table class="w-full text-sm text-left">
-                <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
-                    <tr>
-                        <th class="py-2 pr-3">Metric</th>
-                        <th class="py-2">Score</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                    {% for key, value in run.quality_metrics.items %}
-                    <tr>
-                        <td class="py-3 pr-3 font-mono text-xs">{{ key }}</td>
-                        <td class="py-3 font-semibold text-indigo-700">{{ value }}%</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="text-sm text-slate-500">Quality metrics will appear when the run completes.</p>
-        {% endif %}
-
-        {% if run.results.platform.suites.text_platform %}
-        <details class="mt-4 group">
-            <summary class="text-xs font-semibold text-slate-500 cursor-pointer hover:text-indigo-600 select-none">
-                Platform suite — text_platform ({{ run.results.platform.suites.text_platform.passed }}/{{ run.results.platform.suites.text_platform.total }})
-            </summary>
-            <div class="mt-3 space-y-2 text-xs">
-                {% for case in run.results.platform.suites.text_platform.cases %}
-                <div class="flex items-center justify-between p-2 rounded-lg border {% if case.passed %}border-emerald-100 bg-emerald-50/40{% else %}border-rose-100 bg-rose-50/40{% endif %}">
-                    <span class="font-mono text-slate-700">{{ case.id }}</span>
-                    <span class="font-semibold {% if case.passed %}text-emerald-700{% else %}text-rose-700{% endif %}">
-                        {% if case.passed %}PASS{% else %}FAIL{% endif %}
-                    </span>
-                </div>
-                {% endfor %}
-            </div>
-        </details>
-        {% endif %}
-
-        {% if run.results.industry.skipped %}
-        <p class="text-xs text-amber-700 mt-3">Industry benchmarks skipped: {{ run.results.industry.reason }}</p>
-        {% endif %}
-        {% endif %}
+        <ul id="warnings-list" class="mt-1 list-disc list-inside space-y-1"></ul>
     </div>
 
-    <div id="waiting-panel" class="{% if run.status != 'RUNNING' and run.status != 'PENDING' %}hidden{% endif %} p-12 text-center bg-slate-50 border border-slate-200 rounded-xl text-slate-500">
+    <div id="waiting-panel" class="{% if not needs_live_update %}hidden{% endif %} p-8 text-center bg-slate-50 border border-slate-200 rounded-xl text-slate-500">
         <svg class="animate-spin mx-auto h-8 w-8 text-indigo-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        <p class="text-sm">Benchmark in progress. This may take several minutes depending on concurrency and prompt categories.</p>
+        <p id="waiting-message" class="text-sm">{{ waiting_message }}</p>
+    </div>
+
+    <div id="results-panel" class="space-y-6 {% if run.benchmark_kind != 'COMPLETE' and run.benchmark_kind != 'QUALITY' and not perf_summaries %}hidden{% endif %}">
+        {% if run.benchmark_kind == 'COMPLETE' or run.benchmark_kind == 'PERF' %}
+        <section id="section-performance" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl {% if not perf_summaries %}hidden{% endif %}">
+            <h2 class="text-lg font-bold text-slate-900 mb-1">Performance</h2>
+            <p class="text-xs text-slate-500 mb-4">Latency and throughput across llmbench scenarios.</p>
+            <div id="perf-charts" class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-6 {% if not perf_summaries %}hidden{% endif %}">
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-700 mb-2">TTFT p50 per scenario (ms)</h3>
+                    <div class="h-56"><canvas id="detail-chart-ttft"></canvas></div>
+                </div>
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-700 mb-2">Aggregate tok/s per scenario</h3>
+                    <div class="h-56"><canvas id="detail-chart-tps"></canvas></div>
+                </div>
+            </div>
+            <div id="perf-table-host">
+                {% if perf_summaries %}
+                {% include 'orchestrator/partials/benchmark_perf_table.html' with summaries=perf_summaries table_id='results-body' %}
+                {% endif %}
+            </div>
+            <p id="perf-empty-hint" class="text-sm text-slate-500 {% if perf_summaries %}hidden{% endif %}">Performance results will appear when phase 1 completes.</p>
+        </section>
+        {% endif %}
+
+        {% if run.benchmark_kind == 'COMPLETE' or run.benchmark_kind == 'QUALITY' %}
+        <section id="section-quality" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl {% if not quality_metrics %}hidden{% endif %}">
+            <h2 class="text-lg font-bold text-slate-900 mb-1">Quality</h2>
+            <p class="text-xs text-slate-500 mb-4">Industry benchmarks (lm-eval) and Nadir platform suites.</p>
+            <div id="quality-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm mb-6"></div>
+            <div id="quality-chart-wrap" class="mb-6 {% if not quality_metrics %}hidden{% endif %}">
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Quality scores (%)</h3>
+                <div class="h-56 max-w-xl"><canvas id="detail-chart-quality"></canvas></div>
+            </div>
+            <div id="quality-table-host" class="overflow-x-auto mb-4"></div>
+            <div id="platform-suite-host"></div>
+            <p id="industry-skip-host" class="text-xs text-amber-700 mt-3 hidden"></p>
+            <p id="quality-empty-hint" class="text-sm text-slate-500 {% if quality_metrics %}hidden{% endif %}">Quality results will appear when phase 2 completes.</p>
+        </section>
+        {% endif %}
     </div>
 </div>
 
-{% if run.status == 'RUNNING' or run.status == 'PENDING' %}
+<script src="{% static 'orchestrator/vendor/chart.umd.min.js' %}"></script>
 <script>
-const statusUrl = "{% url 'benchmark_status' run.id %}";
+(function () {
+    const statusUrl = "{% url 'benchmark_status' run.id %}";
+    const needsLiveUpdate = {{ needs_live_update|yesno:"true,false" }};
+    const initialPayload = {{ status_payload_json|safe }};
+    let chartInstances = {};
+    let pollTimer = null;
 
-function renderSummaries(summaries) {
-    const body = document.getElementById('results-body');
-    body.innerHTML = '';
-    summaries.forEach(summary => {
-        const ttft = summary.ttft_p50_ms === 'N/A' ? 'N/A' : `${summary.ttft_p50_ms} ms`;
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td class="py-3 pr-3 font-mono text-xs">${summary.scenario || ''}</td>
-            <td class="py-3 pr-3">${summary.concurrency || ''}</td>
-            <td class="py-3 pr-3">${summary.success_rate || ''}</td>
-            <td class="py-3 pr-3 font-semibold text-indigo-700">${ttft}</td>
-            <td class="py-3 pr-3">${summary.latency_p50_ms || ''} ms</td>
-            <td class="py-3 pr-3">${summary.latency_p95_ms || ''} ms</td>
-            <td class="py-3 pr-3">${summary.tps_per_req_median || ''}</td>
-            <td class="py-3 font-semibold text-emerald-700">${summary.aggregate_tps || ''}</td>
-        `;
-        body.appendChild(row);
-    });
-}
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
 
-function pollStatus() {
-    fetch(statusUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'COMPLETED') {
-                document.getElementById('waiting-panel').classList.add('hidden');
-                document.getElementById('results-panel').classList.remove('hidden');
-                document.getElementById('status-badge').innerHTML =
-                    '<span class="inline-flex items-center px-3 py-1 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Completed</span>';
-                if (data.summaries && data.summaries.length) {
-                    renderSummaries(data.summaries);
+    function setBadge(status) {
+        const badge = document.getElementById('status-badge');
+        if (!badge) return;
+        if (status === 'COMPLETED') {
+            badge.innerHTML = '<span class="inline-flex items-center px-3 py-1 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Completed</span>';
+        } else if (status === 'RUNNING') {
+            badge.innerHTML = '<span class="inline-flex items-center px-3 py-1 rounded-lg text-sm font-semibold bg-amber-50 text-amber-700 border border-amber-200">Running</span>';
+        } else if (status === 'FAILED') {
+            badge.innerHTML = '<span class="inline-flex items-center px-3 py-1 rounded-lg text-sm font-semibold bg-rose-50 text-rose-700 border border-rose-200">Failed</span>';
+        }
+    }
+
+    function updatePhaseCards(data) {
+        const perfStatus = document.getElementById('phase-perf-status');
+        const qualityStatus = document.getElementById('phase-quality-status');
+        const perfCard = document.getElementById('phase-perf-card');
+        const qualityCard = document.getElementById('phase-quality-card');
+        if (!data.phase) return;
+        if (perfStatus) perfStatus.textContent = data.phase.perf_status || 'Pending';
+        if (qualityStatus) qualityStatus.textContent = data.phase.quality_status || 'Waiting';
+        if (perfCard) {
+            perfCard.classList.toggle('border-emerald-200', data.phase.perf_status === 'COMPLETED');
+            perfCard.classList.toggle('bg-emerald-50/40', data.phase.perf_status === 'COMPLETED');
+        }
+        if (qualityCard) {
+            qualityCard.classList.toggle('border-emerald-200', data.phase.quality_status === 'COMPLETED');
+            qualityCard.classList.toggle('bg-emerald-50/40', data.phase.quality_status === 'COMPLETED');
+        }
+    }
+
+    function updateWaitingMessage(data) {
+        const messageEl = document.getElementById('waiting-message');
+        if (!messageEl) return;
+        if (data.benchmark_kind !== 'COMPLETE') {
+            messageEl.textContent = 'Benchmark in progress. This may take several minutes.';
+            return;
+        }
+        if (data.phase && data.phase.perf_status !== 'COMPLETED') {
+            messageEl.textContent = 'Phase 1 — Performance benchmark in progress.';
+            return;
+        }
+        if (data.phase && data.phase.quality_status !== 'COMPLETED') {
+            messageEl.textContent = 'Phase 2 — Quality benchmark in progress. Industry tasks can take 30+ minutes.';
+            return;
+        }
+        messageEl.textContent = 'Finalizing results…';
+    }
+
+    function renderWarnings(warnings) {
+        const panel = document.getElementById('warnings-panel');
+        const list = document.getElementById('warnings-list');
+        if (!panel || !list || !warnings || !warnings.length) return;
+        list.innerHTML = warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('');
+        panel.classList.remove('hidden');
+    }
+
+    function destroyChart(key) {
+        if (chartInstances[key]) {
+            chartInstances[key].destroy();
+            delete chartInstances[key];
+        }
+    }
+
+    function renderBarChart(canvasId, labels, values, label, color, yMax) {
+        destroyChart(canvasId);
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || !labels.length || typeof Chart === 'undefined') return;
+        const scales = { y: { beginAtZero: true } };
+        if (yMax) scales.y.max = yMax;
+        chartInstances[canvasId] = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{ label, data: values, backgroundColor: color, borderRadius: 6 }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales,
+            },
+        });
+    }
+
+    function renderPerfTable(summaries) {
+        const host = document.getElementById('perf-table-host');
+        if (!host || !summaries.length) return;
+        const rows = summaries.map((summary) => {
+            const ttft = summary.ttft_p50_ms === 'N/A' ? 'N/A' : `${summary.ttft_p50_ms} ms`;
+            return `<tr>
+                <td class="py-3 pr-3 font-mono text-xs">${escapeHtml(summary.scenario)}</td>
+                <td class="py-3 pr-3">${escapeHtml(summary.concurrency)}</td>
+                <td class="py-3 pr-3">${escapeHtml(summary.success_rate)}</td>
+                <td class="py-3 pr-3 font-semibold text-indigo-700">${escapeHtml(ttft)}</td>
+                <td class="py-3 pr-3">${escapeHtml(summary.latency_p50_ms)} ms</td>
+                <td class="py-3 pr-3">${escapeHtml(summary.latency_p95_ms)} ms</td>
+                <td class="py-3 pr-3">${escapeHtml(summary.tps_per_req_median)}</td>
+                <td class="py-3 font-semibold text-emerald-700">${escapeHtml(summary.aggregate_tps)}</td>
+            </tr>`;
+        }).join('');
+        host.innerHTML = `
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
+                        <tr>
+                            <th class="py-2 pr-3">Scenario</th>
+                            <th class="py-2 pr-3">Conc.</th>
+                            <th class="py-2 pr-3">Success</th>
+                            <th class="py-2 pr-3">TTFT p50</th>
+                            <th class="py-2 pr-3">Latency p50</th>
+                            <th class="py-2 pr-3">Latency p95</th>
+                            <th class="py-2 pr-3">Tok/s req</th>
+                            <th class="py-2">Agg. tok/s</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100" id="results-body">${rows}</tbody>
+                </table>
+            </div>`;
+    }
+
+    function renderQualitySection(data) {
+        const section = document.getElementById('section-quality');
+        const cards = document.getElementById('quality-cards');
+        const tableHost = document.getElementById('quality-table-host');
+        const platformHost = document.getElementById('platform-suite-host');
+        const skipHost = document.getElementById('industry-skip-host');
+        const emptyHint = document.getElementById('quality-empty-hint');
+        const chartWrap = document.getElementById('quality-chart-wrap');
+        const items = data.quality_metric_items || [];
+        if (!section || !items.length) return;
+
+        section.classList.remove('hidden');
+        if (emptyHint) emptyHint.classList.add('hidden');
+        cards.innerHTML = items.map((item) => `
+            <div class="p-3 rounded-lg bg-indigo-50 border border-indigo-100">
+                <p class="text-xxs uppercase text-indigo-800 font-semibold">${escapeHtml(item.label)}</p>
+                <p class="text-lg font-bold text-indigo-900">${escapeHtml(item.value)}%</p>
+            </div>`).join('');
+
+        tableHost.innerHTML = `
+            <table class="w-full text-sm text-left">
+                <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
+                    <tr><th class="py-2 pr-3">Metric</th><th class="py-2">Score</th></tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    ${items.map((item) => `
+                        <tr>
+                            <td class="py-3 pr-3 font-mono text-xs">${escapeHtml(item.key)}</td>
+                            <td class="py-3 font-semibold text-indigo-700">${escapeHtml(item.value)}%</td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>`;
+
+        if (chartWrap) chartWrap.classList.remove('hidden');
+        if (data.quality_chart && data.quality_chart.labels) {
+            renderBarChart(
+                'detail-chart-quality',
+                data.quality_chart.labels,
+                data.quality_chart.values,
+                'Score (%)',
+                'rgba(99, 102, 241, 0.75)',
+                100,
+            );
+        }
+
+        const suite = data.platform_suite || {};
+        if (platformHost && suite.cases && suite.cases.length) {
+            platformHost.innerHTML = `
+                <details class="mt-4 group" open>
+                    <summary class="text-xs font-semibold text-slate-500 cursor-pointer hover:text-indigo-600 select-none">
+                        Platform suite — text_platform (${suite.passed}/${suite.total})
+                    </summary>
+                    <div class="mt-3 space-y-2 text-xs">
+                        ${suite.cases.map((testCase) => `
+                            <div class="flex items-center justify-between p-2 rounded-lg border ${testCase.passed ? 'border-emerald-100 bg-emerald-50/40' : 'border-rose-100 bg-rose-50/40'}">
+                                <span class="font-mono text-slate-700">${escapeHtml(testCase.id)}</span>
+                                <span class="font-semibold ${testCase.passed ? 'text-emerald-700' : 'text-rose-700'}">${testCase.passed ? 'PASS' : 'FAIL'}</span>
+                            </div>`).join('')}
+                    </div>
+                </details>`;
+        }
+
+        if (skipHost && data.industry_skipped_reason) {
+            skipHost.textContent = `Industry benchmarks skipped: ${data.industry_skipped_reason}`;
+            skipHost.classList.remove('hidden');
+        }
+    }
+
+    function renderPerfSection(data) {
+        const section = document.getElementById('section-performance');
+        const summaries = data.perf_summaries || [];
+        const emptyHint = document.getElementById('perf-empty-hint');
+        const charts = document.getElementById('perf-charts');
+        if (!section || !summaries.length) return;
+
+        section.classList.remove('hidden');
+        document.getElementById('results-panel')?.classList.remove('hidden');
+        if (emptyHint) emptyHint.classList.add('hidden');
+        if (charts) charts.classList.remove('hidden');
+        renderPerfTable(summaries);
+        if (data.perf_chart && data.perf_chart.labels) {
+            renderBarChart('detail-chart-ttft', data.perf_chart.labels, data.perf_chart.ttft_p50_ms, 'TTFT p50 (ms)', 'rgba(79, 70, 229, 0.75)');
+            renderBarChart('detail-chart-tps', data.perf_chart.labels, data.perf_chart.aggregate_tps, 'Aggregate tok/s', 'rgba(5, 150, 105, 0.75)');
+        }
+    }
+
+    function applyPayload(data) {
+        updatePhaseCards(data);
+        updateWaitingMessage(data);
+        if (data.warnings) renderWarnings(data.warnings);
+
+        if (data.perf_summaries && data.perf_summaries.length) {
+            renderPerfSection(data);
+        }
+        if (data.quality_metric_items && data.quality_metric_items.length) {
+            renderQualitySection(data);
+        }
+
+        if (data.render_ready) {
+            document.getElementById('waiting-panel')?.classList.add('hidden');
+            document.getElementById('results-panel')?.classList.remove('hidden');
+            setBadge('COMPLETED');
+            if (pollTimer) clearTimeout(pollTimer);
+            return true;
+        }
+        return false;
+    }
+
+    function pollStatus() {
+        fetch(statusUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, cache: 'no-store' })
+            .then((response) => response.json())
+            .then((data) => {
+                if (data.status === 'FAILED') {
+                    document.getElementById('waiting-panel')?.classList.add('hidden');
+                    document.getElementById('error-panel')?.classList.remove('hidden');
+                    const errorText = document.getElementById('error-text');
+                    if (errorText) errorText.textContent = data.error_message || 'Unknown error';
+                    setBadge('FAILED');
+                    return;
                 }
-                if (data.warnings && data.warnings.length) {
-                    const warningsPanel = document.getElementById('warnings-panel');
-                    const warningsList = document.getElementById('warnings-list');
-                    if (warningsPanel && warningsList) {
-                        warningsList.innerHTML = data.warnings
-                            .map((warning) => `<li>${warning}</li>`)
-                            .join('');
-                        warningsPanel.classList.remove('hidden');
-                    }
+                const done = applyPayload(data);
+                if (!done) {
+                    setBadge(data.status);
+                    pollTimer = setTimeout(pollStatus, 3000);
                 }
-                return;
-            }
-            if (data.status === 'FAILED') {
-                document.getElementById('waiting-panel').classList.add('hidden');
-                document.getElementById('error-panel').classList.remove('hidden');
-                document.getElementById('error-text').textContent = data.error_message || 'Unknown error';
-                document.getElementById('status-badge').innerHTML =
-                    '<span class="inline-flex items-center px-3 py-1 rounded-lg text-sm font-semibold bg-rose-50 text-rose-700 border border-rose-200">Failed</span>';
-                return;
-            }
-            setTimeout(pollStatus, 3000);
-        })
-        .catch(() => setTimeout(pollStatus, 5000));
-}
+            })
+            .catch(() => {
+                pollTimer = setTimeout(pollStatus, 5000);
+            });
+    }
 
-pollStatus();
+    // Server-rendered initial state
+    if (initialPayload.warnings) {
+        renderWarnings(initialPayload.warnings);
+    }
+    if (initialPayload.render_ready) {
+        applyPayload(initialPayload);
+    }
+
+    if (needsLiveUpdate) {
+        pollStatus();
+    }
+})();
 </script>
-{% endif %}
 {% endblock %}

@@ -10,10 +10,13 @@ from orchestrator.benchmark_selectors import (
     build_comparison_snapshot,
     chart_series_for_runs,
     comparison_rows,
+    detail_quality_chart_payload,
+    detail_render_ready,
     filter_benchmark_runs,
     find_comparison_candidates,
     paginate_benchmark_runs,
     parse_benchmark_history_query,
+    resolve_perf_summaries,
     summary_for_scenario,
 )
 from orchestrator.models import BenchmarkRun, InferenceInstance
@@ -155,6 +158,56 @@ class BenchmarkSelectorsTests(TestCase):
         series = chart_series_for_runs(runs, scenario="medium_conc4")
         self.assertEqual(len(series["labels"]), 2)
         self.assertEqual(series["datasets"]["ttft_p50_ms"], [100.0, 80.0])
+
+    def test_resolve_perf_summaries_uses_child_for_complete(self) -> None:
+        parent = BenchmarkRun.objects.create(
+            benchmark_kind="COMPLETE",
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results={"quality_summary": {"gsm8k_exact_match": 70.0}},
+        )
+        perf_child = BenchmarkRun.objects.create(
+            benchmark_kind="PERF",
+            parent_run=parent,
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        summaries = resolve_perf_summaries(parent, perf_child)
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]["aggregate_tps"], 180.0)
+
+    def test_detail_quality_chart_payload_orders_headline_metrics(self) -> None:
+        payload = detail_quality_chart_payload({
+            "text_platform_pass_rate": 100.0,
+            "gsm8k_exact_match": 68.0,
+            "ifeval_strict_acc": 79.0,
+        })
+        self.assertEqual(payload["labels"][0], "IFEval")
+        self.assertEqual(payload["values"][2], 100.0)
+
+    def test_detail_render_ready_complete_uses_embedded_parent_results(self) -> None:
+        parent = BenchmarkRun.objects.create(
+            benchmark_kind="COMPLETE",
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results={
+                "perf_summaries": [{"scenario": "medium_conc1", "aggregate_tps": 42}],
+                "quality_summary": {"text_platform_pass_rate": 90.0},
+                "quality_results": {"metrics": {"text_platform_pass_rate": 90.0}},
+            },
+        )
+        self.assertTrue(detail_render_ready(parent, None, None))
+        self.assertEqual(len(resolve_perf_summaries(parent, None)), 1)
 
     def test_find_comparison_candidates_pairs_same_preset(self) -> None:
         mlx_run = BenchmarkRun.objects.create(

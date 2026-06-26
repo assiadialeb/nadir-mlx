@@ -419,3 +419,177 @@ def runs_for_chart_filters(filters: dict[str, Any], *, limit: int = 50) -> list[
     """Return recent completed runs for charting."""
     queryset = filter_benchmark_runs(filters).filter(status="COMPLETED")[:limit]
     return list(queryset)
+
+
+QUALITY_METRIC_LABELS: dict[str, str] = {
+    "gsm8k_exact_match": "GSM8K",
+    "ifeval_strict_acc": "IFEval",
+    "text_platform_pass_rate": "Platform",
+    "mmlu_acc": "MMLU",
+}
+
+QUALITY_CHART_KEY_ORDER = (
+    "ifeval_strict_acc",
+    "gsm8k_exact_match",
+    "text_platform_pass_rate",
+    "mmlu_acc",
+)
+
+
+def quality_metric_label(metric_key: str) -> str:
+    """Human-readable label for a stored quality metric key."""
+    return QUALITY_METRIC_LABELS.get(metric_key, metric_key.replace("_", " "))
+
+
+def resolve_perf_summaries(
+    run: BenchmarkRun,
+    perf_child: BenchmarkRun | None = None,
+) -> list[dict[str, Any]]:
+    """Return scenario summaries for the detail page (child perf run for COMPLETE)."""
+    if run.benchmark_kind == "COMPLETE":
+        if perf_child is not None and perf_child.summaries:
+            return perf_child.summaries
+        embedded = (run.results or {}).get("perf_summaries") or []
+        if embedded:
+            return embedded
+        return []
+    return run.summaries
+
+
+def resolve_quality_metrics(
+    run: BenchmarkRun,
+    quality_child: BenchmarkRun | None = None,
+) -> dict[str, Any]:
+    """Return quality headline metrics for the detail page."""
+    if run.benchmark_kind == "COMPLETE" and quality_child is not None:
+        return quality_child.quality_metrics
+    return run.quality_metrics
+
+
+def resolve_quality_results(
+    run: BenchmarkRun,
+    quality_child: BenchmarkRun | None = None,
+) -> dict[str, Any] | None:
+    """Return full quality payload (platform cases, industry block)."""
+    if run.benchmark_kind == "COMPLETE":
+        if quality_child is not None and quality_child.results:
+            return quality_child.results
+        embedded = (run.results or {}).get("quality_results")
+        if embedded:
+            return embedded
+        return None
+    return run.results
+
+
+def detail_render_ready(
+    run: BenchmarkRun,
+    perf_child: BenchmarkRun | None = None,
+    quality_child: BenchmarkRun | None = None,
+) -> bool:
+    """True when the detail page has enough data to render final results."""
+    if run.status != "COMPLETED":
+        return False
+    if run.benchmark_kind == "PERF":
+        return bool(resolve_perf_summaries(run, perf_child))
+    if run.benchmark_kind == "QUALITY":
+        return bool(resolve_quality_metrics(run, quality_child))
+    if run.benchmark_kind == "COMPLETE":
+        return bool(resolve_perf_summaries(run, perf_child)) and bool(
+            resolve_quality_metrics(run, quality_child)
+        )
+    return True
+
+
+def build_benchmark_status_payload(
+    run: BenchmarkRun,
+    perf_child: BenchmarkRun | None = None,
+    quality_child: BenchmarkRun | None = None,
+) -> dict[str, Any]:
+    """JSON payload for live benchmark detail polling."""
+    perf_summaries = resolve_perf_summaries(run, perf_child)
+    quality_metrics = resolve_quality_metrics(run, quality_child)
+    quality_results = resolve_quality_results(run, quality_child) or {}
+    platform_suite = (
+        (quality_results.get("platform") or {}).get("suites") or {}
+    ).get("text_platform") or {}
+    industry = quality_results.get("industry") or {}
+
+    return {
+        "id": run.id,
+        "status": run.status,
+        "benchmark_kind": run.benchmark_kind,
+        "render_ready": detail_render_ready(run, perf_child, quality_child),
+        "error_message": run.error_message,
+        "warnings": (
+            quality_child.quality_warnings
+            if run.benchmark_kind == "COMPLETE" and quality_child
+            else run.quality_warnings
+        ),
+        "phase": {
+            "perf_status": perf_child.status if perf_child else None,
+            "quality_status": quality_child.status if quality_child else None,
+        },
+        "perf_summaries": perf_summaries,
+        "quality_metrics": quality_metrics,
+        "quality_metric_items": [
+            {"key": key, "label": quality_metric_label(key), "value": value}
+            for key, value in quality_metrics.items()
+        ],
+        "platform_suite": platform_suite,
+        "industry_skipped_reason": industry.get("reason") if industry.get("skipped") else None,
+        "perf_chart": detail_perf_chart_payload(perf_summaries),
+        "quality_chart": detail_quality_chart_payload(quality_metrics),
+    }
+
+
+def benchmark_detail_phase_message(
+    run: BenchmarkRun,
+    perf_child: BenchmarkRun | None = None,
+    quality_child: BenchmarkRun | None = None,
+) -> str:
+    """Operator-facing progress text while a COMPLETE run is in flight."""
+    if run.benchmark_kind != "COMPLETE" or run.status not in ("PENDING", "RUNNING"):
+        return "Benchmark in progress. This may take several minutes."
+    if perf_child and perf_child.status in ("PENDING", "RUNNING"):
+        return "Phase 1 — Performance benchmark in progress."
+    if quality_child and quality_child.status in ("PENDING", "RUNNING"):
+        return (
+            "Phase 2 — Quality benchmark in progress. "
+            "Industry tasks can take 30+ minutes depending on hardware."
+        )
+    return "Finalizing complete benchmark."
+
+
+def detail_perf_chart_payload(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Chart.js payload for per-scenario performance bars on run detail."""
+    if not summaries:
+        return {}
+    labels = [str(item.get("scenario") or "scenario") for item in summaries]
+    return {
+        "labels": labels,
+        "ttft_p50_ms": [_numeric_metric(item.get("ttft_p50_ms")) for item in summaries],
+        "latency_p50_ms": [_numeric_metric(item.get("latency_p50_ms")) for item in summaries],
+        "aggregate_tps": [_numeric_metric(item.get("aggregate_tps")) for item in summaries],
+    }
+
+
+def detail_quality_chart_payload(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Chart.js payload for quality score bars on run detail."""
+    if not metrics:
+        return {}
+    labels: list[str] = []
+    values: list[float] = []
+    seen: set[str] = set()
+    for key in QUALITY_CHART_KEY_ORDER:
+        raw_value = metrics.get(key)
+        if raw_value is None:
+            continue
+        labels.append(quality_metric_label(key))
+        values.append(float(raw_value))
+        seen.add(key)
+    for key, raw_value in metrics.items():
+        if key in seen or raw_value is None:
+            continue
+        labels.append(quality_metric_label(key))
+        values.append(float(raw_value))
+    return {"labels": labels, "values": values}
