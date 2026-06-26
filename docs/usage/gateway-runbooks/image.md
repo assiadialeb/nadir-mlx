@@ -1,4 +1,4 @@
-# Runbook — Gateway IMAGE (MLX-28)
+# Runbook — Gateway IMAGE
 
 Validate `POST /v1/images/generations` through Nadir Gateway (`:11380`) for a **RUNNING** mflux instance (FLUX, Z-Image, etc.).
 

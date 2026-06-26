@@ -9,7 +9,7 @@ MLX Server today exposes a Django control plane on port `8000` and launches one 
 
 We need a **single stable OpenAI-compatible entrypoint** on each Mac that:
 
-- Routes requests by **gateway alias** (`model` field = `server_config.model_id`, see MLX-19)
+- Routes requests by **gateway alias** (`model` field = `server_config.model_id`)
 - Proxies to the correct local MLX backend without putting Django/Gunicorn on the hot inference path
 - Works with any OpenAI-compatible client in production
 
@@ -60,7 +60,7 @@ Port allocation policy:
 | Django views as proxy | WSGI sync overhead; couples hot path to web admin process |
 | Gunicorn + Django for `/v1` | Same as above; harder to stream SSE efficiently |
 | Per-port client routing (no local gateway) | Each Mac still needs per-port model entries; no unified alias registry tied to orchestrator state |
-| New DB column for alias | `server_config.model_id` already exists and is validated (MLX-19) |
+| New DB column for alias | `server_config.model_id` already exists and is validated |
 
 ## Consequences
 
@@ -68,7 +68,7 @@ Port allocation policy:
 
 - One URL for all local models: `http://127.0.0.1:11380/v1`
 - Alias registry stays in orchestrator DB; gateway is stateless aside from ORM reads
-- FastAPI/uvicorn fits streaming chat proxy (MLX-22)
+- FastAPI/uvicorn fits streaming chat proxy
 - Clear separation: control plane vs data plane
 
 **Negative**
@@ -79,8 +79,8 @@ Port allocation policy:
 
 ## References
 
-- MLX-19: gateway alias on `server_config.model_id`
-- MLX-20: gateway worker bootstrap
-- MLX-21: alias → instance router
-- MLX-22–24: chat proxy, multi-mode proxy, `/v1/models`
+- Gateway alias on `server_config.model_id`
+- Gateway worker bootstrap (`python -m orchestrator.gateway`)
+- Alias → instance router
+- Chat proxy, multi-mode proxy, `/v1/models`
 - **Operator guide:** [Nadir Gateway](../usage/nadir-gateway.md)

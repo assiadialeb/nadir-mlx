@@ -1,4 +1,4 @@
-# Runbook — Gateway EMBEDDING (MLX-26)
+# Runbook — Gateway EMBEDDING
 
 Validate `POST /v1/embeddings` through Nadir Gateway (`:11380`) for a **RUNNING** embedding instance.
 

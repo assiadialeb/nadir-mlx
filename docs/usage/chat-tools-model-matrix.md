@@ -5,7 +5,7 @@ Qualification status for OpenAI-style chat extensions via Nadir Gateway → mlx-
 !!! warning "Living document"
     Update this table when you validate a new MLX weight on Apple Silicon. Gateway behaviour is identical for all rows — differences are **upstream only**.
 
-Last updated: MLX-36 (June 2026).
+Last updated: June 2026.
 
 ## Legend
 

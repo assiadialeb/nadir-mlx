@@ -2,7 +2,7 @@
 
 Qualification for OpenAI-style vision messages via Nadir Gateway → mlx-vlm.
 
-Last updated: MLX-37 (June 2026).
+Last updated: June 2026.
 
 ## Gateway relay
 

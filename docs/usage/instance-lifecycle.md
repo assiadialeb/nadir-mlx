@@ -5,7 +5,7 @@ Operator guide for Ollama-like **sleep / wake** behaviour on Nadir (MLX Server).
 !!! note "Prerequisite"
     Nadir Gateway (`:11380`) must be running. See [nadir-gateway.md](nadir-gateway.md).
 
-**Epic:** MLX-38 · **ADR:** [006-instance-wake-idle-offload.md](../adr/006-instance-wake-idle-offload.md)
+**ADR:** [006-instance-wake-idle-offload.md](../adr/006-instance-wake-idle-offload.md)
 
 ## Concepts
 

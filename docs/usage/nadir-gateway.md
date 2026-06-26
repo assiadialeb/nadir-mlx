@@ -9,7 +9,7 @@ Clients (Open WebUI, curl, OpenAI SDKs, custom scripts) send the **gateway alias
     - **Nadir Gateway `:11380`** — inference only (`/v1/*`).
     - **MLX instances `:11400–11500`** — not exposed to cluster clients; reached via the gateway.
 
-!!! note "Lifecycle modes (MLX-38)"
+!!! note "Lifecycle modes"
     - **`always_on`** (default) — instance must be **Running** before inference; gateway returns `503 model_unavailable` if stopped.
     - **`on_demand`** — gateway **wakes** a stopped instance on first request (cold start). Set client request timeouts ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s). See [instance-lifecycle.md](instance-lifecycle.md).
 

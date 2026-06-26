@@ -87,7 +87,7 @@ curl -s http://127.0.0.1:11380/v1/chat/completions \
   }' | python3 -m json.tool
 ```
 
-## 5. Vision — gateway-hosted PNG (MLX-34)
+## 5. Vision — gateway-hosted PNG
 
 If you generated an image with `response_format: url`, reuse the local gateway URL:
 

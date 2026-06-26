@@ -5,7 +5,7 @@ Reference for Nadir inference instance `server_config`: standard form fields, li
 !!! note "Living document"
     Keys and wiring follow `orchestrator/server_config_schema.py` and `orchestrator/server_manager.py`. Update this page when the whitelist or launch commands change.
 
-Last updated: MLX-38 lifecycle epic (June 2026).
+Last updated: June 2026 (lifecycle modes).
 
 ## Where to configure
 

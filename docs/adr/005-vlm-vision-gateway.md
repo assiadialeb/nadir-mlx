@@ -2,13 +2,12 @@
 
 **Date:** 2026-06-22  
 **Status:** Accepted  
-**Ticket:** MLX-37
 
 ## Context
 
 MULTIMODAL instances run **mlx-vlm** and are reachable through `POST /v1/chat/completions` on the gateway (`:11380`). Clients send OpenAI-style messages with `content` arrays containing `image_url` blocks (base64 data URIs, local paths, or HTTP URLs).
 
-MLX-37 required end-to-end qualification: gateway relay, streaming, OpenAI-compatible client support, and documented limits — without implementing vision in the gateway itself.
+End-to-end qualification was required: gateway relay, streaming, OpenAI-compatible client support, and documented limits — without implementing vision in the gateway itself.
 
 ## Decision
 
@@ -17,7 +16,7 @@ MLX-37 required end-to-end qualification: gateway relay, streaming, OpenAI-compa
 3. **Recommended image transport (air-gapped):**
    - `data:image/jpeg;base64,...` or `data:image/png;base64,...` inline in JSON
    - Absolute local file path (`/path/to/image.jpg`) when the VLM process can read the filesystem
-   - Gateway-hosted PNG from MLX-34 (`http://127.0.0.1:11380/v1/images/files/{id}`) when the client already generated an image locally
+   - Gateway-hosted PNG (`http://127.0.0.1:11380/v1/images/files/{id}`) when the client already generated an image locally
 4. **Documentation:** dedicated runbook `gateway-runbooks/vlm.md`, model matrix `vlm-vision-model-matrix.md`, gateway + qualification tests.
 
 ## Known upstream limits (mlx-vlm)

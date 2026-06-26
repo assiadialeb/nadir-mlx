@@ -1,4 +1,4 @@
-# Runbook — Gateway TTS (MLX-29 / MLX-32)
+# Runbook — Gateway TTS
 
 Validate `POST /v1/audio/speech` through Nadir Gateway (`:11380`) for a **RUNNING** Kokoro TTS instance.
 

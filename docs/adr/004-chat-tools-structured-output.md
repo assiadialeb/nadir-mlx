@@ -2,7 +2,6 @@
 
 **Date:** 2026-06-22  
 **Status:** Accepted  
-**Ticket:** MLX-36
 
 ## Context
 
@@ -11,7 +10,7 @@ Nadir Gateway proxies `POST /v1/chat/completions` to **mlx-lm** (TEXT) or **mlx-
 - `tools` / `tool_choice` / `parallel_tool_calls`
 - `response_format` with `json_object` or `json_schema`
 
-MLX-36 asked to qualify what works end-to-end vs what is relay-only, document curl examples, and ensure the gateway does not strip complex JSON.
+We needed to qualify what works end-to-end vs what is relay-only, document curl examples, and ensure the gateway does not strip complex JSON.
 
 ## Decision
 

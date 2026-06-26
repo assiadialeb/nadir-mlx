@@ -1,4 +1,4 @@
-# Runbook — Gateway RERANKER (MLX-27)
+# Runbook — Gateway RERANKER
 
 Validate `POST /v1/rerank` through Nadir Gateway (`:11380`) for a **RUNNING** reranker instance.
 

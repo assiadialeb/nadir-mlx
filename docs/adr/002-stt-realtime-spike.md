@@ -5,7 +5,7 @@
 
 ## Context
 
-MLX-33 asked whether Nadir Gateway and the local Whisper stack can support **OpenAI-style realtime STT** (WebSocket `/v1/realtime`, partial transcripts while audio is still arriving) in addition to batch `POST /v1/audio/transcriptions`.
+We evaluated whether Nadir Gateway and the local Whisper stack can support **OpenAI-style realtime STT** (WebSocket `/v1/realtime`, partial transcripts while audio is still arriving) in addition to batch `POST /v1/audio/transcriptions`.
 
 Today:
 
@@ -19,7 +19,7 @@ Today:
 |--------|-------------|---------|
 | A | OpenAI Realtime API (WebSocket) on gateway | **Rejected v1** — new protocol, session auth, audio buffer lifecycle; no mlx-audio equivalent |
 | B | HTTP chunked partial JSON/SSE from gateway | **Deferred** — possible wrapper around `generate_streaming()`, but no standard OpenAI client expects this shape today |
-| C | Batch multipart only + richer `response_format` (srt/vtt) + `/v1/audio/translations` | **Accepted v1** (MLX-33) |
+| C | Batch multipart only + richer `response_format` (srt/vtt) + `/v1/audio/translations` | **Accepted v1** |
 
 ## Decision
 
@@ -30,7 +30,7 @@ Today:
 - Segment timestamps from mlx-audio (`return_timestamps=True`)
 - Optional `word_timestamps`, `prompt`, `temperature` forwarded to mlx-audio
 
-**Realtime STT is out of scope** until a dedicated ticket defines:
+**Realtime STT is out of scope** until a future ADR defines:
 
 1. Target client protocol (OpenAI Realtime vs custom SSE)
 2. Gateway WebSocket worker or long-lived HTTP stream
@@ -50,11 +50,10 @@ Today:
 
 - Batch `audio_transcription` flows work through `:11380` without protocol changes.
 - Clients needing **live captions** must poll batch endpoints or wait for a future realtime ADR implementation.
-- mlx-audio `generate_streaming()` remains available for a follow-up **MLX-3x** ticket if we define a non-OpenAI streaming contract.
+- mlx-audio `generate_streaming()` remains available for a follow-up if we define a non-OpenAI streaming contract.
 
 ## References
 
 - `orchestrator/stt_server.py`
 - `orchestrator/stt_response_formats.py`
 - mlx-audio Whisper `generate_streaming()` (AlignAtt)
-- MLX-33

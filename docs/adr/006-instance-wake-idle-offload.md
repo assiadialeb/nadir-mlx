@@ -2,7 +2,6 @@
 
 **Date:** 2026-06-23  
 **Status:** Accepted  
-**Epic:** MLX-38
 
 ## Context
 
@@ -14,7 +13,7 @@ On a RAM-constrained Mac Studio, operators want **Ollama-like** behaviour:
 - **Idle offload:** after configurable inactivity, stop the process and free unified memory.
 - **Always-on option:** keep current behaviour for latency-critical models (default chat model).
 
-Prerequisites from ADR 001 are satisfied: clients call one gateway URL; alias routing via `model` / `server_config.model_id` exists (MLX-19).
+Prerequisites from ADR 001 are satisfied: clients call one gateway URL; alias routing via `model` / `server_config.model_id` exists.
 
 Existing building blocks:
 
@@ -126,7 +125,7 @@ Document in `docs/usage/instance-lifecycle.md`:
 **Risks**
 
 - Streaming requests must refresh `last_used_at` at start so long streams are not offloaded mid-flight.
-- Route cache (MLX-31) must invalidate on status transitions.
+- Route cache must invalidate on status transitions.
 
 ## Out of scope (this epic)
 
@@ -135,18 +134,18 @@ Document in `docs/usage/instance-lifecycle.md`:
 - Gateway API key auth (unchanged)
 - Multi-worker uvicorn coordination beyond DB-backed singleflight
 
-## Implementation map (Gravity)
+## Implementation map
 
-| Ticket | Deliverable |
-|--------|-------------|
-| MLX-39 | This ADR + `lifecycle_mode` / `idle_minutes` schema + validation + migration `last_used_at` |
-| MLX-40 | `ensure_instance_ready` + singleflight + settings |
-| MLX-41 | Gateway hook + route cache invalidation + `/v1/models` extensions |
-| MLX-42 | `last_used_at` updates on proxy (incl. streaming) |
-| MLX-43 | `instance_idle_watcher` + env toggles |
-| MLX-44 | UI lifecycle fields + status badges |
-| MLX-45 | Operator runbook + coverage matrix + client timeout guidance |
-| MLX-46 | Unit + integration tests (wake, timeout, idle, always_on guard) |
+| Deliverable |
+|-------------|
+| This ADR + `lifecycle_mode` / `idle_minutes` schema + validation + migration `last_used_at` |
+| `ensure_instance_ready` + singleflight + settings |
+| Gateway hook + route cache invalidation + `/v1/models` extensions |
+| `last_used_at` updates on proxy (incl. streaming) |
+| `instance_idle_watcher` + env toggles |
+| UI lifecycle fields + status badges |
+| Operator runbook + coverage matrix + client timeout guidance |
+| Unit + integration tests (wake, timeout, idle, always_on guard) |
 
 ## References
 

@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
+Last updated: June 2026 — wake on demand and idle offload implemented.
 
 ## Cross-cutting (all modes)
 
@@ -13,8 +13,8 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 |-------|--------|
 | Alias → RUNNING instance routing | ✅ |
 | Aggregated `GET /v1/models` | ✅ |
-| In-memory alias cache (avoid DB on every hit) | ✅ MLX-31 (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
-| Wake / idle stop for instances | ✅ MLX-38 — [ADR 006](../adr/006-instance-wake-idle-offload.md), [runbook](instance-lifecycle.md) |
+| In-memory alias cache (avoid DB on every hit) | ✅ (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
+| Wake / idle stop for instances | ✅ [ADR 006](../adr/006-instance-wake-idle-offload.md), [runbook](instance-lifecycle.md) |
 | API key auth on gateway | ❌ (enforce at reverse proxy or client if needed) |
 | Multi-worker uvicorn | ❌ single process by default |
 
@@ -25,8 +25,8 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 | `POST /v1/chat/completions` | ✅ |
 | `POST /v1/completions` (legacy) | ✅ TEXT only |
 | **SSE streaming** (`stream: true`) | ✅ gateway + upstream |
-| **Tools / function calling** | ⚠️ MLX-36 — gateway relay ✅; mlx-lm model-dependent ([matrix](chat-tools-model-matrix.md)) |
-| **`response_format` json_object / json_schema** | ⚠️ MLX-36 — relay ✅; enforcement upstream best-effort |
+| **Tools / function calling** | ⚠️ gateway relay ✅; mlx-lm model-dependent ([matrix](chat-tools-model-matrix.md)) |
+| **`response_format` json_object / json_schema** | ⚠️ relay ✅; enforcement upstream best-effort |
 | `logprobs`, `n>1` | ⚠️ mlx-lm limits |
 | `/v1/completions` on VLM alias | ❌ 400 (by design) |
 
@@ -37,7 +37,7 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 | Capability | Status |
 |------------|--------|
 | Chat + **streaming** via `/v1/chat/completions` | ✅ |
-| Multimodal messages (`image_url`, base64, local path) | ✅ MLX-37 ([runbook](gateway-runbooks/vlm.md), [matrix](vlm-vision-model-matrix.md)) |
+| Multimodal messages (`image_url`, base64, local path) | ✅ ([runbook](gateway-runbooks/vlm.md), [matrix](vlm-vision-model-matrix.md)) |
 | Multi-image per message | ⚠️ mlx-vlm may keep last image only |
 | `/v1/completions` | ❌ 400 |
 
@@ -49,8 +49,8 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 |------------|--------|
 | `POST /v1/embeddings` string + batch | ✅ |
 | **Streaming** | ❌ |
-| `encoding_format: base64` | ✅ MLX-35 (float32 little-endian) |
-| `dimensions` (OpenAI truncation) | ✅ MLX-35 (first N dims) |
+| `encoding_format: base64` | ✅ (float32 little-endian) |
+| `dimensions` (OpenAI truncation) | ✅ (first N dims) |
 | `user`, rate/token limits | ⚠️ partial |
 
 ## RERANKER
@@ -69,7 +69,7 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 |------------|--------|
 | `POST /v1/images/generations` | ✅ |
 | `b64_json` | ✅ |
-| `response_format: url` | ✅ MLX-34 (local gateway URL, no CDN) |
+| `response_format: url` | ✅ (local gateway URL, no CDN) |
 | **Streaming** | ❌ |
 | edits / variations / inpainting | ❌ v1 — [ADR 003](../adr/003-image-edits-variations.md) (501) |
 | Long generation timeout | ⚠️ `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` (default 300s) |
@@ -80,8 +80,8 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 |------------|--------|
 | `POST /v1/audio/speech` | ✅ |
 | Formats **wav, mp3** | ✅ |
-| OpenAI formats **opus, aac, flac, pcm** | ✅ MLX-32 (opus/aac/flac/pcm; ffmpeg required except wav/pcm) |
-| **Audio streaming** | ✅ MLX-32 chunked relay (gateway + optional `stream: true` upstream) |
+| OpenAI formats **opus, aac, flac, pcm** | ✅ (opus/aac/flac/pcm; ffmpeg required except wav/pcm) |
+| **Audio streaming** | ✅ chunked relay (gateway + optional `stream: true` upstream) |
 | OpenAI voice → Kokoro remap | ✅ upstream |
 | `instructions` (GPT-4o mini TTS) | ❌ |
 
@@ -90,12 +90,12 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 | Capability | Status |
 |------------|--------|
 | `POST /v1/audio/transcriptions` multipart | ✅ |
-| `response_format`: json, text, verbose_json, **srt**, **vtt** | ✅ MLX-33 |
+| `response_format`: json, text, verbose_json, **srt**, **vtt** | ✅ |
 | Input **WAV / MP3** | ✅ |
 | **M4A, FLAC, OGG, Opus, WebM** | ✅ with ffmpeg (documented) |
 | **Streaming / realtime** | ❌ no-go v1 — [ADR 002](../adr/002-stt-realtime-spike.md) |
-| `/v1/audio/translations` | ✅ MLX-33 (Whisper translate → English) |
-| Segments + optional `word_timestamps` | ✅ MLX-33 |
+| `/v1/audio/translations` | ✅ (Whisper translate → English) |
+| Segments + optional `word_timestamps` | ✅ |
 | `prompt`, `temperature` (Whisper) | ✅ forwarded to mlx-audio |
 
 ## Streaming summary
@@ -103,7 +103,7 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 | Mode | Streaming |
 |------|-----------|
 | TEXT / VLM chat | ✅ SSE |
-| TTS | ✅ chunked binary (MLX-32) |
+| TTS | ✅ chunked binary |
 | Embeddings, rerank, image, STT | ❌ |
 
 ## Client integration QA priorities
@@ -128,12 +128,10 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 
 ## References
 
-- Epic: MLX-17
-- Route cache: MLX-31
-- STT realtime spike: [ADR 002](../adr/002-stt-realtime-spike.md) (MLX-33)
-- Chat tools / JSON: [ADR 004](../adr/004-chat-tools-structured-output.md) (MLX-36)
-- VLM vision: [ADR 005](../adr/005-vlm-vision-gateway.md) (MLX-37)
-- Instance lifecycle: [ADR 006](../adr/006-instance-wake-idle-offload.md) (MLX-38)
+- STT realtime spike: [ADR 002](../adr/002-stt-realtime-spike.md)
+- Chat tools / JSON: [ADR 004](../adr/004-chat-tools-structured-output.md)
+- VLM vision: [ADR 005](../adr/005-vlm-vision-gateway.md)
+- Instance lifecycle: [ADR 006](../adr/006-instance-wake-idle-offload.md)
 - Integration guide: [nadir-gateway.md](nadir-gateway.md)
 - E2E runbooks: see [Nadir Gateway — Per-mode runbooks](nadir-gateway.md#per-mode-runbooks-e2e-validation)
 - ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)

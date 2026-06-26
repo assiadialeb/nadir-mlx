@@ -1,4 +1,4 @@
-# Runbook — Gateway STT (MLX-30 / MLX-33)
+# Runbook — Gateway STT
 
 Validate `POST /v1/audio/transcriptions` and `POST /v1/audio/translations` (multipart) through Nadir Gateway (`:11380`) for a **RUNNING** Whisper STT instance.
 
