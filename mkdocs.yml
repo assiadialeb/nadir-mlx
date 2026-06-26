@@ -1,0 +1,95 @@
+site_name: Nadir MLX
+site_description: Local-first orchestrator for Apple Silicon MLX inference
+site_author: Aissa Dialeb
+site_url: https://assiadialeb.github.io/nadir-mlx/
+repo_name: assiadialeb/nadir-mlx
+repo_url: https://github.com/assiadialeb/nadir-mlx
+edit_uri: edit/main/docs/
+
+copyright: Copyright &copy; 2026 Aissa Dialeb — <a href="https://github.com/assiadialeb/nadir-mlx/blob/main/LICENSE">AGPL-3.0</a>
+
+# GitHub Pages project site — use .html URLs for reliable static hosting
+use_directory_urls: false
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+
+extra:
+  generator: false
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: installation.md
+      - Configuration: configuration.md
+      - Troubleshooting: troubleshooting.md
+  - Usage:
+      - Nadir Gateway: usage/nadir-gateway.md
+      - Instance lifecycle: usage/instance-lifecycle.md
+      - Server config reference: usage/server-config-reference.md
+      - Quality benchmarks: usage/quality-benchmarks.md
+      - API coverage matrix: usage/nadir-gateway-coverage-matrix.md
+      - Chat tools model matrix: usage/chat-tools-model-matrix.md
+      - VLM vision model matrix: usage/vlm-vision-model-matrix.md
+      - Gateway runbooks:
+          - Chat: usage/gateway-runbooks/chat.md
+          - VLM (vision): usage/gateway-runbooks/vlm.md
+          - Embeddings: usage/gateway-runbooks/embedding.md
+          - Reranker: usage/gateway-runbooks/reranker.md
+          - Image generation: usage/gateway-runbooks/image.md
+          - Text-to-speech: usage/gateway-runbooks/tts.md
+          - Speech-to-text: usage/gateway-runbooks/stt.md
+  - Architecture (ADR):
+      - "001 — Nadir Gateway": adr/001-nadir-gateway.md
+      - "002 — STT realtime spike": adr/002-stt-realtime-spike.md
+      - "003 — Image edits / variations": adr/003-image-edits-variations.md
+      - "004 — Chat tools & structured output": adr/004-chat-tools-structured-output.md
+      - "005 — VLM vision gateway": adr/005-vlm-vision-gateway.md
+      - "006 — Wake on demand & idle offload": adr/006-instance-wake-idle-offload.md
+  - Contributing: contributing.md

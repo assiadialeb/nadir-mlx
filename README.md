@@ -6,6 +6,8 @@ Nadir MLX is a Django control plane that downloads Hugging Face models, launches
 
 Built for operators who want **privacy**, **predictable ports**, and a **single gateway** in front of multiple MLX instances.
 
+**Documentation:** [https://assiadialeb.github.io/nadir-mlx/](https://assiadialeb.github.io/nadir-mlx/) · build locally with `pip install -r requirements-docs.txt && mkdocs serve`
+
 ---
 
 ## Why Nadir MLX?
