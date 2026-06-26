@@ -447,6 +447,7 @@ def benchmark_view(request):
         "selected_instance_id": selected_instance_id,
         "gateway_port": settings.NADIR_GATEWAY_PORT,
         "max_requests_per_scenario": BENCHMARK_MAX_REQUESTS_PER_SCENARIO,
+        "benchmark_endpoint_enabled": settings.NADIR_BENCHMARK_ENDPOINT_ENABLED,
     })
 
 

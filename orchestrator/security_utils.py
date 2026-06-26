@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ _BLOCKED_OUTBOUND_HOSTS = frozenset(
         "metadata.google.internal",
     }
 )
+_BENCHMARK_ENDPOINT_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
 _HOSTNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 _HF_SEARCH_MAX_LENGTH = 200
 _HF_API_ORIGIN = "https://huggingface.co"
@@ -92,6 +94,54 @@ def validate_server_bind_host(host: str) -> str:
 def validate_outbound_http_host(host: str) -> str:
     """Validate a user-supplied host before server-side HTTP requests."""
     return validate_server_bind_host(host)
+
+
+def benchmark_endpoint_enabled() -> bool:
+    """Return whether custom ENDPOINT benchmark targets are permitted."""
+    return bool(getattr(settings, "NADIR_BENCHMARK_ENDPOINT_ENABLED", settings.DEBUG))
+
+
+def _benchmark_endpoint_allowed_hosts() -> list[str]:
+    """Resolve allowed ENDPOINT hosts (empty list = private network OK in dev)."""
+    env_raw = os.environ.get("NADIR_BENCHMARK_ENDPOINT_ALLOWED_HOSTS", "").strip()
+    if env_raw:
+        return [item.strip() for item in env_raw.split(",") if item.strip()]
+    if settings.DEBUG:
+        return []
+    return list(_BENCHMARK_ENDPOINT_LOOPBACK_HOSTS)
+
+
+def validate_benchmark_endpoint_host(host: str) -> str:
+    """Restrict custom benchmark targets to approved hosts (anti-SSRF)."""
+    if not benchmark_endpoint_enabled():
+        raise ValueError(
+            "Custom endpoint benchmarks are disabled. Use a running MLX instance."
+        )
+
+    cleaned = host.strip()
+    if not cleaned:
+        raise ValueError("Host is required for a custom endpoint.")
+
+    safe_host = validate_server_bind_host(cleaned)
+    allowed_hosts = _benchmark_endpoint_allowed_hosts()
+    if not allowed_hosts:
+        return safe_host
+
+    normalized = safe_host.lower().strip("[]")
+    allowed_normalized = {item.lower().strip("[]") for item in allowed_hosts}
+    if normalized in allowed_normalized:
+        return safe_host
+
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        raise ValueError("Endpoint host is not allowed.") from None
+
+    loopback_allowed = allowed_normalized.intersection({"127.0.0.1", "localhost", "::1"})
+    if address.is_loopback and loopback_allowed:
+        return safe_host
+
+    raise ValueError("Endpoint host is not allowed.")
 
 
 def safe_positive_int(value: int, *, field_name: str = "id") -> int:

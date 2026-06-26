@@ -17,9 +17,11 @@ from django.utils import timezone
 from .gateway_aliases import instance_gateway_alias
 from .models import BenchmarkRun, InferenceInstance
 from .security_utils import (
+    benchmark_endpoint_enabled,
     public_error_message,
     safe_path_under_root,
     safe_positive_int,
+    validate_benchmark_endpoint_host,
     validate_outbound_http_host,
 )
 
@@ -169,7 +171,7 @@ def _resolve_target(
     if port is None:
         raise ValueError("Port is required for a custom endpoint.")
 
-    safe_host = validate_outbound_http_host(host.strip())
+    safe_host = validate_benchmark_endpoint_host(host.strip())
     if port < 1 or port > 65535:
         raise ValueError("Port must be between 1 and 65535.")
     return safe_host, port, None
@@ -274,10 +276,23 @@ def start_benchmark(
     return run
 
 
+def _validate_endpoint_target(target_type: str, host: str) -> None:
+    if target_type != "ENDPOINT":
+        return
+    if not benchmark_endpoint_enabled():
+        raise ValueError(
+            "Custom endpoint benchmarks are disabled. Use a running MLX instance."
+        )
+    validate_benchmark_endpoint_host(host)
+
+
 def parse_benchmark_form(data: dict[str, str]) -> dict[str, Any]:
     target_type = data.get("target_type", "INSTANCE")
     if target_type not in {"INSTANCE", "ENDPOINT"}:
         raise ValueError("Invalid target type.")
+
+    endpoint_host = data.get("endpoint_host", "localhost").strip()
+    _validate_endpoint_target(target_type, endpoint_host)
 
     instance_id_raw = data.get("instance_id", "").strip()
     instance_id = int(instance_id_raw) if instance_id_raw else None
@@ -300,7 +315,7 @@ def parse_benchmark_form(data: dict[str, str]) -> dict[str, Any]:
     return {
         "target_type": target_type,
         "instance_id": instance_id,
-        "host": data.get("endpoint_host", "localhost").strip(),
+        "host": endpoint_host,
         "port": port,
         "model_id": data.get("model_id", "").strip(),
         "params": {

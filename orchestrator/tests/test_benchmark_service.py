@@ -28,6 +28,55 @@ class ParseBenchmarkFormTests(TestCase):
                 }
             )
 
+    @override_settings(DEBUG=False, NADIR_BENCHMARK_ENDPOINT_ENABLED=False)
+    def test_endpoint_target_rejected_when_disabled(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_benchmark_form(
+                {
+                    "target_type": "ENDPOINT",
+                    "endpoint_host": "localhost",
+                    "endpoint_port": "11434",
+                    "num_requests": "5",
+                    "concurrency": "1",
+                    "categories": ["medium"],
+                }
+            )
+
+    @override_settings(
+        DEBUG=False,
+        NADIR_BENCHMARK_ENDPOINT_ENABLED=True,
+    )
+    def test_endpoint_target_rejects_private_host_in_prod(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_benchmark_form(
+                {
+                    "target_type": "ENDPOINT",
+                    "endpoint_host": "10.0.0.5",
+                    "endpoint_port": "11434",
+                    "num_requests": "5",
+                    "concurrency": "1",
+                    "categories": ["medium"],
+                }
+            )
+
+    @override_settings(
+        DEBUG=False,
+        NADIR_BENCHMARK_ENDPOINT_ENABLED=True,
+    )
+    def test_endpoint_target_accepts_localhost_in_prod_when_enabled(self) -> None:
+        parsed = parse_benchmark_form(
+            {
+                "target_type": "ENDPOINT",
+                "endpoint_host": "localhost",
+                "endpoint_port": "11434",
+                "num_requests": "5",
+                "concurrency": "1",
+                "categories": ["medium"],
+            }
+        )
+        self.assertEqual(parsed["target_type"], "ENDPOINT")
+        self.assertEqual(parsed["host"], "localhost")
+
 
 class ResolveBenchmarkModelIdTests(TestCase):
     def _instance(self, launch_mode: str, model_name: str = "example-model") -> InferenceInstance:
@@ -92,7 +141,16 @@ class ResolveBenchmarkTargetTests(TestCase):
         self.assertEqual(instance.id, self.instance.id)
 
     def test_endpoint_target_uses_custom_host_and_port(self) -> None:
-        host, port, instance = _resolve_target("ENDPOINT", None, "localhost", 11434)
+        with override_settings(DEBUG=True, NADIR_BENCHMARK_ENDPOINT_ENABLED=True):
+            host, port, instance = _resolve_target("ENDPOINT", None, "localhost", 11434)
         self.assertEqual(host, "localhost")
         self.assertEqual(port, 11434)
         self.assertIsNone(instance)
+
+    @override_settings(
+        DEBUG=False,
+        NADIR_BENCHMARK_ENDPOINT_ENABLED=True,
+    )
+    def test_endpoint_target_rejects_metadata_ip(self) -> None:
+        with self.assertRaises(ValueError):
+            _resolve_target("ENDPOINT", None, "169.254.169.254", 11434)

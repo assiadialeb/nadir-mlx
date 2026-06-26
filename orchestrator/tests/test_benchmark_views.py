@@ -1,7 +1,7 @@
 """Tests for benchmark history and compare views."""
 
 from django.contrib.auth.models import User
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from orchestrator.models import BenchmarkRun, InferenceInstance
@@ -55,6 +55,35 @@ class BenchmarkViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Benchmark history")
         self.assertContains(response, "gemma-test")
+
+    @override_settings(DEBUG=False, NADIR_BENCHMARK_ENDPOINT_ENABLED=False)
+    def test_benchmark_view_hides_custom_endpoint_in_production(self) -> None:
+        response = self.client.get(reverse("benchmark"))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'value="ENDPOINT"')
+        self.assertContains(response, "disabled in this environment")
+
+    @override_settings(DEBUG=True, NADIR_BENCHMARK_ENDPOINT_ENABLED=True)
+    def test_benchmark_view_shows_custom_endpoint_in_debug(self) -> None:
+        response = self.client.get(reverse("benchmark"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="ENDPOINT"')
+
+    @override_settings(DEBUG=False, NADIR_BENCHMARK_ENDPOINT_ENABLED=False)
+    def test_start_benchmark_rejects_endpoint_post_in_production(self) -> None:
+        response = self.client.post(
+            reverse("start_benchmark"),
+            {
+                "target_type": "ENDPOINT",
+                "endpoint_host": "localhost",
+                "endpoint_port": "11434",
+                "num_requests": "5",
+                "concurrency": "1",
+                "categories": "medium",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(BenchmarkRun.objects.count(), 0)
 
     def test_benchmark_compare_export_returns_json_attachment(self) -> None:
         mlx_run = BenchmarkRun.objects.create(

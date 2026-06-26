@@ -37,11 +37,13 @@
                         <span class="block text-sm font-semibold text-slate-800">Full sweep</span>
                         <span class="block field-hint mt-0.5">~20+ min · all prompts · conc 1,2,4,8</span>
                     </button>
+                    {% if benchmark_endpoint_enabled %}
                     <button type="button" onclick="applyPreset('ollama')"
                         class="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:border-amber-200 transition-all">
                         <span class="block text-sm font-semibold text-slate-800">Ollama compare</span>
                         <span class="block field-hint mt-0.5">localhost:11434 · standard settings</span>
                     </button>
+                    {% endif %}
                 </div>
             </div>
 
@@ -59,15 +61,21 @@
                                     class="text-indigo-600 focus:ring-indigo-500" onchange="toggleTargetFields()">
                                 <span>Running MLX instance</span>
                             </label>
+                            {% if benchmark_endpoint_enabled %}
                             <label class="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
                                 <input type="radio" name="target_type" value="ENDPOINT"
                                     class="text-indigo-600 focus:ring-indigo-500" onchange="toggleTargetFields()">
                                 <span>Custom endpoint</span>
                             </label>
+                            {% endif %}
                         </div>
                         <div class="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600 leading-relaxed">
-                            <strong class="text-slate-700">MLX instance</strong> — benchmarks via the Nadir gateway (<code class="text-slate-800">:{{ gateway_port }}</code>) using the instance gateway alias. Compare these runs against Ollama or other external APIs.<br>
-                            <strong class="text-slate-700">Custom endpoint</strong> — any other OpenAI-compatible API (Ollama <code class="text-slate-800">:11434</code>, LM Studio, vLLM, etc.).
+                            <strong class="text-slate-700">MLX instance</strong> — benchmarks via the Nadir gateway (<code class="text-slate-800">:{{ gateway_port }}</code>) using the instance gateway alias.{% if benchmark_endpoint_enabled %} Compare these runs against Ollama or other external APIs.{% endif %}<br>
+                            {% if benchmark_endpoint_enabled %}
+                            <strong class="text-slate-700">Custom endpoint</strong> — any other OpenAI-compatible API on loopback (Ollama <code class="text-slate-800">:11434</code>, LM Studio, vLLM, etc.).
+                            {% else %}
+                            <strong class="text-slate-700">Custom endpoints</strong> are disabled in this environment (production SSRF policy).
+                            {% endif %}
                         </div>
                     </div>
 
@@ -84,10 +92,11 @@
                             {% endfor %}
                         </select>
                         {% if not running_instances %}
-                        <p class="text-xs text-amber-700 mt-2">No RUNNING instance. Start a server from the Servers page or use a custom endpoint.</p>
+                        <p class="text-xs text-amber-700 mt-2">No RUNNING instance. Start a server from the Servers page{% if benchmark_endpoint_enabled %} or use a custom endpoint{% endif %}.</p>
                         {% endif %}
                     </div>
 
+                    {% if benchmark_endpoint_enabled %}
                     <div id="endpoint-fields" class="hidden space-y-3">
                         <div>
                             <label for="benchmark-endpoint-host" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Host</label>
@@ -102,6 +111,7 @@
                                 placeholder="11434 (Ollama)">
                         </div>
                     </div>
+                    {% endif %}
 
                     <div>
                         <label for="field-model-id" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Model ID (optional)</label>
