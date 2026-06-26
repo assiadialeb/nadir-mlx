@@ -18,7 +18,7 @@ Today:
 | Option | Description | Verdict |
 |--------|-------------|---------|
 | A | OpenAI Realtime API (WebSocket) on gateway | **Rejected v1** — new protocol, session auth, audio buffer lifecycle; no mlx-audio equivalent |
-| B | HTTP chunked partial JSON/SSE from gateway | **Deferred** — possible wrapper around `generate_streaming()`, but no LiteLLM/OpenAI client expects this shape today |
+| B | HTTP chunked partial JSON/SSE from gateway | **Deferred** — possible wrapper around `generate_streaming()`, but no standard OpenAI client expects this shape today |
 | C | Batch multipart only + richer `response_format` (srt/vtt) + `/v1/audio/translations` | **Accepted v1** (MLX-33) |
 
 ## Decision
@@ -48,7 +48,7 @@ Today:
 
 ## Consequences
 
-- LiteLLM `audio_transcription` batch flows work through `:11380` without protocol changes.
+- Batch `audio_transcription` flows work through `:11380` without protocol changes.
 - Clients needing **live captions** must poll batch endpoints or wait for a future realtime ADR implementation.
 - mlx-audio `generate_streaming()` remains available for a follow-up **MLX-3x** ticket if we define a non-OpenAI streaming contract.
 

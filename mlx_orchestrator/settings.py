@@ -238,6 +238,13 @@ NADIR_GATEWAY_PUBLIC_BASE_URL = os.environ.get(
     "NADIR_GATEWAY_PUBLIC_BASE_URL",
     f"http://{NADIR_GATEWAY_HOST}:{NADIR_GATEWAY_PORT}",
 )
+
+# Benchmark custom endpoints (anti-SSRF): disabled in production unless explicitly enabled.
+NADIR_BENCHMARK_ENDPOINT_ENABLED = _env_bool(
+    "NADIR_BENCHMARK_ENDPOINT_ENABLED",
+    DEBUG,
+)
+
 IMAGE_OUTPUT_DIR = BASE_DIR / "data" / "generated_images"
 IMAGE_OUTPUT_TTL_SECONDS = int(os.environ.get("IMAGE_OUTPUT_TTL_SECONDS", "3600"))
 

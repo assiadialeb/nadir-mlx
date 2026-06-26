@@ -55,11 +55,18 @@ from .benchmark_selectors import (
     benchmark_run_list_row,
     build_benchmark_history_query,
     build_comparison_snapshot,
+    build_benchmark_status_payload,
+    benchmark_detail_phase_message,
     chart_series_for_runs,
+    detail_render_ready,
+    resolve_perf_summaries,
+    resolve_quality_metrics,
+    resolve_quality_results,
     comparison_pair_label,
     comparison_rows,
     filter_benchmark_runs,
     find_comparison_candidates,
+    quality_metric_label,
     list_distinct_preset_keys,
     list_filter_options,
     paginate_benchmark_runs,
@@ -447,6 +454,7 @@ def benchmark_view(request):
         "selected_instance_id": selected_instance_id,
         "gateway_port": settings.NADIR_GATEWAY_PORT,
         "max_requests_per_scenario": BENCHMARK_MAX_REQUESTS_PER_SCENARIO,
+        "benchmark_endpoint_enabled": settings.NADIR_BENCHMARK_ENDPOINT_ENABLED,
     })
 
 
@@ -464,10 +472,12 @@ def start_benchmark_view(request):
             port=form_data["port"],
             model_id=form_data["model_id"],
             params=form_data["params"],
+            benchmark_kind=form_data["benchmark_kind"],
         )
+        kind_label = form_data["benchmark_kind"].title()
         messages.success(
             request,
-            f"Benchmark #{run.id} started against {run.endpoint_url}.",
+            f"{kind_label} benchmark #{run.id} started against {run.endpoint_url}.",
         )
         return redirect("benchmark_detail", run_id=run.id)
     except ValueError as exc:
@@ -481,8 +491,41 @@ def start_benchmark_view(request):
 @login_required
 def benchmark_detail_view(request, run_id: int):
     run = get_object_or_404(BenchmarkRun, id=run_id)
+    child_runs = list(run.child_runs.order_by("id"))
+    perf_child = next((item for item in child_runs if item.benchmark_kind == "PERF"), None)
+    quality_child = next((item for item in child_runs if item.benchmark_kind == "QUALITY"), None)
+    display_run = run
+    if run.benchmark_kind == "QUALITY":
+        display_run = run
+    elif run.benchmark_kind == "COMPLETE" and perf_child and quality_child:
+        display_run = run
+
+    perf_summaries = resolve_perf_summaries(run, perf_child)
+    quality_metrics = resolve_quality_metrics(run, quality_child)
+    quality_results = resolve_quality_results(run, quality_child)
+    quality_metric_items = [
+        {"key": key, "label": quality_metric_label(key), "value": value}
+        for key, value in quality_metrics.items()
+    ]
+    render_ready = detail_render_ready(run, perf_child, quality_child)
+    needs_live_update = run.status in ("PENDING", "RUNNING") or (
+        run.status == "COMPLETED" and not render_ready
+    )
+    status_payload = build_benchmark_status_payload(run, perf_child, quality_child)
+
     return render(request, "orchestrator/benchmark_detail.html", {
         "run": run,
+        "display_run": display_run,
+        "perf_child": perf_child,
+        "quality_child": quality_child,
+        "perf_summaries": perf_summaries,
+        "quality_metrics": quality_metrics,
+        "quality_metric_items": quality_metric_items,
+        "quality_results": quality_results,
+        "waiting_message": benchmark_detail_phase_message(run, perf_child, quality_child),
+        "needs_live_update": needs_live_update,
+        "render_ready": render_ready,
+        "status_payload_json": json.dumps(status_payload),
         "history_model_query": benchmark_history_model_query(run),
     })
 
@@ -490,13 +533,9 @@ def benchmark_detail_view(request, run_id: int):
 @login_required
 def benchmark_status_view(request, run_id: int):
     run = get_object_or_404(BenchmarkRun, id=run_id)
-    return JsonResponse({
-        "id": run.id,
-        "status": run.status,
-        "error_message": run.error_message,
-        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-        "summaries": run.summaries,
-    })
+    perf_child = run.child_runs.filter(benchmark_kind="PERF").first()
+    quality_child = run.child_runs.filter(benchmark_kind="QUALITY").first()
+    return JsonResponse(build_benchmark_status_payload(run, perf_child, quality_child))
 
 
 @login_required

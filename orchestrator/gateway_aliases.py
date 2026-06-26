@@ -33,7 +33,7 @@ def validate_gateway_alias_format(alias: str) -> None:
 
 
 def instance_gateway_alias(instance: InferenceInstance, *, model_name: str | None = None) -> str:
-    """Return the alias exposed to LiteLLM / Nadir gateway for an instance."""
+    """Return the alias exposed to the Nadir gateway for an instance."""
     folder_name = model_name or instance.model_name
     config = instance.server_config or {}
     raw_alias = config.get("model_id") or folder_name

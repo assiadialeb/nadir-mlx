@@ -24,7 +24,7 @@ Last updated: MLX-37 (June 2026).
 
 Supported MIME types depend on mlx-vlm / Pillow — **JPEG** and **PNG** are the primary QA path.
 
-## Validated model families (mlx-server registry)
+## Validated model families (Nadir MLX registry)
 
 | Family | Example weights | Vision QA | Notes |
 |--------|-----------------|-----------|-------|

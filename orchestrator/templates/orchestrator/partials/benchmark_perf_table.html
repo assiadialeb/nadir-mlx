@@ -1,0 +1,57 @@
+{% if summaries %}
+<h2 class="text-lg font-bold text-slate-900 mb-4">{{ title|default:"Performance results" }}</h2>
+<div class="overflow-x-auto">
+    <table class="w-full text-sm text-left">
+        <thead class="text-xs uppercase text-slate-500 border-b border-slate-200">
+            <tr>
+                <th class="py-2 pr-3">Scenario</th>
+                <th class="py-2 pr-3">Conc.</th>
+                <th class="py-2 pr-3">Success</th>
+                <th class="py-2 pr-3">TTFT p50</th>
+                <th class="py-2 pr-3">Latency p50</th>
+                <th class="py-2 pr-3">Latency p95</th>
+                <th class="py-2 pr-3">Tok/s req</th>
+                <th class="py-2">Agg. tok/s</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" {% if table_id %}id="{{ table_id }}"{% endif %}>
+            {% for summary in summaries %}
+            <tr>
+                <td class="py-3 pr-3 font-mono text-xs">{{ summary.scenario }}</td>
+                <td class="py-3 pr-3">{{ summary.concurrency }}</td>
+                <td class="py-3 pr-3">{{ summary.success_rate }}</td>
+                <td class="py-3 pr-3 font-semibold text-indigo-700">
+                    {% if summary.ttft_p50_ms != "N/A" %}{{ summary.ttft_p50_ms }} ms{% else %}N/A{% endif %}
+                </td>
+                <td class="py-3 pr-3">{{ summary.latency_p50_ms }} ms</td>
+                <td class="py-3 pr-3">{{ summary.latency_p95_ms }} ms</td>
+                <td class="py-3 pr-3">{{ summary.tps_per_req_median }}</td>
+                <td class="py-3 font-semibold text-emerald-700">{{ summary.aggregate_tps }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<details class="mt-4 group">
+    <summary class="text-xs font-semibold text-slate-500 cursor-pointer hover:text-indigo-600 select-none">
+        What do these columns mean?
+    </summary>
+    <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600">
+        <div class="p-2 rounded-lg bg-indigo-50/50 border border-indigo-100">
+            <strong class="text-indigo-900">TTFT p50</strong> — time until the first streamed token (responsiveness).
+        </div>
+        <div class="p-2 rounded-lg bg-slate-50 border border-slate-100">
+            <strong class="text-slate-800">Latency p50 / p95</strong> — full response time; p95 = tail latency.
+        </div>
+        <div class="p-2 rounded-lg bg-slate-50 border border-slate-100">
+            <strong class="text-slate-800">Tok/s req</strong> — decoding speed per individual request.
+        </div>
+        <div class="p-2 rounded-lg bg-emerald-50/50 border border-emerald-100">
+            <strong class="text-emerald-900">Agg. tok/s</strong> — total throughput under load (best for comparing servers).
+        </div>
+    </div>
+    <p class="field-hint mt-2">
+        Scenario name format: <code class="text-slate-700">{category}_conc{N}</code> (e.g. <code class="text-slate-700">medium_conc4</code>).
+    </p>
+</details>
+{% endif %}

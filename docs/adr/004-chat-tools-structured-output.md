@@ -6,7 +6,7 @@
 
 ## Context
 
-Nadir Gateway proxies `POST /v1/chat/completions` to **mlx-lm** (TEXT) or **mlx-vlm** (MULTIMODAL) without interpreting the OpenAI payload. Clients (LiteLLM, agents, SDKs) increasingly send:
+Nadir Gateway proxies `POST /v1/chat/completions` to **mlx-lm** (TEXT) or **mlx-vlm** (MULTIMODAL) without interpreting the OpenAI payload. Clients (agents, SDKs) increasingly send:
 
 - `tools` / `tool_choice` / `parallel_tool_calls`
 - `response_format` with `json_object` or `json_schema`
@@ -30,7 +30,7 @@ MLX-36 asked to qualify what works end-to-end vs what is relay-only, document cu
 
 ## Consequences
 
-- **Positive:** LiteLLM agents can send full tool payloads through `:11380` without gateway truncation.
+- **Positive:** Agent clients can send full tool payloads through `:11380` without gateway truncation.
 - **Positive:** Clear operator docs on which model families support native tool parsing.
 - **Negative:** `response_format: json_schema` may not produce valid JSON on all models — clients must handle parse errors.
 - **Negative:** Model matrix requires manual updates when new tool-capable MLX weights are validated.

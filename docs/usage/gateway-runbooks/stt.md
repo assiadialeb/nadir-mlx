@@ -10,7 +10,7 @@ Validate `POST /v1/audio/transcriptions` and `POST /v1/audio/translations` (mult
 - **ffmpeg** on the host for M4A / FLAC / OGG / Opus / WebM uploads (`brew install ffmpeg`)
 
 !!! note "Restart gateway"
-    Multipart relay requires gateway code that detects Starlette `UploadFile` correctly. After updating mlx-server, run `python manage.py run_gateway` again.
+    Multipart relay requires gateway code that detects Starlette `UploadFile` correctly. After updating Nadir MLX, run `python manage.py run_gateway` again.
 
 ## 1. Discovery
 
@@ -119,19 +119,6 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 ```
 
 **Expected:** HTTP **400**.
-
-## 9. LiteLLM
-
-```yaml
-model_list:
-  - model_name: local-whisper
-    litellm_params:
-      model: openai/whispers
-      api_base: http://host.docker.internal:11380/v1
-      api_key: sk-local
-    model_info:
-      mode: audio_transcription
-```
 
 ## Realtime STT
 

@@ -1,6 +1,6 @@
 # Nadir Gateway — API coverage matrix
 
-Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI / LiteLLM expectations.
+Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI API expectations.
 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
@@ -15,7 +15,7 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 | Aggregated `GET /v1/models` | ✅ |
 | In-memory alias cache (avoid DB on every hit) | ✅ MLX-31 (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
 | Wake / idle stop for instances | ✅ MLX-38 — [ADR 006](../adr/006-instance-wake-idle-offload.md), [runbook](instance-lifecycle.md) |
-| API key auth on gateway | ❌ (LiteLLM can enforce upstream) |
+| API key auth on gateway | ❌ (enforce at reverse proxy or client if needed) |
 | Multi-worker uvicorn | ❌ single process by default |
 
 ## TEXT
@@ -106,7 +106,7 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 | TTS | ✅ chunked binary (MLX-32) |
 | Embeddings, rerank, image, STT | ❌ |
 
-## LiteLLM QA priorities
+## Client integration QA priorities
 
 **Ready for integration QA:**
 
@@ -121,8 +121,8 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 
 1. STT M4A without ffmpeg on the host
 2. Image when client expects a **URL**
-3. **`on_demand` cold start** — LiteLLM / client `timeout` must be ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (see [instance-lifecycle.md](instance-lifecycle.md))
-4. Rerank / embedding depending on LiteLLM version and `model_info.mode`
+3. **`on_demand` cold start** — client `timeout` must be ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (see [instance-lifecycle.md](instance-lifecycle.md))
+4. Rerank / embedding — route must match launch mode (`/v1/rerank`, `/v1/embeddings`)
 5. VLM with images — use base64 or local paths ([vlm-vision-model-matrix.md](vlm-vision-model-matrix.md))
 6. Chat **tools** on models without `tool_parser_type` — see [chat-tools-model-matrix.md](chat-tools-model-matrix.md)
 
@@ -134,6 +134,6 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 - Chat tools / JSON: [ADR 004](../adr/004-chat-tools-structured-output.md) (MLX-36)
 - VLM vision: [ADR 005](../adr/005-vlm-vision-gateway.md) (MLX-37)
 - Instance lifecycle: [ADR 006](../adr/006-instance-wake-idle-offload.md) (MLX-38)
-- Integration guide: [nadir-gateway-litellm.md](nadir-gateway-litellm.md)
+- Integration guide: [nadir-gateway.md](nadir-gateway.md)
 - E2E runbooks: [gateway-runbooks/](gateway-runbooks/)
 - ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)

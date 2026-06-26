@@ -1,4 +1,4 @@
-"""Database configuration for Nadir (SQLite local dev or Vela Stack PostgreSQL)."""
+"""Database configuration for Nadir (SQLite local dev or external PostgreSQL)."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _postgres_from_env() -> dict[str, Any] | None:
         "USER": os.environ.get("NADIR_DB_USER", "nadir_user"),
         "PASSWORD": os.environ.get("NADIR_DB_PASSWORD", ""),
         "HOST": host,
-        "PORT": os.environ.get("NADIR_DB_PORT", "5433"),
+        "PORT": os.environ.get("NADIR_DB_PORT", "5432"),
         "CONN_MAX_AGE": int(os.environ.get("NADIR_DB_CONN_MAX_AGE", "60")),
         "OPTIONS": _postgres_ssl_options(),
     }

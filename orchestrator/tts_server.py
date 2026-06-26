@@ -243,7 +243,7 @@ def _verify_kokoro_dependencies() -> None:
     except ImportError as exc:
         raise SystemExit(
             "Kokoro TTS requires misaki with English/espeak extras. "
-            "Install in the mlx-server venv: pip install 'misaki[en]==0.9.4' "
+            "Install in the Nadir MLX venv: pip install 'misaki[en]==0.9.4' "
             "(or pip install -r requirements.txt), then restart the TTS server."
         ) from exc
 

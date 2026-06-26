@@ -1,22 +1,22 @@
-# MLX Server
+# Nadir MLX
 
 **Local-first orchestrator for Apple Silicon MLX inference.**
 
-MLX Server is a Django web application that downloads Hugging Face models, launches OpenAI-compatible inference endpoints on your Mac, and benchmarks them — all without sending data to the cloud. Think of it as a lightweight control plane for your on-device LLM, VLM, embedding, reranker, and image-generation stack.
+Nadir MLX is a Django control plane that downloads Hugging Face models, launches OpenAI-compatible inference endpoints on your Mac, and benchmarks them — without sending prompts or weights to the cloud. One UI for LLM, VLM, embedding, reranker, image, TTS, and STT backends on Apple Silicon.
 
-Built for developers who want **privacy**, **predictable ports**, and a **single UI** to manage multiple MLX backends at once.
+Built for operators who want **privacy**, **predictable ports**, and a **single gateway** in front of multiple MLX instances.
 
 ---
 
-## Why MLX Server?
+## Why Nadir MLX?
 
-Running MLX models locally usually means juggling CLI commands, virtual environments, and ad-hoc scripts. MLX Server centralizes that workflow:
+Running MLX locally usually means juggling CLI commands, virtual environments, and ad-hoc scripts. Nadir MLX centralizes that workflow:
 
 - **Search & download** MLX models from Hugging Face into `./models/`
 - **Launch** one or more inference servers on dedicated ports (`11400–11500`)
 - **Monitor** live logs and instance status from the browser
 - **Benchmark** throughput and latency with integrated [llmbenchmark](https://github.com/tcs211/llmbenchmark)
-- **Integrate** with [LiteLLM](https://github.com/BerriAI/litellm), Open WebUI, or any OpenAI-compatible client
+- **Integrate** with any OpenAI-compatible client (curl, SDKs, Open WebUI, etc.)
 
 Everything runs on your machine. Model weights, logs, and SQLite state stay local.
 
@@ -30,14 +30,14 @@ Everything runs on your machine. Model weights, logs, and SQLite state stay loca
 | **Multi-instance** | Run several models in parallel on different ports |
 | **Smart detection** | Auto-detect text, multimodal, embedding, reranker, and image-generation capabilities |
 | **Reliable lifecycle** | Process-group shutdown + port verification on stop (no ghost listeners) |
-| **Benchmarks** | Presets (quick / standard / full) against running instances or custom endpoints |
+| **Benchmarks** | Performance (llmbench), quality (platform + optional industry), complete runs |
 | **Auth** | Django session login to protect the dashboard |
 
 ---
 
 ## Launch modes
 
-MLX Server supports seven inference backends, each exposing standard HTTP APIs:
+Nadir MLX supports seven inference backends, each exposing standard HTTP APIs:
 
 | Mode | Backend | API |
 |------|---------|-----|
@@ -96,7 +96,7 @@ flowchart TB
         STT[stt_server]
     end
 
-    Client[LiteLLM / OpenAI client]
+    Client[OpenAI-compatible client]
     Models[(./models/)]
     Logs[(./logs/)]
     DB[(db.sqlite3)]
@@ -127,42 +127,82 @@ See [docs/adr/001-nadir-gateway.md](docs/adr/001-nadir-gateway.md) for the contr
 
 ---
 
-## Requirements
+## Installation
 
-- **Hardware**: Apple Silicon Mac (M1 / M2 / M3 / M4)
-- **OS**: macOS 14+
-- **Python**: 3.12+ (recommended; compatible with mflux and local-reranker)
-- **Disk**: Depends on models (plan for tens of GB per large checkpoint)
+### Prerequisites
 
----
+| Item | Requirement |
+|------|-------------|
+| Hardware | Apple Silicon Mac (M1–M4) |
+| OS | macOS 14+ |
+| Python | **3.12.x** recommended (mflux, local-reranker, lm-eval) |
+| Disk | Model-dependent — plan tens of GB per large checkpoint |
+| Optional | **ffmpeg** (`brew install ffmpeg`) for STT on M4A/WebM |
 
-## Quick start
-
-### 1. Clone and install
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/assiadialeb/mlx-server.git
-cd mlx-server
+git clone https://github.com/assiadialeb/nadir-mlx.git
+cd nadir-mlx
+```
 
-python3 -m venv venv
+### 2. Create a virtual environment
+
+```bash
+python3.12 -m venv venv
 source venv/bin/activate
+pip install --upgrade pip
+```
+
+### 3. Install core dependencies
+
+Required for the dashboard, gateway, inference launchers, and **performance** benchmarks:
+
+```bash
 pip install -r requirements.txt
 ```
 
-> **Note — Python 3.14 + local-reranker**  
-> `local-reranker` officially requires Python `<3.14`. If install fails, run:
+> **Python 3.14 + local-reranker**  
+> `local-reranker` pins `Python <3.14`. If pip refuses the install:
 > ```bash
 > pip install -r requirements.txt --ignore-requires-python
 > ```
 
-### 2. Initialize the database
+### 4. Install quality benchmarks (optional)
+
+Required only for **industry** quality tasks (IFEval, GSM8K via [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness)). Platform quality suites run without this extra.
+
+```bash
+pip install -r requirements-quality.txt
+```
+
+This installs `lm-eval[api]`, plus `langdetect` and `immutabledict` (IFEval task dependencies not pulled in by lm-eval alone).
+
+| Install set | Enables |
+|-------------|---------|
+| `requirements.txt` only | Dashboard, gateway, perf benchmarks, platform quality suites |
+| `+ requirements-quality.txt` | Industry presets (`industry_lite`: IFEval + GSM8K ×100) |
+
+See [docs/usage/quality-benchmarks.md](docs/usage/quality-benchmarks.md) for presets, runtime expectations, and troubleshooting.
+
+### 5. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` as needed. Minimal local setup works with defaults; production-like installs should set `DJANGO_SECRET_KEY` and `DJANGO_DEBUG=false` with matching `DJANGO_CSRF_TRUSTED_ORIGINS`.
+
+PostgreSQL is optional — SQLite is the default when `NADIR_DB_HOST` is unset. For production or multi-user setups, point `NADIR_DATABASE_URL` or the `NADIR_DB_*` variables at an external PostgreSQL instance. See `.env.example`.
+
+### 6. Initialize the database
 
 ```bash
 python manage.py migrate
 python manage.py createsuperuser
 ```
 
-### 3. Run the orchestrator
+### 7. Start the control plane
 
 ```bash
 python manage.py runserver
@@ -170,7 +210,7 @@ python manage.py runserver
 
 Open **http://127.0.0.1:8000** and sign in with your superuser account.
 
-### 4. Run the gateway (optional, recommended with LiteLLM)
+### 8. Start the gateway (recommended)
 
 In a **second terminal**, start the OpenAI-compatible gateway on port `11380`:
 
@@ -180,7 +220,7 @@ python manage.py run_gateway
 # equivalent: python -m orchestrator.gateway
 ```
 
-Full integration guide (all launch modes — chat, embeddings, rerank, image, TTS, STT): **[docs/usage/nadir-gateway-litellm.md](docs/usage/nadir-gateway-litellm.md)**.
+Operator guide (all launch modes — chat, embeddings, rerank, image, TTS, STT): **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)**.
 
 Health check:
 
@@ -189,7 +229,7 @@ curl http://127.0.0.1:11380/health
 curl http://127.0.0.1:11380/v1/models
 ```
 
-Configure LiteLLM with a **single** `api_base: http://127.0.0.1:11380/v1` (or `host.docker.internal` from Docker) and one `model_list` entry per **gateway alias** (shown on each server card in the UI). The gateway **wakes** `on_demand` instances on first request and **stops** them after idle time — see [instance-lifecycle.md](docs/usage/instance-lifecycle.md). Set LiteLLM `timeout` / `stream_timeout` ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s) for cold starts.
+Use **`http://127.0.0.1:11380/v1`** as `api_base` in your client. Pass the **gateway alias** (shown on each server card) in the `model` field. The gateway **wakes** `on_demand` instances on first request and **stops** them after idle time — see [instance-lifecycle.md](docs/usage/instance-lifecycle.md). For cold starts, set client timeouts ≥ `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` (default 300s).
 
 ```bash
 curl http://127.0.0.1:11380/v1/chat/completions \
@@ -214,7 +254,7 @@ Environment variables (see `.env.example`):
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Background watcher stops idle `on_demand` instances |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | How often idle candidates are evaluated |
 
-### 5. Download and launch a model
+### 9. Download and launch a model
 
 1. Go to **Search** and find a model (e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit`)
 2. Click **Download** — files land in `./models/<model-name>/`
@@ -286,7 +326,7 @@ Kokoro requires **`misaki[en]`** for G2P (English + espeak for French, Spanish, 
 
 **Multilingual:** set `lang_code` in the server UI (`f` = French, `a` = American English, …). Default is French (`ff_siwis`).
 
-LiteLLM and other OpenAI clients often send voices like `alloy` or `nova`. The TTS server **maps them automatically** to the closest Kokoro voice for the configured language (e.g. `alloy` + French → `ff_siwis`).
+OpenAI-compatible clients often send voices like `alloy` or `nova`. The TTS server **maps them automatically** to the closest Kokoro voice for the configured language (e.g. `alloy` + French → `ff_siwis`).
 
 For long French texts, split paragraphs with newlines — espeak-based languages truncate very long inputs.
 
@@ -297,7 +337,7 @@ curl http://127.0.0.1:11441/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{
     "model": "Kokoro-82M-bf16",
-    "input": "Hello from MLX Server.",
+    "input": "Hello from Nadir MLX.",
     "voice": "af_heart",
     "speed": 1.0
   }' \
@@ -308,7 +348,7 @@ List installed Kokoro voices: `GET /v1/audio/voices`.
 
 ### Speech-to-text (STT mode)
 
-Recommended model: `mlx-community/whisper-large-v3-turbo-asr-fp16`. Legacy `whisper-*-mlx` checkpoints work after mlx-server bootstraps tokenizer/processor files from OpenAI.
+Recommended model: `mlx-community/whisper-large-v3-turbo-asr-fp16`. Legacy `whisper-*-mlx` checkpoints work after Nadir MLX bootstraps tokenizer/processor files from OpenAI.
 
 WAV and MP3 uploads are decoded in memory (no temp re-encode). For **M4A / WebM / AAC**, install **ffmpeg** on the host: `brew install ffmpeg`.
 
@@ -319,93 +359,22 @@ curl http://127.0.0.1:11442/v1/audio/transcriptions \
   -F "response_format=json"
 ```
 
-### LiteLLM proxy (Nadir Gateway)
+### Nadir Gateway
 
-**Recommended:** point every local MLX model at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
+**Recommended:** point clients at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
 
-See **[docs/usage/nadir-gateway-litellm.md](docs/usage/nadir-gateway-litellm.md)** for:
+See **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)** for curl samples per launch mode, environment variables, and troubleshooting (`404`, `503`, wrong route for mode).
 
-- `config.yaml` examples per launch mode
-- curl samples via gateway (not per-instance ports)
-- Docker `host.docker.internal` notes
-- Troubleshooting (`404`, `503`, wrong route for mode)
+#### Direct instance port (debugging)
 
-#### Legacy: direct instance port
-
-The sections below still work for debugging a single backend on its `:114xx` port. Prefer the gateway for LiteLLM and cluster routing.
-
-#### Reranker (direct port)
-
-Register the reranker in [LiteLLM](https://docs.litellm.ai/) via the UI:
-
-1. **Credentials** → provider **vLLM (Hosted vLLM)**
-2. **API Base**: `http://127.0.0.1:<port>/v1`
-3. **Add Model** → `hosted_vllm/your-model-name`, mode **Rerank**
-
-Then call LiteLLM's `/rerank` endpoint with your proxy model name.
-
-#### Text-to-speech (Kokoro)
-
-Use provider **`openai`** (OpenAI-compatible), **not** chat mode. The backend model id is whatever `/v1/models` returns (often `kokoro`).
-
-`config.yaml` example (LiteLLM in Docker → use `host.docker.internal` instead of `127.0.0.1`):
-
-```yaml
-model_list:
-  - model_name: kokoro-tts
-    litellm_params:
-      model: openai/kokoro
-      api_base: http://host.docker.internal:11444/v1
-      api_key: sk-local
-    model_info:
-      mode: audio_speech
-```
-
-Test through LiteLLM proxy:
-
-```bash
-curl http://127.0.0.1:4000/v1/audio/speech \
-  -H "Authorization: Bearer sk-1234" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "kokoro-tts",
-    "input": "Bonjour depuis LiteLLM.",
-    "voice": "alloy"
-  }' \
-  --output speech.wav
-```
-
-**UI checklist**
-
-| Field | Value |
-|-------|--------|
-| Provider | **OpenAI** (or OpenAI-compatible) |
-| LiteLLM model | `openai/kokoro` |
-| API Base | `http://host.docker.internal:11444/v1` (must end with `/v1`) |
-| API Key | any non-empty string (`sk-local`) |
-| Mode | **Audio Speech** (`audio_speech`) — not Chat |
-
-`voice: alloy` is fine: mlx-server maps OpenAI voices to Kokoro (`alloy` → `ff_siwis` in French).
-
-**Sanity check without proxy** (from the LiteLLM venv):
-
-```python
-import litellm
-litellm.speech(
-    model="openai/kokoro",
-    api_base="http://127.0.0.1:11444/v1",
-    api_key="sk-fake",
-    voice="alloy",
-    input="Bonjour test direct",
-).stream_to_file("test.wav")
-```
+The usage examples above call each backend on its `:114xx` port. That is useful for debugging a single server. For day-to-day use, prefer the gateway so aliases stay stable and instance ports stay private.
 
 ---
 
 ## Project structure
 
 ```
-mlx-server/
+nadir-mlx/
 ├── manage.py                 # Django entrypoint
 ├── mlx_orchestrator/         # Django project settings
 ├── orchestrator/             # Main application
@@ -424,7 +393,8 @@ mlx-server/
 │   └── vendor/llmbench.py    # Vendored benchmark CLI
 ├── models/                   # Downloaded weights (gitignored)
 ├── logs/                     # Instance & benchmark logs (gitignored)
-└── requirements.txt
+├── requirements.txt          # Core stack (required)
+└── requirements-quality.txt  # Optional lm-eval industry benchmarks
 ```
 
 ---
@@ -454,6 +424,22 @@ From the dashboard, start a benchmark against any **RUNNING** TEXT or MULTIMODAL
 - **Ollama-compatible** — preset aligned with Ollama bench conventions
 
 Results are stored in `logs/benchmarks/` and displayed with TTFT, tokens/sec, and latency percentiles.
+
+### Quality & complete benchmarks
+
+Three modes are available from the benchmark form:
+
+| Mode | What it measures |
+|------|------------------|
+| **Performance** | TTFT, latency, tok/s (llmbench) |
+| **Quality** | Industry tasks + Nadir platform suites |
+| **Complete** | Performance first, then quality on the same instance |
+
+Industry metrics require the optional install from step 4 (`requirements-quality.txt`). Platform suites (regex, JSON schema, contains checks) run with the core install only.
+
+Industry tasks use the Nadir gateway chat-completions API (`local-chat-completions`); MMLU and other loglikelihood tasks are excluded from `industry_lite`. A full quality run can take **30+ minutes** on a Mac Studio.
+
+See [docs/usage/quality-benchmarks.md](docs/usage/quality-benchmarks.md) for presets, artifacts, and interpretation.
 
 ### History & charts
 
@@ -488,7 +474,7 @@ Example workflow:
 
 ## Privacy & security
 
-- **No telemetry** — MLX Server does not phone home
+- **No telemetry** — Nadir MLX does not phone home
 - **Local processing** — inference never leaves your Mac (except Hugging Face downloads you trigger)
 - **Session auth** — protect the dashboard with Django users; inference ports are bound to `0.0.0.0` by default (restrict with firewall or bind to `127.0.0.1` in launchers for air-gapped setups)
 
@@ -535,7 +521,7 @@ See repository license file. Third-party components retain their own licenses (`
 
 ## Contributing
 
-Issues and pull requests are welcome on [GitHub](https://github.com/assiadialeb/mlx-server).
+Issues and pull requests are welcome on [GitHub](https://github.com/assiadialeb/nadir-mlx).
 
 ```bash
 # Run migrations after pulling
@@ -548,5 +534,5 @@ git checkout -b feat/my-feature
 ---
 
 <p align="center">
-  <sub>Built for Apple Silicon · Privacy-first · OpenAI-compatible APIs</sub>
+  <sub>Nadir MLX · Apple Silicon · Privacy-first · OpenAI-compatible APIs</sub>
 </p>
