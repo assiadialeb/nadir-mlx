@@ -135,5 +135,5 @@ Last updated: June 2026 — MLX-38 wake on demand and idle offload implemented.
 - VLM vision: [ADR 005](../adr/005-vlm-vision-gateway.md) (MLX-37)
 - Instance lifecycle: [ADR 006](../adr/006-instance-wake-idle-offload.md) (MLX-38)
 - Integration guide: [nadir-gateway.md](nadir-gateway.md)
-- E2E runbooks: [gateway-runbooks/](gateway-runbooks/)
+- E2E runbooks: see [Nadir Gateway — Per-mode runbooks](nadir-gateway.md#per-mode-runbooks-e2e-validation)
 - ADR: [001-nadir-gateway.md](../adr/001-nadir-gateway.md)

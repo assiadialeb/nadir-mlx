@@ -122,7 +122,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 
 ## Realtime STT
 
-OpenAI Realtime / WebSocket STT is **not supported** in v1. See [ADR 002 — STT realtime spike](../adr/002-stt-realtime-spike.md) (no-go; batch only).
+OpenAI Realtime / WebSocket STT is **not supported** in v1. See [ADR 002 — STT realtime spike](../../adr/002-stt-realtime-spike.md) (no-go; batch only).
 
 ## Troubleshooting
 
