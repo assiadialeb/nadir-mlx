@@ -6,10 +6,11 @@ import ipaddress
 import os
 import re
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse
+from typing import Any, Mapping
+from urllib.parse import urlencode, urlparse
 
 from django.conf import settings
+from django.urls import reverse
 
 _BLOCKED_OUTBOUND_HOSTS = frozenset(
     {
@@ -177,3 +178,69 @@ def assert_path_under_directory(path: Path, root: Path) -> Path:
 def models_root_path() -> Path:
     """Return the resolved local models directory."""
     return Path(settings.MODELS_DIR).resolve()
+
+
+_MODELS_REDIRECT_KEYS = frozenset({"tab", "q", "cap", "sort"})
+
+
+def build_models_redirect_url(params: Mapping[str, str]) -> str:
+    """Build a same-origin /models redirect URL with whitelisted, sanitized query params."""
+    safe_params: dict[str, str] = {}
+    for key, raw_value in params.items():
+        if key not in _MODELS_REDIRECT_KEYS:
+            continue
+        value = str(raw_value).strip()
+        if not value:
+            continue
+        if key == "tab":
+            if value not in ("installed", "hub"):
+                continue
+        elif key == "q":
+            try:
+                value = sanitize_hf_search_query(value)
+            except ValueError:
+                continue
+            if not value:
+                continue
+        safe_params[key] = value
+
+    base_path = reverse("models")
+    if not safe_params:
+        return base_path
+    return f"{base_path}?{urlencode(safe_params)}"
+
+
+def build_validated_http_url(host: str, port: int, path: str = "/") -> str:
+    """Construct an http URL only after host/port validation (anti-SSRF)."""
+    safe_host = validate_outbound_http_host(host)
+    if port < 1 or port > 65535:
+        raise ValueError("Port must be between 1 and 65535.")
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"http://{safe_host}:{port}{normalized_path}"
+
+
+def benchmark_compare_export_filename(run_a_id: int, run_b_id: int) -> str:
+    """Return a safe Content-Disposition filename for benchmark comparison exports."""
+    safe_positive_int(run_a_id, field_name="benchmark run id")
+    safe_positive_int(run_b_id, field_name="benchmark run id")
+    return f"bench_compare_{run_a_id}_vs_{run_b_id}.json"
+
+
+def validated_benchmark_artifact_path(run_id: int, artifact_basename: str) -> Path:
+    """Return a benchmark artifact path confined under LOGS_DIR/benchmarks."""
+    safe_positive_int(run_id, field_name="benchmark run id")
+    benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
+    benchmarks_dir.mkdir(parents=True, exist_ok=True)
+    return safe_path_under_root(benchmarks_dir, artifact_basename)
+
+
+def validated_sqlite_migration_path(raw_path: str) -> Path:
+    """Validate a legacy SQLite source path for the migrate_sqlite_to_postgres command."""
+    if ".." in raw_path.replace("\\", "/"):
+        raise ValueError("Invalid sqlite path.")
+    candidate = Path(raw_path).expanduser().resolve()
+    if not candidate.is_file():
+        raise ValueError(f"SQLite file not found: {candidate}")
+    if candidate.suffix.lower() not in {".sqlite3", ".db"}:
+        raise ValueError("Source must be a SQLite database file (.sqlite3 or .db).")
+    return candidate

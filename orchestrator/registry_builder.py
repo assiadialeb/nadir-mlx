@@ -8,8 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-import requests
-
+from orchestrator.huggingface_client import huggingface_get
 from orchestrator.image_model_profiles import parse_readme_inference_hints_from_text
 from orchestrator.model_registry import REGISTRY_PATH, load_model_registry
 from orchestrator.model_utils import get_folder_name, validate_hf_repo_id
@@ -89,7 +88,7 @@ def fetch_top_mlx_models(limit: int = 50) -> list[dict[str, Any]]:
         "direction": "-1",
         "limit": limit,
     }
-    response = requests.get(validate_huggingface_api_url(HF_API_URL), params=params, timeout=30)
+    response = huggingface_get(validate_huggingface_api_url(HF_API_URL), params=params, timeout=30)
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, list):
@@ -101,7 +100,7 @@ def fetch_model_card(repo_id: str) -> dict[str, Any]:
     """Fetch extended model card metadata from Hugging Face."""
     safe_repo_id = validate_hf_repo_id(repo_id)
     url = validate_huggingface_api_url(f"{HF_API_URL}/{safe_repo_id}")
-    response = requests.get(url, timeout=30)
+    response = huggingface_get(url, timeout=30)
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict):
@@ -113,7 +112,7 @@ def fetch_readme_text(repo_id: str) -> str:
     """Download README.md raw content for a Hugging Face repo."""
     safe_repo_id = validate_hf_repo_id(repo_id)
     url = validate_huggingface_api_url(HF_RAW_README_URL.format(repo_id=safe_repo_id))
-    response = requests.get(url, timeout=30)
+    response = huggingface_get(url, timeout=30)
     if response.status_code == 404:
         return ""
     response.raise_for_status()

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+
+from orchestrator.gateway.auth import verify_gateway_api_key
 
 from orchestrator.gateway.router import GatewayRouteError
 from orchestrator.gateway.routes.common import parse_json_body, route_error_response
@@ -20,7 +22,7 @@ from orchestrator.gateway.services.mode_proxy import (
     proxy_rerank,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_gateway_api_key)])
 
 
 async def _handle_json_route(request: Request, handler):

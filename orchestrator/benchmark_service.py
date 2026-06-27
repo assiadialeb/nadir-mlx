@@ -19,9 +19,9 @@ from .models import BenchmarkRun, InferenceInstance
 from .quality_benchmark_service import execute_quality_benchmark
 from .security_utils import (
     benchmark_endpoint_enabled,
+    build_validated_http_url,
     public_error_message,
-    safe_path_under_root,
-    safe_positive_int,
+    validated_benchmark_artifact_path,
     validate_benchmark_endpoint_host,
     validate_outbound_http_host,
 )
@@ -34,24 +34,15 @@ BENCHMARK_RUN_ID_FIELD = "benchmark run id"
 
 
 def _benchmark_output_path(run_id: int) -> Path:
-    safe_positive_int(run_id, field_name=BENCHMARK_RUN_ID_FIELD)
-    benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
-    benchmarks_dir.mkdir(parents=True, exist_ok=True)
-    return safe_path_under_root(benchmarks_dir, f"bench_{run_id}.json")
+    return validated_benchmark_artifact_path(run_id, f"bench_{run_id}.json")
 
 
 def _quality_artifact_path(run_id: int) -> Path:
-    safe_positive_int(run_id, field_name=BENCHMARK_RUN_ID_FIELD)
-    benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
-    benchmarks_dir.mkdir(parents=True, exist_ok=True)
-    return safe_path_under_root(benchmarks_dir, f"bench_{run_id}_quality.json")
+    return validated_benchmark_artifact_path(run_id, f"bench_{run_id}_quality.json")
 
 
 def _quality_output_dir(run_id: int) -> Path:
-    safe_positive_int(run_id, field_name=BENCHMARK_RUN_ID_FIELD)
-    benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
-    benchmarks_dir.mkdir(parents=True, exist_ok=True)
-    return safe_path_under_root(benchmarks_dir, f"quality_{run_id}")
+    return validated_benchmark_artifact_path(run_id, f"quality_{run_id}")
 
 
 def _remove_benchmark_artifacts(run: BenchmarkRun) -> None:
@@ -306,9 +297,9 @@ def resolve_benchmark_model_id(
         return _default_model_id_for_instance(instance)
 
     safe_host = validate_outbound_http_host(host)
-    base_url = f"http://{safe_host}:{port}"
+    models_url = build_validated_http_url(safe_host, port, "/v1/models")
     try:
-        response = httpx.get(f"{base_url}/v1/models", timeout=10)
+        response = httpx.get(models_url, timeout=10)
         response.raise_for_status()
         models = response.json().get("data", [])
         if models:

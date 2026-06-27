@@ -5,10 +5,14 @@ from pathlib import Path
 from django.test import SimpleTestCase, override_settings
 
 from orchestrator.security_utils import (
+    benchmark_compare_export_filename,
     benchmark_endpoint_enabled,
+    build_models_redirect_url,
+    build_validated_http_url,
     public_error_message,
     safe_path_under_root,
     sanitize_hf_search_query,
+    validated_sqlite_migration_path,
     validate_benchmark_endpoint_host,
     validate_huggingface_api_url,
     validate_outbound_http_host,
@@ -99,3 +103,24 @@ class SecurityUtilsTests(SimpleTestCase):
     @override_settings(DEBUG=False, NADIR_BENCHMARK_ENDPOINT_ENABLED=False)
     def test_benchmark_endpoint_enabled_follows_setting(self) -> None:
         self.assertFalse(benchmark_endpoint_enabled())
+
+    def test_build_models_redirect_url_whitelists_query_keys(self) -> None:
+        url = build_models_redirect_url({"tab": "hub", "evil": "x", "q": "llama"})
+        self.assertIn("/models/?", url)
+        self.assertIn("tab=hub", url)
+        self.assertIn("q=llama", url)
+        self.assertNotIn("evil=", url)
+
+    def test_build_validated_http_url_rejects_public_host(self) -> None:
+        with self.assertRaises(ValueError):
+            build_validated_http_url("8.8.8.8", 8080, "/v1/models")
+
+    def test_benchmark_compare_export_filename_uses_validated_ids(self) -> None:
+        self.assertEqual(
+            benchmark_compare_export_filename(3, 7),
+            "bench_compare_3_vs_7.json",
+        )
+
+    def test_validated_sqlite_migration_path_rejects_traversal(self) -> None:
+        with self.assertRaises(ValueError):
+            validated_sqlite_migration_path("../etc/passwd")

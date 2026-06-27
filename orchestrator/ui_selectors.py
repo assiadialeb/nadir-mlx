@@ -19,6 +19,7 @@ from orchestrator.model_registry import (
 from orchestrator.model_utils import get_model_capabilities, get_model_folder_size_bytes
 from orchestrator.models import InferenceInstance, ModelDownload
 from orchestrator.registry_builder import infer_family_id
+from orchestrator.huggingface_client import huggingface_get
 from orchestrator.security_utils import sanitize_hf_search_query, validate_huggingface_api_url
 from orchestrator.server_types import SERVER_TYPES
 
@@ -240,7 +241,7 @@ def fetch_hf_models(query: str = "", *, limit: int = HF_FETCH_LIMIT_DEFAULT) -> 
         params["search"] = safe_query
 
     api_url = validate_huggingface_api_url("https://huggingface.co/api/models")
-    response = requests.get(api_url, params=params, timeout=8)
+    response = huggingface_get(api_url, params=params, timeout=8)
     response.raise_for_status()
 
     payload = response.json()

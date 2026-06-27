@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from orchestrator.gateway.auth import verify_gateway_api_key
 from orchestrator.gateway.router import GatewayRouteError
 from orchestrator.gateway.routes.common import parse_json_body, route_error_response
 from orchestrator.gateway.services.chat_proxy import (
@@ -12,7 +13,7 @@ from orchestrator.gateway.services.chat_proxy import (
     proxy_text_completions,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_gateway_api_key)])
 
 
 @router.post("/v1/chat/completions")

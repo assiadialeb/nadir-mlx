@@ -74,6 +74,7 @@ from .benchmark_selectors import (
     runs_for_chart_filters,
     benchmark_history_model_query,
 )
+from .security_utils import benchmark_compare_export_filename, build_models_redirect_url
 
 _startup_reconciled = False
 
@@ -118,7 +119,7 @@ def search_view(request):
     query = request.GET.get('q', '')
     if query:
         params['q'] = query
-    return redirect(f"{reverse('models')}?{urlencode(params)}")
+    return redirect(build_models_redirect_url(params))
 
 
 @login_required
@@ -235,7 +236,7 @@ def download_model_view(request):
         value = (request.POST.get(key) or '').strip()
         if value:
             params[key] = value
-    return redirect(f"{reverse('models')}?{urlencode(params)}")
+    return redirect(build_models_redirect_url(params))
 
 
 @login_required
@@ -651,9 +652,8 @@ def benchmark_compare_export_view(request):
         content_type="application/json; charset=utf-8",
     )
     response["X-Content-Type-Options"] = "nosniff"
-    response["Content-Disposition"] = (
-        f'attachment; filename="bench_compare_{run_a.id}_vs_{run_b.id}.json"'
-    )
+    export_filename = benchmark_compare_export_filename(run_a.id, run_b.id)
+    response["Content-Disposition"] = f'attachment; filename="{export_filename}"'
     return response
 
 

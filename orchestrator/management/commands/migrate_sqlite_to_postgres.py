@@ -11,6 +11,8 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connections, transaction
 
+from orchestrator.security_utils import validated_sqlite_migration_path
+
 
 _LEGACY_ALIAS = "legacy_sqlite"
 _MIGRATION_MODELS = (
@@ -50,9 +52,10 @@ class Command(BaseCommand):
                 "Default database is not PostgreSQL. Set NADIR_DB_HOST or NADIR_DATABASE_URL."
             )
 
-        sqlite_path = Path(str(options["sqlite_path"])).expanduser().resolve()
-        if not sqlite_path.is_file():
-            raise CommandError(f"SQLite file not found: {sqlite_path}")
+        try:
+            sqlite_path = validated_sqlite_migration_path(str(options["sqlite_path"]))
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
         self._register_legacy_connection(sqlite_path)
         counts = self._count_legacy_rows()

@@ -7,11 +7,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from django.conf import settings
 from django.utils import timezone
 
 from orchestrator.models import BenchmarkRun
-from orchestrator.security_utils import safe_path_under_root, safe_positive_int
+from orchestrator.security_utils import public_error_message, validated_benchmark_artifact_path
 from orchestrator.vendor.lm_eval_runner import run_lm_eval
 from orchestrator.vendor.qualitybench import (
     run_platform_suites,
@@ -24,17 +23,11 @@ BENCHMARK_QUALITY_TIMEOUT_SECONDS = 7200
 
 
 def _quality_output_dir(run_id: int) -> Path:
-    safe_positive_int(run_id, field_name="benchmark run id")
-    benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
-    benchmarks_dir.mkdir(parents=True, exist_ok=True)
-    return safe_path_under_root(benchmarks_dir, f"quality_{run_id}")
+    return validated_benchmark_artifact_path(run_id, f"quality_{run_id}")
 
 
 def _quality_artifact_path(run_id: int) -> Path:
-    safe_positive_int(run_id, field_name="benchmark run id")
-    benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
-    benchmarks_dir.mkdir(parents=True, exist_ok=True)
-    return safe_path_under_root(benchmarks_dir, f"bench_{run_id}_quality.json")
+    return validated_benchmark_artifact_path(run_id, f"bench_{run_id}_quality.json")
 
 
 def _mark_failed(run: BenchmarkRun, message: str) -> None:
@@ -45,11 +38,8 @@ def _mark_failed(run: BenchmarkRun, message: str) -> None:
 
 
 def _format_error(exc: Exception) -> str:
-    """Return an operator-safe error string with enough context to debug."""
-    if isinstance(exc, ValueError):
-        message = str(exc).strip()
-        return message or "Quality benchmark validation failed."
-    return f"{exc.__class__.__name__}: {exc}"
+    """Return an operator-safe error string without stack traces or paths."""
+    return public_error_message(exc, fallback="Quality benchmark failed.")
 
 
 def summarize_industry_metrics(industry: dict[str, Any]) -> dict[str, float | None]:

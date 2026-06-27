@@ -9,7 +9,7 @@ import httpx
 from django.utils import timezone
 
 from orchestrator.models import InferenceInstance
-from orchestrator.security_utils import validate_server_bind_host
+from orchestrator.security_utils import build_validated_http_url, validate_server_bind_host
 from orchestrator.server_manager import (
     _find_listener_pids,
     _is_process_alive,
@@ -32,7 +32,7 @@ def _connect_host(instance: InferenceInstance) -> str:
 
 def probe_http_health(instance: InferenceInstance) -> bool:
     """Return True when the instance responds on /health."""
-    url = f"http://{_connect_host(instance)}:{instance.port}{HEALTH_PATH}"
+    url = build_validated_http_url(_connect_host(instance), instance.port, HEALTH_PATH)
     try:
         response = httpx.get(url, timeout=HEALTH_TIMEOUT_SECONDS)
         return response.status_code < 500
