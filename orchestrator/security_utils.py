@@ -22,6 +22,7 @@ _BENCHMARK_ENDPOINT_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
 _HOSTNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 _HF_SEARCH_MAX_LENGTH = 200
 _HF_API_ORIGIN = "https://huggingface.co"
+BENCHMARK_RUN_ID_FIELD = "benchmark run id"
 
 
 def extract_bearer_token(authorization: str | None) -> str:
@@ -183,26 +184,31 @@ def models_root_path() -> Path:
 _MODELS_REDIRECT_KEYS = frozenset({"tab", "q", "cap", "sort"})
 
 
+def _sanitize_models_redirect_value(key: str, raw_value: str) -> str | None:
+    """Return a safe query value for /models redirects, or None to skip."""
+    if key not in _MODELS_REDIRECT_KEYS:
+        return None
+    value = str(raw_value).strip()
+    if not value:
+        return None
+    if key == "tab":
+        return value if value in ("installed", "hub") else None
+    if key == "q":
+        try:
+            value = sanitize_hf_search_query(value)
+        except ValueError:
+            return None
+        return value or None
+    return value
+
+
 def build_models_redirect_url(params: Mapping[str, str]) -> str:
     """Build a same-origin /models redirect URL with whitelisted, sanitized query params."""
     safe_params: dict[str, str] = {}
     for key, raw_value in params.items():
-        if key not in _MODELS_REDIRECT_KEYS:
-            continue
-        value = str(raw_value).strip()
-        if not value:
-            continue
-        if key == "tab":
-            if value not in ("installed", "hub"):
-                continue
-        elif key == "q":
-            try:
-                value = sanitize_hf_search_query(value)
-            except ValueError:
-                continue
-            if not value:
-                continue
-        safe_params[key] = value
+        cleaned = _sanitize_models_redirect_value(key, raw_value)
+        if cleaned is not None:
+            safe_params[key] = cleaned
 
     base_path = reverse("models")
     if not safe_params:
@@ -221,14 +227,14 @@ def build_validated_http_url(host: str, port: int, path: str = "/") -> str:
 
 def benchmark_compare_export_filename(run_a_id: int, run_b_id: int) -> str:
     """Return a safe Content-Disposition filename for benchmark comparison exports."""
-    safe_positive_int(run_a_id, field_name="benchmark run id")
-    safe_positive_int(run_b_id, field_name="benchmark run id")
+    safe_positive_int(run_a_id, field_name=BENCHMARK_RUN_ID_FIELD)
+    safe_positive_int(run_b_id, field_name=BENCHMARK_RUN_ID_FIELD)
     return f"bench_compare_{run_a_id}_vs_{run_b_id}.json"
 
 
 def validated_benchmark_artifact_path(run_id: int, artifact_basename: str) -> Path:
     """Return a benchmark artifact path confined under LOGS_DIR/benchmarks."""
-    safe_positive_int(run_id, field_name="benchmark run id")
+    safe_positive_int(run_id, field_name=BENCHMARK_RUN_ID_FIELD)
     benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
     benchmarks_dir.mkdir(parents=True, exist_ok=True)
     return safe_path_under_root(benchmarks_dir, artifact_basename)

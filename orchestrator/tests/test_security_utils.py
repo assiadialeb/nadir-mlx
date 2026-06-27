@@ -1,6 +1,8 @@
 """Tests for shared security helpers."""
 
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
 
@@ -97,6 +99,7 @@ class SecurityUtilsTests(SimpleTestCase):
             validate_benchmark_endpoint_host("localhost")
 
     @override_settings(DEBUG=True, NADIR_BENCHMARK_ENDPOINT_ENABLED=True)
+    @patch.dict(os.environ, {"NADIR_BENCHMARK_ENDPOINT_ALLOWED_HOSTS": ""}, clear=False)
     def test_validate_benchmark_endpoint_host_allows_private_network_in_debug(self) -> None:
         self.assertEqual(validate_benchmark_endpoint_host("192.168.1.10"), "192.168.1.10")
 
