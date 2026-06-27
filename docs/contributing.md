@@ -49,9 +49,14 @@ Live smoke tests (optional, against a running gateway):
 
 ```bash
 export NADIR_SMOKE_GATEWAY_URL=http://127.0.0.1:11380
-export NADIR_SMOKE_MODEL_ALIAS=<text-alias>   # for chat smoke only
+export NADIR_SMOKE_MODEL_ALIAS=<text-alias>          # chat smoke (MLX-47)
+export NADIR_SMOKE_ON_DEMAND_ALIAS=<on-demand-alias> # wake smoke (MLX-60)
+export NADIR_SMOKE_EMBED_ALIAS=<embedding-alias>     # embeddings smoke (MLX-63)
+export NADIR_SMOKE_RERANK_ALIAS=<reranker-alias>     # rerank smoke (MLX-63)
 pytest -m smoke orchestrator/tests/smoke -q
 ```
+
+Smoke tests skip automatically when the required environment variables are unset (CI-safe).
 
 Contract suite scope is defined in `openapi/nadir-curated.yaml` (endpoints marked ✅ in the coverage matrix).
 
