@@ -247,7 +247,7 @@ class BenchmarkSelectorsTests(TestCase):
             status="COMPLETED",
             results=_sample_results(),
         )
-        pairs = find_comparison_candidates(BenchmarkRun.objects.all(), gateway_port=11380)
+        pairs = find_comparison_candidates(BenchmarkRun.objects.all())
         self.assertEqual(len(pairs), 1)
         self.assertEqual({pairs[0][0].id, pairs[0][1].id}, {nadir_run.id, external_run.id})
 

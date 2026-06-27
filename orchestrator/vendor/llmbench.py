@@ -198,10 +198,9 @@ async def _stream_chat_completion(
             if chunk.get("choices"):
                 delta = chunk["choices"][0].get("delta") or {}
                 text = _delta_text(delta)
-                if text:
-                    if not saw_output:
-                        ttft_ms = (time.perf_counter() - t0) * 1000
-                        saw_output = True
+                if text and not saw_output:
+                    ttft_ms = (time.perf_counter() - t0) * 1000
+                    saw_output = True
             usage = chunk.get("usage") or {}
             if usage.get("completion_tokens") is not None:
                 prompt_tokens = int(usage.get("prompt_tokens", prompt_tokens) or 0)

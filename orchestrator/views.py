@@ -495,10 +495,6 @@ def benchmark_detail_view(request, run_id: int):
     perf_child = next((item for item in child_runs if item.benchmark_kind == "PERF"), None)
     quality_child = next((item for item in child_runs if item.benchmark_kind == "QUALITY"), None)
     display_run = run
-    if run.benchmark_kind == "QUALITY":
-        display_run = run
-    elif run.benchmark_kind == "COMPLETE" and perf_child and quality_child:
-        display_run = run
 
     perf_summaries = resolve_perf_summaries(run, perf_child)
     quality_metrics = resolve_quality_metrics(run, quality_child)
@@ -602,7 +598,6 @@ def benchmark_compare_view(request):
     suggested_pairs = find_comparison_candidates(
         completed,
         preset_key=preset_key,
-        gateway_port=gateway_port,
     )
 
     run_a_id = str(request.GET.get("run_a") or "").strip()

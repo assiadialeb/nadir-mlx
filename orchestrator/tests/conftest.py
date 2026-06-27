@@ -8,6 +8,10 @@ import sys
 from types import ModuleType
 from unittest.mock import MagicMock
 
+MLX_CORE_MODULE = "mlx.core"
+MLX_AUDIO_STT_UTILS_MODULE = "mlx_audio.stt.utils"
+MLX_AUDIO_IO_MODULE = "mlx_audio.audio_io"
+
 
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
@@ -32,10 +36,10 @@ def _stub_mlx_runtime() -> None:
         return
 
     mlx = _make_stub_module("mlx", is_package=True)
-    mlx_core = MagicMock(name="mlx.core")
-    mlx_core.__spec__ = importlib.machinery.ModuleSpec("mlx.core", loader=None)
+    mlx_core = MagicMock(name=MLX_CORE_MODULE)
+    mlx_core.__spec__ = importlib.machinery.ModuleSpec(MLX_CORE_MODULE, loader=None)
     mlx_core.array = MagicMock(name="mlx.array")
-    sys.modules["mlx.core"] = mlx_core
+    sys.modules[MLX_CORE_MODULE] = mlx_core
     mlx.core = mlx_core
     setattr(mlx, "core", mlx_core)
 
@@ -49,23 +53,27 @@ def _stub_mlx_runtime() -> None:
         "mlx_vlm.server.cli",
         "mlx_audio",
         "mlx_audio.utils",
-        "mlx_audio.stt.utils",
+        MLX_AUDIO_STT_UTILS_MODULE,
         "mlx_embeddings",
         "mlx_embeddings.utils",
     ):
         _make_stub_module(package_name, is_package=True)
 
-    mlx_audio_io = MagicMock(name="mlx_audio.audio_io")
-    mlx_audio_io.__spec__ = importlib.machinery.ModuleSpec("mlx_audio.audio_io", loader=None)
-    mlx_audio_io.write = MagicMock(name="mlx_audio.audio_io.write")
-    mlx_audio_io.read = MagicMock(name="mlx_audio.audio_io.read")
-    sys.modules["mlx_audio.audio_io"] = mlx_audio_io
+    mlx_audio_io = MagicMock(name=MLX_AUDIO_IO_MODULE)
+    mlx_audio_io.__spec__ = importlib.machinery.ModuleSpec(MLX_AUDIO_IO_MODULE, loader=None)
+    mlx_audio_io.write = MagicMock(name=f"{MLX_AUDIO_IO_MODULE}.write")
+    mlx_audio_io.read = MagicMock(name=f"{MLX_AUDIO_IO_MODULE}.read")
+    sys.modules[MLX_AUDIO_IO_MODULE] = mlx_audio_io
 
-    mlx_stt_utils = MagicMock(name="mlx_audio.stt.utils")
-    mlx_stt_utils.__spec__ = importlib.machinery.ModuleSpec("mlx_audio.stt.utils", loader=None)
+    mlx_stt_utils = MagicMock(name=MLX_AUDIO_STT_UTILS_MODULE)
+    mlx_stt_utils.__spec__ = importlib.machinery.ModuleSpec(
+        MLX_AUDIO_STT_UTILS_MODULE, loader=None
+    )
     mlx_stt_utils.SAMPLE_RATE = 16_000
-    mlx_stt_utils.resample_audio = MagicMock(name="mlx_audio.stt.utils.resample_audio")
-    sys.modules["mlx_audio.stt.utils"] = mlx_stt_utils
+    mlx_stt_utils.resample_audio = MagicMock(
+        name=f"{MLX_AUDIO_STT_UTILS_MODULE}.resample_audio"
+    )
+    sys.modules[MLX_AUDIO_STT_UTILS_MODULE] = mlx_stt_utils
 
 
 _stub_mlx_runtime()

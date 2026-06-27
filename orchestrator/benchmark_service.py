@@ -30,24 +30,25 @@ LLMBENCH_SCRIPT = Path(__file__).resolve().parent / "vendor" / "llmbench.py"
 BENCHMARK_TIMEOUT_SECONDS = 3600
 BENCHMARK_MAX_REQUESTS_PER_SCENARIO = 500
 VALID_BENCHMARK_KINDS = frozenset({"PERF", "QUALITY", "COMPLETE"})
+BENCHMARK_RUN_ID_FIELD = "benchmark run id"
 
 
 def _benchmark_output_path(run_id: int) -> Path:
-    safe_positive_int(run_id, field_name="benchmark run id")
+    safe_positive_int(run_id, field_name=BENCHMARK_RUN_ID_FIELD)
     benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
     benchmarks_dir.mkdir(parents=True, exist_ok=True)
     return safe_path_under_root(benchmarks_dir, f"bench_{run_id}.json")
 
 
 def _quality_artifact_path(run_id: int) -> Path:
-    safe_positive_int(run_id, field_name="benchmark run id")
+    safe_positive_int(run_id, field_name=BENCHMARK_RUN_ID_FIELD)
     benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
     benchmarks_dir.mkdir(parents=True, exist_ok=True)
     return safe_path_under_root(benchmarks_dir, f"bench_{run_id}_quality.json")
 
 
 def _quality_output_dir(run_id: int) -> Path:
-    safe_positive_int(run_id, field_name="benchmark run id")
+    safe_positive_int(run_id, field_name=BENCHMARK_RUN_ID_FIELD)
     benchmarks_dir = Path(settings.LOGS_DIR) / "benchmarks"
     benchmarks_dir.mkdir(parents=True, exist_ok=True)
     return safe_path_under_root(benchmarks_dir, f"quality_{run_id}")

@@ -376,16 +376,10 @@ def benchmark_history_model_query(run: BenchmarkRun) -> str:
     return run.model_id or ""
 
 
-def find_comparison_candidates(
-    queryset: QuerySet[BenchmarkRun],
-    *,
-    preset_key: str | None = None,
-    gateway_port: int = 11380,
-) -> list[tuple[BenchmarkRun, BenchmarkRun]]:
-    """Pair completed runs that share preset + model but use different endpoints."""
-    completed = list(
-        queryset.filter(status="COMPLETED").select_related("instance").order_by("-completed_at")
-    )
+def _group_runs_for_comparison(
+    completed: list[BenchmarkRun],
+    preset_key: str | None,
+) -> dict[tuple[str, str], list[BenchmarkRun]]:
     groups: dict[tuple[str, str], list[BenchmarkRun]] = {}
     for run in completed:
         preset = benchmark_preset_key(run.params)
@@ -395,23 +389,49 @@ def find_comparison_candidates(
         if not model_key:
             continue
         groups.setdefault((preset, model_key), []).append(run)
+    return groups
+
+
+def _append_unique_endpoint_pairs(
+    runs: list[BenchmarkRun],
+    seen_ids: set[tuple[int, int]],
+    pairs: list[tuple[BenchmarkRun, BenchmarkRun]],
+    *,
+    max_pairs: int,
+) -> bool:
+    """Add cross-endpoint pairs from one preset/model group. Return True when max_pairs reached."""
+    if len(runs) < 2:
+        return False
+    for index, run_a in enumerate(runs):
+        for run_b in runs[index + 1 :]:
+            if run_a.endpoint_url == run_b.endpoint_url:
+                continue
+            pair_ids = tuple(sorted((run_a.id, run_b.id)))
+            if pair_ids in seen_ids:
+                continue
+            seen_ids.add(pair_ids)
+            pairs.append((run_a, run_b))
+            if len(pairs) >= max_pairs:
+                return True
+    return False
+
+
+def find_comparison_candidates(
+    queryset: QuerySet[BenchmarkRun],
+    *,
+    preset_key: str | None = None,
+) -> list[tuple[BenchmarkRun, BenchmarkRun]]:
+    """Pair completed runs that share preset + model but use different endpoints."""
+    completed = list(
+        queryset.filter(status="COMPLETED").select_related("instance").order_by("-completed_at")
+    )
+    groups = _group_runs_for_comparison(completed, preset_key)
 
     pairs: list[tuple[BenchmarkRun, BenchmarkRun]] = []
     seen_ids: set[tuple[int, int]] = set()
     for runs in groups.values():
-        if len(runs) < 2:
-            continue
-        for index, run_a in enumerate(runs):
-            for run_b in runs[index + 1 :]:
-                if run_a.endpoint_url == run_b.endpoint_url:
-                    continue
-                pair_ids = tuple(sorted((run_a.id, run_b.id)))
-                if pair_ids in seen_ids:
-                    continue
-                seen_ids.add(pair_ids)
-                pairs.append((run_a, run_b))
-                if len(pairs) >= 12:
-                    return pairs
+        if _append_unique_endpoint_pairs(runs, seen_ids, pairs, max_pairs=12):
+            return pairs
     return pairs
 
 

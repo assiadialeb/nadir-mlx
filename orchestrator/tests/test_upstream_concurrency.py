@@ -120,7 +120,7 @@ class UpstreamConcurrencyTests(SimpleTestCase):
             ):
                 with self.assertRaises(UpstreamQueueTimeoutError):
                     async with upstream_concurrency_slot(limited_target):
-                        pass
+                        await asyncio.sleep(0)
             await task
 
         asyncio.run(wait_forever())
