@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import os
+import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -64,6 +66,10 @@ class SttTranscriptionPayloadTests(SimpleTestCase):
 
 
 class SttAudioDecodeTests(SimpleTestCase):
+    @unittest.skipIf(
+        os.environ.get("NADIR_CI_STUB_MLX", "").strip().lower() in ("1", "true", "yes", "on"),
+        "requires mlx_audio runtime (skipped on Linux CI)",
+    )
     def test_decode_wav_bytes_without_temp_mp3_file(self) -> None:
         from mlx_audio.audio_io import write as audio_write
 
