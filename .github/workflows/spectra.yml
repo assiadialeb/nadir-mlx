@@ -25,12 +25,15 @@ jobs:
 
       - name: Install dependencies & run tests
         run: |
-          # MLX packages are Apple Silicon–only; CI runs on ubuntu-latest with mocks.
-          grep -vE '^(mlx|mlx-)' requirements.txt | grep -v '^#' | grep -v '^[[:space:]]*$' > /tmp/requirements-ci.txt
+          # MLX/mflux are Apple Silicon–only; CI runs on ubuntu-latest with import stubs.
+          grep -vE '^(mlx|mlx-|mflux)' requirements.txt | grep -v '^#' | grep -v '^[[:space:]]*$' > /tmp/requirements-ci.txt
           pip install -r /tmp/requirements-ci.txt
+          # mflux is pure-Python metadata for image profiles; avoid mlx CUDA wheels on Linux.
+          pip install "mflux==0.18.0" --no-deps
           pip install -r requirements-test.txt
           export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
           export MLX_DISABLE_INSTANCE_WATCHDOG=1
+          export NADIR_CI_STUB_MLX=1
           pytest orchestrator/tests \
             --cov=orchestrator \
             --cov=mlx_orchestrator \

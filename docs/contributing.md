@@ -35,6 +35,7 @@ pytest orchestrator/tests -q
 ```
 
 Most tests use mocks and do not require a running MLX model or Apple Silicon GPU in CI.
+GitHub Actions sets `NADIR_CI_STUB_MLX=1` and installs dependencies without `mlx*` / `mflux` packages.
 
 ### API contract tests (MLX-47)
 
