@@ -52,6 +52,8 @@ export NADIR_SMOKE_MODEL_ALIAS=<text-alias>   # for chat smoke only
 pytest -m smoke orchestrator/tests/smoke -q
 ```
 
+Contract suite scope is defined in `openapi/nadir-curated.yaml` (endpoints marked ✅ in the coverage matrix).
+
 Disable the instance watchdog during one-off commands:
 
 ```bash

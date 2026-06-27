@@ -58,7 +58,196 @@ paths:
               schema:
                 $ref: "#/components/schemas/OpenAIErrorResponse"
 
+  /v1/completions:
+    post:
+      operationId: createCompletion
+      summary: Create legacy text completion (TEXT only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompletionRequest"
+      responses:
+        "200":
+          description: Text completion (non-streaming)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Completion"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          $ref: "#/components/responses/UnavailableError"
+
+  /v1/embeddings:
+    post:
+      operationId: createEmbedding
+      summary: Create embeddings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbeddingRequest"
+      responses:
+        "200":
+          description: Embedding list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbeddingList"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          $ref: "#/components/responses/UnavailableError"
+
+  /v1/rerank:
+    post:
+      operationId: createRerank
+      summary: Rerank documents (Jina-like)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RerankRequest"
+      responses:
+        "200":
+          description: Rerank results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RerankResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          $ref: "#/components/responses/UnavailableError"
+
+  /v1/images/generations:
+    post:
+      operationId: createImage
+      summary: Generate images
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageGenerationRequest"
+      responses:
+        "200":
+          description: Generated images
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageGenerationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          $ref: "#/components/responses/UnavailableError"
+
+  /v1/audio/speech:
+    post:
+      operationId: createSpeech
+      summary: Text-to-speech
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpeechRequest"
+      responses:
+        "200":
+          description: Audio payload
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          $ref: "#/components/responses/UnavailableError"
+
+  /v1/audio/transcriptions:
+    post:
+      operationId: createTranscription
+      summary: Speech-to-text (multipart)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AudioTranscriptionRequest"
+      responses:
+        "200":
+          description: Transcription JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          $ref: "#/components/responses/UnavailableError"
+
+  /v1/audio/translations:
+    post:
+      operationId: createTranslation
+      summary: Speech translation (multipart)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AudioTranscriptionRequest"
+      responses:
+        "200":
+          description: Translation JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          $ref: "#/components/responses/UnavailableError"
+
 components:
+  responses:
+    BadRequestError:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorResponse"
+    NotFoundError:
+      description: Model not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorResponse"
+    UnavailableError:
+      description: Model unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorResponse"
+
   schemas:
     ModelList:
       type: object
@@ -154,8 +343,7 @@ components:
         message:
           $ref: "#/components/schemas/ChatCompletionMessage"
         finish_reason:
-          type: string
-          nullable: true
+          type: ["string", "null"]
       additionalProperties: true
 
     ChatCompletionMessage:
@@ -165,8 +353,7 @@ components:
         role:
           type: string
         content:
-          type: string
-          nullable: true
+          type: ["string", "null"]
       additionalProperties: true
 
     CompletionUsage:
@@ -178,6 +365,254 @@ components:
           type: integer
         total_tokens:
           type: integer
+      additionalProperties: true
+
+    CompletionRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model:
+          type: string
+        prompt:
+          type: string
+        stream:
+          type: boolean
+        max_tokens:
+          type: integer
+      additionalProperties: true
+
+    Completion:
+      type: object
+      required: [id, object, created, model, choices]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [text_completion]
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CompletionChoice"
+      additionalProperties: true
+
+    CompletionChoice:
+      type: object
+      required: [index, text, finish_reason]
+      properties:
+        index:
+          type: integer
+        text:
+          type: string
+        finish_reason:
+          type: ["string", "null"]
+      additionalProperties: true
+
+    EmbeddingRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        encoding_format:
+          type: string
+          enum: [float, base64]
+        dimensions:
+          type: integer
+      additionalProperties: true
+
+    EmbeddingList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmbeddingObject"
+        model:
+          type: string
+        usage:
+          $ref: "#/components/schemas/CompletionUsage"
+      additionalProperties: true
+
+    EmbeddingObject:
+      type: object
+      required: [object, index, embedding]
+      properties:
+        object:
+          type: string
+          enum: [embedding]
+        index:
+          type: integer
+        embedding:
+          type: array
+          items:
+            type: number
+      additionalProperties: true
+
+    RerankRequest:
+      type: object
+      required: [model, query, documents]
+      properties:
+        model:
+          type: string
+        query:
+          type: string
+        documents:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        top_n:
+          type: integer
+        return_documents:
+          type: boolean
+      additionalProperties: true
+
+    RerankResponse:
+      type: object
+      required: [model, results]
+      properties:
+        model:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RerankResult"
+      additionalProperties: true
+
+    RerankResult:
+      type: object
+      required: [index, relevance_score]
+      properties:
+        index:
+          type: integer
+        relevance_score:
+          type: number
+        document:
+          type: string
+      additionalProperties: true
+
+    ImageGenerationRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model:
+          type: string
+        prompt:
+          type: string
+        n:
+          type: integer
+        size:
+          type: string
+        response_format:
+          type: string
+          enum: [url, b64_json]
+      additionalProperties: true
+
+    ImageGenerationResponse:
+      type: object
+      required: [created, data]
+      properties:
+        created:
+          type: integer
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageObject"
+      additionalProperties: true
+
+    ImageObject:
+      type: object
+      properties:
+        b64_json:
+          type: string
+        url:
+          type: string
+      additionalProperties: true
+
+    SpeechRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+        input:
+          type: string
+        voice:
+          type: string
+        response_format:
+          type: string
+      additionalProperties: true
+
+    AudioTranscriptionRequest:
+      type: object
+      required: [model, file]
+      properties:
+        model:
+          type: string
+        file:
+          type: string
+          format: binary
+        response_format:
+          type: string
+      additionalProperties: true
+
+    TranscriptionResponse:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+      additionalProperties: true
+
+    ChatCompletionChunk:
+      type: object
+      required: [object, choices]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [chat.completion.chunk]
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [index, delta]
+            properties:
+              index:
+                type: integer
+              delta:
+                type: object
+                properties:
+                  role:
+                    type: string
+                  content:
+                    type: string
+                additionalProperties: true
+              finish_reason:
+                type: ["string", "null"]
+            additionalProperties: true
       additionalProperties: true
 
     OpenAIErrorResponse:

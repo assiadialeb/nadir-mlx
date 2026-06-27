@@ -63,11 +63,22 @@ def response_schema(spec: dict[str, Any], path: str, method: str, status: str) -
     response = responses.get(status)
     if not response:
         raise KeyError(f"No response {status} for {method.upper()} {path}")
+    if isinstance(response, dict) and "$ref" in response:
+        response = _resolve_ref(spec, str(response["$ref"]))
     content = response.get("content", {}).get("application/json", {})
     schema = content.get("schema")
     if not isinstance(schema, dict):
         raise ValueError(f"Missing JSON schema for {method.upper()} {path} {status}")
     return _inline_refs(spec, schema)
+
+
+def component_schema(spec: dict[str, Any], name: str) -> dict[str, Any]:
+    """Return an inlined component schema by name."""
+    components = spec.get("components", {}).get("schemas", {})
+    schema = components.get(name)
+    if not isinstance(schema, dict):
+        raise KeyError(f"Unknown component schema: {name}")
+    return _inline_refs(spec, schema.copy())
 
 
 def request_schema(spec: dict[str, Any], path: str, method: str) -> dict[str, Any]:
