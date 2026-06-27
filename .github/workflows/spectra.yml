@@ -1,0 +1,365 @@
+# Spectra Quality Gate — CI/CD integration
+# Runs on every PR targeting main.
+# Posts a quality summary as a PR comment with a link to the detailed analysis.
+name: Spectra Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies & run tests
+        run: |
+          # MLX packages are Apple Silicon–only; CI runs on ubuntu-latest with mocks.
+          grep -vE '^(mlx|mlx-)' requirements.txt | grep -v '^#' | grep -v '^[[:space:]]*$' > /tmp/requirements-ci.txt
+          pip install -r /tmp/requirements-ci.txt
+          pip install pytest pytest-django pytest-mock pytest-cov
+          export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
+          export MLX_DISABLE_INSTANCE_WATCHDOG=1
+          pytest orchestrator/tests \
+            --cov=orchestrator \
+            --cov=mlx_orchestrator \
+            --cov-report=xml:coverage.xml || true
+
+      - name: Register scan with Spectra
+        id: scan
+        run: |
+          BRANCH_NAME="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          BODY=$(jq -n \
+            --arg sha "$GITHUB_SHA" \
+            --arg branch "$BRANCH_NAME" \
+            --arg pr "${{ github.event.pull_request.number }}" \
+            --arg trigger "pull_request" \
+            '{commit_sha: $sha, branch: $branch, pull_request: $pr, triggered_by: $trigger}')
+
+          RESPONSE=$(curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans" \
+            -H "X-CI-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+
+          echo "$RESPONSE" | jq .
+
+          SCAN_ID=$(echo "$RESPONSE" | jq -r '.data.scan_id')
+          STATUS=$(echo "$RESPONSE" | jq -r '.data.status')
+          echo "scan_id=$SCAN_ID" >> "$GITHUB_OUTPUT"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "sonar_url=$(echo "$RESPONSE" | jq -r '.data.sonar.host_url // empty')" >> "$GITHUB_OUTPUT"
+          echo "sonar_token=$(echo "$RESPONSE" | jq -r '.data.sonar.token // empty')" >> "$GITHUB_OUTPUT"
+          echo "sonar_key=$(echo "$RESPONSE" | jq -r '.data.sonar.project_key // empty')" >> "$GITHUB_OUTPUT"
+          echo "sast=$(echo "$RESPONSE" | jq -r '.data.scanners.sast_enabled // false')" >> "$GITHUB_OUTPUT"
+          echo "sca=$(echo "$RESPONSE" | jq -r '.data.scanners.sca_enabled // false')" >> "$GITHUB_OUTPUT"
+          echo "iac=$(echo "$RESPONSE" | jq -r '.data.scanners.iac_enabled // false')" >> "$GITHUB_OUTPUT"
+          echo "secrets=$(echo "$RESPONSE" | jq -r '.data.scanners.secrets_enabled // false')" >> "$GITHUB_OUTPUT"
+          echo "sbom=$(echo "$RESPONSE" | jq -r '.data.scanners.sbom_enabled // false')" >> "$GITHUB_OUTPUT"
+        env:
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+
+      - name: Run SonarQube analysis
+        if: steps.scan.outputs.status != 'bypassed'
+        run: |
+          curl -sSLo sonar-scanner.zip "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.1.0.6389-linux-x64.zip"
+          unzip -q sonar-scanner.zip
+          BRANCH_NAME="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          BASE_ARGS="-Dsonar.host.url=${{ steps.scan.outputs.sonar_url }}"
+          BASE_ARGS="$BASE_ARGS -Dsonar.token=${{ steps.scan.outputs.sonar_token }}"
+          BASE_ARGS="$BASE_ARGS -Dsonar.projectKey=${{ steps.scan.outputs.sonar_key }}"
+          BASE_ARGS="$BASE_ARGS -Dsonar.projectVisibility=private"
+          BASE_ARGS="$BASE_ARGS -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }}"
+          BASE_ARGS="$BASE_ARGS -Dsonar.sources=orchestrator,mlx_orchestrator"
+          BASE_ARGS="$BASE_ARGS -Dsonar.tests=orchestrator/tests"
+          BASE_ARGS="$BASE_ARGS -Dsonar.test.inclusions=**/test_*.py"
+          BASE_ARGS="$BASE_ARGS -Dsonar.coverage.exclusions=orchestrator/migrations/**,orchestrator/tests/**,manage.py"
+          BASE_ARGS="$BASE_ARGS -Dsonar.exclusions=orchestrator/migrations/**,orchestrator/static/**,docs/**,site/**,adr/**,models/**,logs/**,venv/**,**/__pycache__/**"
+          [ -f coverage.xml ] && BASE_ARGS="$BASE_ARGS -Dsonar.python.coverage.reportPaths=coverage.xml"
+
+          PR_ARGS="-Dsonar.pullrequest.key=${{ github.event.pull_request.number }}"
+          PR_ARGS="$PR_ARGS -Dsonar.pullrequest.branch=$BRANCH_NAME"
+          PR_ARGS="$PR_ARGS -Dsonar.pullrequest.base=${{ github.event.pull_request.base.ref }}"
+          BRANCH_ARGS="-Dsonar.branch.name=$BRANCH_NAME"
+
+          set +e
+          ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $PR_ARGS 2>&1 | tee sonar.log
+          SONAR_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$SONAR_EXIT" -ne 0 ] && grep -q "Developer Edition or above is required" sonar.log; then
+            echo "PR parameters not supported. Retrying with branch context to protect main baseline."
+            set +e
+            ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS 2>&1 | tee sonar-branch.log
+            BRANCH_EXIT=${PIPESTATUS[0]}
+            set -e
+            if [ "$BRANCH_EXIT" -ne 0 ]; then
+              echo "Target SonarQube does not support PR/branch analysis. Aborting to avoid overwriting main baseline."
+              exit "$BRANCH_EXIT"
+            fi
+          elif [ "$SONAR_EXIT" -ne 0 ]; then
+            exit "$SONAR_EXIT"
+          fi
+
+      - name: Run SAST analysis (OpenGrep)
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sast == 'true'
+        run: |
+          TOOLS_DIR="$RUNNER_TEMP/spectra-tools"
+          mkdir -p "$TOOLS_DIR"
+          OPENGREP_VERSION=1.22.0
+          curl -sSfL -o "$TOOLS_DIR/opengrep" \
+            "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_x86"
+          chmod +x "$TOOLS_DIR/opengrep"
+          echo "$TOOLS_DIR" >> "$GITHUB_PATH"
+          opengrep scan --json --taint-intrafile --config auto --output sast_output.json . || true
+
+      - name: Install Trivy
+        if: steps.scan.outputs.status != 'bypassed' && (steps.scan.outputs.sca == 'true' || steps.scan.outputs.iac == 'true' || steps.scan.outputs.secrets == 'true' || steps.scan.outputs.sbom == 'true')
+        run: |
+          TOOLS_DIR="$RUNNER_TEMP/spectra-tools"
+          mkdir -p "$TOOLS_DIR"
+          TRIVY_VERSION=0.71.1
+          curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | tar -xz -C "$TOOLS_DIR" trivy
+          chmod +x "$TOOLS_DIR/trivy"
+          echo "$TOOLS_DIR" >> "$GITHUB_PATH"
+
+      - name: Run SCA analysis
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sca == 'true'
+        run: |
+          trivy fs --format json --scanners vuln --output trivy_sca.json . || true
+
+      - name: Run IaC analysis
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.iac == 'true'
+        run: |
+          trivy config --format json --output trivy_iac.json . || true
+
+      - name: Run Secrets analysis
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.secrets == 'true'
+        run: |
+          trivy fs --format json --scanners secret --output trivy_secrets.json . || true
+
+      - name: Generate SBOM (CycloneDX)
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sbom == 'true'
+        run: |
+          trivy fs --format cyclonedx --output sbom.cdx.json . || true
+
+      - name: Upload SAST results
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sast == 'true'
+        run: |
+          [ -f sast_output.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/sast" \
+            -H "X-CI-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @sast_output.json || true
+        env:
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+
+      - name: Upload SCA results
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sca == 'true'
+        run: |
+          [ -f trivy_sca.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/sca" \
+            -H "X-CI-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @trivy_sca.json || true
+        env:
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+
+      - name: Upload IaC results
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.iac == 'true'
+        run: |
+          [ -f trivy_iac.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/iac" \
+            -H "X-CI-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @trivy_iac.json || true
+        env:
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+
+      - name: Upload Secrets results
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.secrets == 'true'
+        run: |
+          [ -f trivy_secrets.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/secrets" \
+            -H "X-CI-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @trivy_secrets.json || true
+        env:
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+
+      - name: Upload SBOM results
+        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sbom == 'true'
+        run: |
+          [ -f sbom.cdx.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/sbom" \
+            -H "X-CI-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @sbom.cdx.json || true
+        env:
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+
+      - name: Notify Spectra — scan complete
+        if: always() && steps.scan.outputs.scan_id != '' && steps.scan.outputs.status != 'bypassed'
+        run: |
+          CE_TASK_ID=""
+          [ -f .scannerwork/report-task.txt ] && CE_TASK_ID=$(awk -F= '$1=="ceTaskId"{print $2}' .scannerwork/report-task.txt | tr -d '\r')
+          curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/complete" \
+            -H "X-CI-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"ce_task_id\":\"$CE_TASK_ID\"}"
+        env:
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+
+      - name: Wait for Spectra verdict
+        id: verdict
+        if: always() && steps.scan.outputs.scan_id != '' && steps.scan.outputs.status != 'bypassed'
+        run: |
+          for i in $(seq 1 60); do
+            RESPONSE=$(curl -sS "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/status" \
+              -H "X-CI-Key: $API_KEY" || true)
+            STATUS=$(echo "$RESPONSE" | jq -r '.data.status // empty' 2>/dev/null)
+
+            if [ -z "$STATUS" ]; then
+              echo "[$i/60] Status unavailable (transient API/network error), retrying..."
+              sleep 10
+              continue
+            fi
+            echo "[$i/60] Status: $STATUS"
+
+            case "$STATUS" in
+              passed|failed|bypassed|error)
+                echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+                {
+                  echo "response<<EOF"
+                  echo "$RESPONSE"
+                  echo "EOF"
+                } >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+            sleep 10
+          done
+          echo "status=timeout" >> "$GITHUB_OUTPUT"
+          {
+            echo "response<<EOF"
+            echo '{"data":{"status":"timeout"}}'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Timeout waiting for Spectra verdict."
+          exit 0
+        env:
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+
+      - name: Post PR comment
+        if: always() && steps.scan.outputs.scan_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
+          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
+          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+          VERDICT_STATUS: ${{ steps.verdict.outputs.status }}
+        run: |
+          DATA=$(curl -sS "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/status" \
+            -H "X-CI-Key: $API_KEY" | jq '.data // {}' 2>/dev/null)
+
+          STATUS=$(echo "$DATA" | jq -r '.status // "unknown"')
+          SCAN_URL=$(echo "$DATA" | jq -r '.scan_url // ""')
+
+          NEW_BUGS=$(echo "$DATA" | jq -r '.new_bugs // 0')
+          NEW_VULNS=$(echo "$DATA" | jq -r '.new_vulnerabilities // 0')
+          NEW_SMELLS=$(echo "$DATA" | jq -r '.new_code_smells // 0')
+          NEW_DUP=$(echo "$DATA" | jq -r '.new_duplication_pct // 0')
+
+          TOTAL_BUGS=$(echo "$DATA" | jq -r '.total_bugs // "—"')
+          TOTAL_VULNS=$(echo "$DATA" | jq -r '.total_vulnerabilities // "—"')
+          TOTAL_SMELLS=$(echo "$DATA" | jq -r '.total_code_smells // "—"')
+
+          RELIABILITY=$(echo "$DATA" | jq -r '.reliability_rating // "—"')
+          MAINTAINABILITY=$(echo "$DATA" | jq -r '.maintainability_rating // "—"')
+
+          case "$STATUS" in
+            passed)   ICON="✅"; LABEL="Quality Gate passed" ;;
+            bypassed) ICON="⏭️"; LABEL="Quality Gate bypassed" ;;
+            failed)   ICON="❌"; LABEL="Quality Gate failed" ;;
+            error)    ICON="⚠️"; LABEL="Quality Gate error" ;;
+            *)        ICON="⏳"; LABEL="Quality Gate — $STATUS" ;;
+          esac
+
+          FAILED_CONDITIONS=$(echo "$DATA" | jq -r '
+            if (.failed_conditions | length) > 0
+            then "\n**Failed conditions:**\n" + (.failed_conditions | map("- " + .) | join("\n"))
+            else "" end')
+
+          BODY=$(cat <<EOF
+          ## $ICON Spectra — $LABEL
+
+          ### Issues
+
+          | | New | Overall |
+          |---|:---:|:---:|
+          | 🐛 Bugs | **$NEW_BUGS** | $TOTAL_BUGS |
+          | 🔒 Vulnerabilities | **$NEW_VULNS** | $TOTAL_VULNS |
+          | 🧹 Code Smells | **$NEW_SMELLS** | $TOTAL_SMELLS |
+
+          ### Measures
+
+          | Metric | Value |
+          |---|:---:|
+          | Duplication on New Code | ${NEW_DUP}% |
+          | Reliability | $RELIABILITY |
+          | Maintainability | $MAINTAINABILITY |
+          $FAILED_CONDITIONS
+
+          ---
+          📊 [View detailed analysis on Spectra]($SCAN_URL)
+          EOF
+          )
+
+          BODY=$(echo "$BODY" | sed 's/^          //')
+
+          gh pr comment "${{ github.event.pull_request.number }}" --body "$BODY"
+
+      - name: Enforce gate result
+        if: always()
+        run: |
+          if [ -z "${{ steps.scan.outputs.scan_id }}" ]; then
+            echo "No scan_id available. Failing fast."
+            exit 1
+          fi
+          if [ "${{ steps.scan.outputs.status }}" = "bypassed" ]; then
+            echo "Quality gate bypassed."
+            exit 0
+          fi
+          STATUS="${{ steps.verdict.outputs.status }}"
+          [ -z "$STATUS" ] && STATUS="timeout"
+          case "$STATUS" in
+            passed|bypassed) echo "Quality gate $STATUS."; exit 0 ;;
+            failed)
+              echo "Quality gate FAILED."
+              [ "$MODE" = "blocking" ] && exit 1 || exit 0
+              ;;
+            error|timeout) echo "Quality gate $STATUS."; exit 1 ;;
+            *) echo "Unexpected status: $STATUS"; exit 1 ;;
+          esac
+        env:
+          MODE: advisory
