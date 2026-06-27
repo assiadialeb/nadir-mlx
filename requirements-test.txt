@@ -1,0 +1,7 @@
+# Test-only dependencies (MLX-47 contract/smoke suites).
+# Install: pip install -r requirements-test.txt
+pytest>=8.0
+pytest-django>=4.8
+pytest-mock>=3.14
+pytest-cov>=5.0
+jsonschema>=4.23

@@ -29,11 +29,28 @@ pip install -r requirements-docs.txt
 ## Running tests
 
 ```bash
+pip install -r requirements-test.txt
 export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
 pytest orchestrator/tests -q
 ```
 
 Most tests use mocks and do not require a running MLX model or Apple Silicon GPU in CI.
+
+### API contract tests (MLX-47)
+
+OpenAPI contract tests for gateway endpoints marked ✅ in the coverage matrix:
+
+```bash
+pytest -m contract orchestrator/tests/contracts -q
+```
+
+Live smoke tests (optional, against a running gateway):
+
+```bash
+export NADIR_SMOKE_GATEWAY_URL=http://127.0.0.1:11380
+export NADIR_SMOKE_MODEL_ALIAS=<text-alias>   # for chat smoke only
+pytest -m smoke orchestrator/tests/smoke -q
+```
 
 Disable the instance watchdog during one-off commands:
 

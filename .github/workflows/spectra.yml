@@ -28,7 +28,7 @@ jobs:
           # MLX packages are Apple Silicon–only; CI runs on ubuntu-latest with mocks.
           grep -vE '^(mlx|mlx-)' requirements.txt | grep -v '^#' | grep -v '^[[:space:]]*$' > /tmp/requirements-ci.txt
           pip install -r /tmp/requirements-ci.txt
-          pip install pytest pytest-django pytest-mock pytest-cov
+          pip install -r requirements-test.txt
           export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
           export MLX_DISABLE_INSTANCE_WATCHDOG=1
           pytest orchestrator/tests \
