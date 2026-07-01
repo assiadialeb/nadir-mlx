@@ -277,6 +277,58 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 
 See [instance-lifecycle.md](instance-lifecycle.md) for wake and idle offload behaviour.
 
+## Error codes
+
+Gateway and proxy errors use an OpenAI-style envelope:
+
+```json
+{
+  "error": {
+    "message": "Human-readable description",
+    "type": "<code>",
+    "code": "<code>"
+  }
+}
+```
+
+`type` and `code` are identical for routing errors. Upstream proxy errors may use upstream `type` with gateway `code` where applicable.
+
+### Routing and lifecycle (`GatewayRouteError`)
+
+| HTTP | `code` | When |
+|------|--------|------|
+| 400 | `invalid_model` | Missing or empty `model` field |
+| 400 | `unsupported_endpoint` | Route does not match instance launch mode (e.g. chat on IMAGE alias) |
+| 404 | `model_not_found` | No instance registered for this alias |
+| 503 | `model_unavailable` | Instance STOPPED, LOADING, FAILED, or not ready (`always_on`) |
+| 503 | `model_waking_timeout` | `on_demand` instance did not become healthy within `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` |
+| 500 | `unsupported_launch_mode` | Internal: launch mode missing from route table |
+
+### Proxy and queue (`http_proxy` / `mode_proxy`)
+
+| HTTP | `code` | When |
+|------|--------|------|
+| 502 | `bad_gateway` | Connection error to MLX instance |
+| 503 | `upstream_queue_timeout` | Waited longer than `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` for a concurrency slot |
+| 504 | `gateway_timeout` | Upstream request exceeded `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` |
+
+Upstream MLX errors are forwarded when possible (`type` may be `upstream_error`).
+
+### Request validation
+
+| HTTP | `type` / `code` | When |
+|------|-----------------|------|
+| 400 | `invalid_request` | Malformed JSON body (not an object or parse error) |
+| 401 | — | Missing/invalid `X-API-Key` when `NADIR_GATEWAY_API_KEY` is set (`detail` string, FastAPI auth) |
+
+### Contract coverage
+
+OpenAPI contract tests assert error shape for `model_not_found` (404) and `model_unavailable` (503). Run locally:
+
+```bash
+pytest -m contract orchestrator/tests/contracts -q
+```
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -286,6 +338,9 @@ See [instance-lifecycle.md](instance-lifecycle.md) for wake and idle offload beh
 | `503 model_unavailable` | `always_on` instance stopped / loading / failed | Start server in UI; wait for **Running** |
 | `503 model_waking_timeout` | `on_demand` cold start exceeded wake timeout | Increase `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` and client timeout |
 | `400 unsupported_endpoint` | Wrong route for launch mode | Use embeddings route for EMBEDDING alias, etc. |
+| `502 bad_gateway` | MLX process down or port closed | Check instance status and logs |
+| `503 upstream_queue_timeout` | Too many parallel gateway requests | Raise per-instance max concurrent or global queue timeout |
+| `504 gateway_timeout` | Inference slower than proxy timeout | Increase `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` |
 | Empty `/v1/models` | No instances registered | Create at least one server (stopped `on_demand` aliases still appear) |
 
 ## Direct instance ports (debugging)
@@ -298,6 +353,7 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 |-------------|---------|
 | TEXT / MULTIMODAL | [gateway-runbooks/chat.md](gateway-runbooks/chat.md) |
 | MULTIMODAL (vision) | [gateway-runbooks/vlm.md](gateway-runbooks/vlm.md) |
+| MULTIMODAL (Gemma 4 MTP) | [gateway-runbooks/gemma4-mtp.md](gateway-runbooks/gemma4-mtp.md) |
 | EMBEDDING | [gateway-runbooks/embedding.md](gateway-runbooks/embedding.md) |
 | RERANKER | [gateway-runbooks/reranker.md](gateway-runbooks/reranker.md) |
 | IMAGE | [gateway-runbooks/image.md](gateway-runbooks/image.md) |
