@@ -453,6 +453,7 @@ def _build_launch_command(
             "default-voice": server_config.get("voice_id"),
             "default-speed": server_config.get("speaking_rate"),
             "default-lang-code": server_config.get("lang_code"),
+            "default-response-format": advanced.get("response_format"),
         })
         return command
 

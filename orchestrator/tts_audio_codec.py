@@ -48,6 +48,14 @@ def normalize_tts_response_format(raw: str | None) -> str:
     return normalized
 
 
+def resolve_tts_response_format(
+    request_format: str | None,
+    server_default: str | None,
+) -> str:
+    """Pick request format when set, otherwise server_config advanced default."""
+    return normalize_tts_response_format(request_format or server_default)
+
+
 def tts_media_type(response_format: str) -> str:
     """Return the HTTP media type for a TTS response format."""
     return TTS_RESPONSE_MEDIA_TYPES[normalize_tts_response_format(response_format)]

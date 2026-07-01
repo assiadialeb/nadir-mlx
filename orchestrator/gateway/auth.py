@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import os
-
 from fastapi import Header, HTTPException, status
 
+from orchestrator.env_utils import env_str
 from orchestrator.security_utils import extract_bearer_token
 
 
@@ -14,7 +13,7 @@ def verify_gateway_api_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> None:
     """Require NADIR_GATEWAY_API_KEY when configured (OpenAI-compatible clients)."""
-    expected = os.environ.get("NADIR_GATEWAY_API_KEY", "").strip()
+    expected = env_str("NADIR_GATEWAY_API_KEY", "")
     if not expected:
         return
 

@@ -30,6 +30,7 @@ from orchestrator.tts_audio_codec import (
     encode_speech_audio,
     iter_encoded_audio_chunks,
     normalize_tts_response_format,
+    resolve_tts_response_format,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class SpeechRequest(BaseModel):
     speed: Optional[float] = Field(default=None, ge=0.25, le=4.0)
     lang_code: Optional[str] = None
     language: Optional[str] = None
-    response_format: str = "wav"
+    response_format: Optional[str] = None
     stream: bool = False
 
 
@@ -227,7 +228,10 @@ def _create_speech(body: SpeechRequest) -> Response:
         logger.info(remap_note)
 
     try:
-        response_format = normalize_tts_response_format(body.response_format)
+        response_format = resolve_tts_response_format(
+            body.response_format,
+            defaults.get("response_format"),
+        )
     except TtsFormatError as exc:
         raise InferenceApiError(400, str(exc)) from exc
 
@@ -269,6 +273,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--default-voice", default="ff_siwis")
     parser.add_argument("--default-speed", type=float, default=1.0)
     parser.add_argument("--default-lang-code", default="f")
+    parser.add_argument(
+        "--default-response-format",
+        default=None,
+        help="Default audio codec (from server_config advanced.response_format)",
+    )
     return parser.parse_args()
 
 
@@ -280,6 +289,13 @@ def main() -> None:
         raise SystemExit(f"Model path not found: {model_path}")
 
     _verify_kokoro_dependencies()
+    try:
+        default_response_format = normalize_tts_response_format(
+            args.default_response_format or "wav",
+        )
+    except TtsFormatError as exc:
+        raise SystemExit(str(exc)) from exc
+
     print(f"Loading Kokoro TTS model from {model_path} ...")
     from mlx_audio.utils import load_model
 
@@ -292,6 +308,7 @@ def main() -> None:
         "voice_id": args.default_voice,
         "speaking_rate": args.default_speed,
         "lang_code": args.default_lang_code,
+        "response_format": default_response_format,
     }
 
     print(f"MLX TTS server ready on http://{args.host}:{args.port}")

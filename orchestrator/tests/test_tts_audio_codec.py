@@ -13,6 +13,7 @@ from orchestrator.tts_audio_codec import (
     encode_speech_audio,
     iter_encoded_audio_chunks,
     normalize_tts_response_format,
+    resolve_tts_response_format,
     tts_media_type,
 )
 
@@ -25,6 +26,13 @@ class TtsAudioCodecTests(SimpleTestCase):
     def test_normalize_tts_response_format_rejects_unknown(self) -> None:
         with self.assertRaises(TtsFormatError):
             normalize_tts_response_format("webm")
+
+    def test_resolve_tts_response_format_prefers_request(self) -> None:
+        self.assertEqual(resolve_tts_response_format("mp3", "opus"), "mp3")
+
+    def test_resolve_tts_response_format_uses_server_default(self) -> None:
+        self.assertEqual(resolve_tts_response_format(None, "opus"), "opus")
+        self.assertEqual(resolve_tts_response_format(None, None), "wav")
 
     def test_tts_media_type_maps_opus_and_aac(self) -> None:
         self.assertEqual(tts_media_type("opus"), "audio/opus")

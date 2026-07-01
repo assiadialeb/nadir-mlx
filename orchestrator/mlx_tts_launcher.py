@@ -16,6 +16,7 @@ def main() -> None:
     parser.add_argument("--default-voice", default="af_heart")
     parser.add_argument("--default-speed", type=float, default=1.0)
     parser.add_argument("--default-lang-code", default="a")
+    parser.add_argument("--default-response-format", default=None)
     args = parser.parse_args()
 
     model_path = Path(args.model).resolve()
@@ -38,6 +39,8 @@ def main() -> None:
         "--default-lang-code",
         args.default_lang_code,
     ]
+    if args.default_response_format is not None:
+        sys.argv.extend(["--default-response-format", args.default_response_format])
     server_main()
 
 

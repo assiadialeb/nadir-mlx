@@ -19,3 +19,11 @@ def env_int(key: str, fallback: int) -> int:
     if raw is None or not raw.strip():
         return fallback
     return int(raw)
+
+
+def env_float(key: str, fallback: float) -> float:
+    """Return a float env value, or fallback when missing or blank."""
+    raw = os.environ.get(key)
+    if raw is None or not raw.strip():
+        return fallback
+    return float(raw)

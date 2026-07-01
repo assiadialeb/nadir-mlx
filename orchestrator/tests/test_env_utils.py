@@ -3,7 +3,7 @@
 from django.test import SimpleTestCase
 from unittest.mock import patch
 
-from orchestrator.env_utils import env_int, env_str
+from orchestrator.env_utils import env_float, env_int, env_str
 
 
 class EnvUtilsTests(SimpleTestCase):
@@ -26,3 +26,11 @@ class EnvUtilsTests(SimpleTestCase):
     @patch.dict("os.environ", {"NADIR_TEST_PORT": "  "}, clear=False)
     def test_env_int_treats_blank_as_unset(self) -> None:
         self.assertEqual(env_int("NADIR_TEST_PORT", 11380), 11380)
+
+    @patch.dict("os.environ", {"NADIR_TEST_TIMEOUT": "120.5"}, clear=False)
+    def test_env_float_parses_value(self) -> None:
+        self.assertEqual(env_float("NADIR_TEST_TIMEOUT", 300.0), 120.5)
+
+    @patch.dict("os.environ", {"NADIR_TEST_TIMEOUT": ""}, clear=False)
+    def test_env_float_treats_blank_as_unset(self) -> None:
+        self.assertEqual(env_float("NADIR_TEST_TIMEOUT", 300.0), 300.0)

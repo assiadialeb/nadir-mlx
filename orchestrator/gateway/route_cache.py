@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from dataclasses import dataclass
 
 from django.conf import settings
 
+from orchestrator.env_utils import env_str
 from orchestrator.gateway.router import GatewayTarget
 
 
@@ -29,13 +29,13 @@ _CACHE_EXPIRES_AT: float = 0.0
 
 def gateway_route_cache_ttl_seconds() -> float:
     """Return TTL for the in-memory gateway route cache."""
-    raw = os.environ.get("NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS")
-    if raw:
-        try:
-            return max(1.0, float(raw))
-        except ValueError:
-            pass
-    return float(getattr(settings, "NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS", 20.0))
+    raw = env_str("NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS", "")
+    if not raw:
+        return float(settings.NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS)
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return float(settings.NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS)
 
 
 def clear_gateway_route_cache() -> None:
