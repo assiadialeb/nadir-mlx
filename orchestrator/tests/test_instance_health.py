@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 from django.test import TestCase, override_settings
 
 from orchestrator.instance_health import (
+    deep_generation_health_enabled,
     evaluate_instance_health,
+    probe_generation_health,
     probe_http_health,
     refresh_instance_health,
     should_skip_watchdog,
@@ -43,6 +45,45 @@ class InstanceHealthTests(TestCase):
     ) -> None:
         instance = MagicMock(status="RUNNING", pid=123, port=11400, server_config={})
         self.assertEqual(evaluate_instance_health(instance), "HEALTHY")
+
+    @patch.dict("os.environ", {"NADIR_DEEP_INSTANCE_HEALTH": "1"})
+    @patch("orchestrator.instance_health.probe_generation_health", return_value=False)
+    @patch("orchestrator.instance_health.probe_http_health", return_value=True)
+    @patch("orchestrator.instance_health._find_listener_pids", return_value=[123])
+    @patch("orchestrator.instance_health._is_process_alive", return_value=True)
+    def test_evaluate_instance_health_degraded_when_generation_fails(
+        self,
+        _mock_alive: MagicMock,
+        _mock_listeners: MagicMock,
+        _mock_http: MagicMock,
+        _mock_generation: MagicMock,
+    ) -> None:
+        instance = MagicMock(
+            id=42,
+            status="RUNNING",
+            pid=123,
+            port=11400,
+            launch_mode="MULTIMODAL",
+            server_config={},
+        )
+        self.assertEqual(evaluate_instance_health(instance), "DEGRADED")
+
+    def test_probe_generation_health_posts_chat_completion(self) -> None:
+        instance = MagicMock(
+            id=7,
+            port=11400,
+            launch_mode="MULTIMODAL",
+            server_config={"host": "127.0.0.1"},
+        )
+        with patch("orchestrator.instance_health.httpx.post") as mock_post:
+            mock_post.return_value.status_code = 200
+            self.assertTrue(probe_generation_health(instance))
+        mock_post.assert_called_once()
+        self.assertIn("/v1/chat/completions", mock_post.call_args[0][0])
+
+    def test_deep_generation_health_disabled_by_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(deep_generation_health_enabled())
 
     @patch("orchestrator.instance_watchdog.refresh_all_instance_health")
     @patch("orchestrator.instance_watchdog._attempt_auto_restart")

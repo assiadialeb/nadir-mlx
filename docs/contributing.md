@@ -53,7 +53,15 @@ export NADIR_SMOKE_MODEL_ALIAS=<text-alias>          # chat smoke (MLX-47)
 export NADIR_SMOKE_ON_DEMAND_ALIAS=<on-demand-alias> # wake smoke (MLX-60)
 export NADIR_SMOKE_EMBED_ALIAS=<embedding-alias>     # embeddings smoke (MLX-63)
 export NADIR_SMOKE_RERANK_ALIAS=<reranker-alias>     # rerank smoke (MLX-63)
+export NADIR_SMOKE_MTP_ALIAS=<multimodal-mtp-alias> # MTP generation smoke (MLX-70)
 pytest -m smoke orchestrator/tests/smoke -q
+```
+
+Deep instance health (optional, probes a minimal generation request):
+
+```bash
+export NADIR_DEEP_INSTANCE_HEALTH=1
+export NADIR_DEEP_HEALTH_INTERVAL_SECONDS=300
 ```
 
 Smoke tests skip automatically when the required environment variables are unset (CI-safe).

@@ -70,6 +70,16 @@
                     Server configuration
                 </button>
                 <div id="config-panel" class="hidden mt-4 space-y-4">
+                    <div id="perf-profile-row" class="hidden">
+                        <label for="perf_profile" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                            Performance profile
+                        </label>
+                        <select id="perf_profile"
+                            class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="">Default (registry only)</option>
+                        </select>
+                        <p class="field-hint mt-1.5">One-click MTP and tuning presets for supported models.</p>
+                    </div>
                     <div id="config-fields" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
                     <details class="rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <summary class="text-sm font-semibold text-slate-700 cursor-pointer">Advanced (JSON)</summary>
@@ -335,6 +345,7 @@ const configFieldsByMode = {{ config_fields_json|safe }};
 const advancedKeysByMode = {{ advanced_keys_json|safe }};
 const registryDefaultsByMode = {{ registry_defaults_json|safe }};
 const registryMetadata = {{ registry_metadata_json|safe }};
+const perfProfilesByMode = {{ perf_profiles_json|safe }};
 const instanceConfigsById = {
 {% for instance in instances %}
     "{{ instance.id }}": {{ instance.server_config_json|safe }}{% if not forloop.last %},{% endif %}
@@ -401,16 +412,38 @@ function closeEditInstanceModal() {
     document.getElementById('edit-instance-modal').classList.add('hidden');
 }
 
-function applyRegistryDefaults(mode, modelName) {
-    const hint = document.getElementById('registry-hint');
-    if (!modelName) {
-        hint.classList.add('hidden');
-        hint.textContent = '';
-        return;
-    }
+function mergeAdvancedJson(targetAdvanced, sourceAdvanced) {
+    const merged = { ...targetAdvanced };
+    Object.entries(sourceAdvanced || {}).forEach(([key, value]) => {
+        if (merged[key] == null || merged[key] === '') {
+            merged[key] = value;
+        }
+    });
+    return merged;
+}
 
-    const defaults = (registryDefaultsByMode[mode] || {})[modelName] || {};
+function applyAdvancedDefaults(defaults) {
+    const textarea = document.getElementById('config_advanced');
+    if (!textarea || !defaults.advanced) return;
+    let current = {};
+    if (textarea.value.trim()) {
+        try {
+            current = JSON.parse(textarea.value);
+        } catch (_error) {
+            return;
+        }
+    }
+    textarea.value = JSON.stringify(mergeAdvancedJson(current, defaults.advanced), null, 2);
+}
+
+function applyPerfProfile(mode, modelName, profileId) {
+    const profiles = ((perfProfilesByMode[mode] || {})[modelName] || []);
+    const profile = profiles.find(item => item.id === profileId);
+    if (!profile) return;
+
+    const defaults = profile.server_config || {};
     Object.entries(defaults).forEach(([key, value]) => {
+        if (key === 'advanced') return;
         const input = document.getElementById(`config_${key}`);
         if (!input) return;
         if (input.type === 'checkbox') {
@@ -419,6 +452,48 @@ function applyRegistryDefaults(mode, modelName) {
         }
         input.value = value;
     });
+    applyAdvancedDefaults(defaults);
+}
+
+function updatePerfProfileSelect(mode, modelName) {
+    const row = document.getElementById('perf-profile-row');
+    const select = document.getElementById('perf_profile');
+    if (!row || !select) return;
+
+    const profiles = ((perfProfilesByMode[mode] || {})[modelName] || []);
+    select.innerHTML = '<option value="">Default (registry only)</option>';
+    profiles.forEach(profile => {
+        const opt = document.createElement('option');
+        opt.value = profile.id;
+        opt.textContent = profile.label;
+        select.appendChild(opt);
+    });
+    row.classList.toggle('hidden', profiles.length === 0);
+    select.value = '';
+}
+
+function applyRegistryDefaults(mode, modelName) {
+    const hint = document.getElementById('registry-hint');
+    if (!modelName) {
+        hint.classList.add('hidden');
+        hint.textContent = '';
+        updatePerfProfileSelect(mode, '');
+        return;
+    }
+
+    const defaults = (registryDefaultsByMode[mode] || {})[modelName] || {};
+    Object.entries(defaults).forEach(([key, value]) => {
+        if (key === 'advanced') return;
+        const input = document.getElementById(`config_${key}`);
+        if (!input) return;
+        if (input.type === 'checkbox') {
+            input.checked = Boolean(value);
+            return;
+        }
+        input.value = value;
+    });
+    applyAdvancedDefaults(defaults);
+    updatePerfProfileSelect(mode, modelName);
 
     const meta = registryMetadata[modelName];
     if (meta && (meta.upstream || meta.family_id)) {
@@ -537,6 +612,7 @@ function renderConfigFields(mode, modelName = '') {
         ? `Allowed keys: ${allowed.join(', ')}`
         : 'No advanced options for this server type.';
     document.getElementById('config_advanced').value = '';
+    document.getElementById('perf_profile').value = '';
 }
 
 function updateModelSelect() {
@@ -578,6 +654,18 @@ document.getElementById('model_name').addEventListener('change', () => {
     const modelName = document.getElementById('model_name').value;
     applyRegistryDefaults(mode, modelName);
     applyGatewayAliasDefault(modelName);
+});
+
+document.getElementById('perf_profile').addEventListener('change', () => {
+    const mode = document.getElementById('launch_mode').value;
+    const modelName = document.getElementById('model_name').value;
+    const profileId = document.getElementById('perf_profile').value;
+    if (!profileId) {
+        applyRegistryDefaults(mode, modelName);
+        return;
+    }
+    applyRegistryDefaults(mode, modelName);
+    applyPerfProfile(mode, modelName, profileId);
 });
 
 document.getElementById('toggle-config-panel').addEventListener('click', () => {
