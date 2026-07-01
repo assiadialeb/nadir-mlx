@@ -30,6 +30,8 @@ jobs:
           pip install -r /tmp/requirements-ci.txt
           # mflux is pure-Python metadata for image profiles; avoid mlx CUDA wheels on Linux.
           pip install "mflux==0.18.0" --no-deps
+          # --no-deps skips mflux transitive deps; platformdirs is required at import time.
+          pip install "platformdirs>=4.0,<5.0" "toml>=0.10.2,<1.0" "piexif>=1.1.3,<2.0"
           pip install -r requirements-test.txt
 
       - name: OpenAPI contract tests (MLX-72)
@@ -47,7 +49,9 @@ jobs:
           pytest orchestrator/tests \
             --cov=orchestrator \
             --cov=mlx_orchestrator \
-            --cov-report=xml:coverage.xml || true
+            --cov-report=xml:coverage.xml
+          test -f coverage.xml
+          echo "coverage.xml size: $(wc -c < coverage.xml) bytes"
 
       - name: Register scan with Spectra
         id: scan
