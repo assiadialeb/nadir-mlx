@@ -152,7 +152,7 @@ jobs:
         run: |
           TOOLS_DIR="$RUNNER_TEMP/spectra-tools"
           mkdir -p "$TOOLS_DIR"
-          TRIVY_VERSION=0.71.1
+          TRIVY_VERSION=0.72.0
           curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | tar -xz -C "$TOOLS_DIR" trivy
           chmod +x "$TOOLS_DIR/trivy"
           echo "$TOOLS_DIR" >> "$GITHUB_PATH"
