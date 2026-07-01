@@ -140,7 +140,7 @@ jobs:
         run: |
           TOOLS_DIR="$RUNNER_TEMP/spectra-tools"
           mkdir -p "$TOOLS_DIR"
-          OPENGREP_VERSION=1.22.0
+          OPENGREP_VERSION=1.25.0
           curl -sSfL -o "$TOOLS_DIR/opengrep" \
             "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_x86"
           chmod +x "$TOOLS_DIR/opengrep"
