@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from django.test import TestCase, override_settings
 
 from orchestrator.instance_health import (
+    _last_generation_probe_at,
     deep_generation_health_enabled,
     evaluate_instance_health,
     probe_generation_health,
@@ -21,6 +22,10 @@ from orchestrator.models import InferenceInstance
 
 
 class InstanceHealthTests(TestCase):
+    def setUp(self) -> None:
+        # Module-level rate-limit cache survives across tests in the same pytest session.
+        _last_generation_probe_at.clear()
+
     def test_probe_http_health_returns_true_on_success(self) -> None:
         instance = MagicMock(port=11400, server_config={"host": "127.0.0.1"})
         with patch("orchestrator.instance_health.httpx.get") as mock_get:
@@ -47,6 +52,7 @@ class InstanceHealthTests(TestCase):
         self.assertEqual(evaluate_instance_health(instance), "HEALTHY")
 
     @patch.dict("os.environ", {"NADIR_DEEP_INSTANCE_HEALTH": "1"})
+    @patch("orchestrator.instance_health._should_probe_generation", return_value=True)
     @patch("orchestrator.instance_health.probe_generation_health", return_value=False)
     @patch("orchestrator.instance_health.probe_http_health", return_value=True)
     @patch("orchestrator.instance_health._find_listener_pids", return_value=[123])
@@ -57,9 +63,10 @@ class InstanceHealthTests(TestCase):
         _mock_listeners: MagicMock,
         _mock_http: MagicMock,
         _mock_generation: MagicMock,
+        _mock_should_probe: MagicMock,
     ) -> None:
         instance = MagicMock(
-            id=42,
+            id=999_001,
             status="RUNNING",
             pid=123,
             port=11400,
@@ -67,6 +74,8 @@ class InstanceHealthTests(TestCase):
             server_config={},
         )
         self.assertEqual(evaluate_instance_health(instance), "DEGRADED")
+        _mock_should_probe.assert_called_once_with(instance)
+        _mock_generation.assert_called_once_with(instance)
 
     def test_probe_generation_health_posts_chat_completion(self) -> None:
         instance = MagicMock(

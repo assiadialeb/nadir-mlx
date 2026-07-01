@@ -42,16 +42,22 @@ jobs:
           pytest -m contract orchestrator/tests/contracts -q
 
       - name: Run unit tests with coverage
+        id: pytest
+        continue-on-error: true
         run: |
           export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
           export MLX_DISABLE_INSTANCE_WATCHDOG=1
           export NADIR_CI_STUB_MLX=1
+          set +e
           pytest orchestrator/tests \
             --cov=orchestrator \
             --cov=mlx_orchestrator \
             --cov-report=xml:coverage.xml
+          PYTEST_EXIT=$?
+          set -e
           test -f coverage.xml
           echo "coverage.xml size: $(wc -c < coverage.xml) bytes"
+          exit "$PYTEST_EXIT"
 
       - name: Register scan with Spectra
         id: scan
@@ -359,6 +365,10 @@ jobs:
       - name: Enforce gate result
         if: always()
         run: |
+          if [ "${{ steps.pytest.outcome }}" = "failure" ]; then
+            echo "Unit tests failed."
+            exit 1
+          fi
           if [ -z "${{ steps.scan.outputs.scan_id }}" ]; then
             echo "No scan_id available. Failing fast."
             exit 1
