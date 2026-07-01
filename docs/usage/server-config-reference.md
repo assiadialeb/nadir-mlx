@@ -154,7 +154,7 @@ Each key maps to a `--kebab-case` CLI flag on `mlx_lm.server` at instance start.
 
 ---
 
-## Advanced JSON — MULTIMODAL (`mlx-vlm`)
+## Advanced JSON — MULTIMODAL (`mlx-vlm`) {#advanced-json-multimodal-mlx-vlm}
 
 Allowed keys: `adapter_path`, `draft_model`, `draft_kind`, `draft_block_size`, `kv_bits`, `kv_quant_scheme`, `kv_group_size`, `enable_thinking`, `thinking_budget`.
 
@@ -195,7 +195,7 @@ Allowed keys: `adapter_path`, `draft_model`, `draft_kind`, `draft_block_size`, `
 !!! warning "MTP + quantized assistants"
     For E2B/E4B assistants with `use_ordered_embeddings`, mlx-vlm 0.6.x MTP requires an **unquantized** drafter (`*-assistant-bf16`). Pairing a QAT/4bit target with a QAT/4bit assistant (e.g. `gemma-4-E4B-it-qat-assistant-4bit`) loads successfully but **crashes at first generation** with a `MaskedEmbedder` reshape error. Keep the target quantized if needed; only the `draft_model` must be bf16.
 
-    See [Gemma 4 MTP runbook](gateway-runbooks/gemma4-mtp.md), [compatibility matrix](draft-mtp-compatibility-matrix.md), and [ADR 007](../../adr/007-mtp-quantization.md).
+    See [Gemma 4 MTP runbook](gateway-runbooks/gemma4-mtp.md) and the [compatibility matrix](draft-mtp-compatibility-matrix.md).
 
 **Example — KV quant for long context:**
 

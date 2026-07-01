@@ -103,5 +103,4 @@ The orchestrator may run a minimal `/v1/chat/completions` probe on RUNNING TEXT/
 ## Related docs
 
 - [Draft / MTP compatibility matrix](../draft-mtp-compatibility-matrix.md)
-- [Server config reference — MULTIMODAL advanced](../server-config-reference.md#advanced-json--multimodal-mlx-vlm)
-- [ADR 007 — MTP and quantization](../../../adr/007-mtp-quantization.md)
+- [Server config reference — MULTIMODAL advanced](../server-config-reference.md#advanced-json-multimodal-mlx-vlm)

@@ -66,4 +66,4 @@ No `draft_kind` on TEXT until mlx-lm ships MTP server support (tracked MLX-67).
 ## See also
 
 - [Server config reference](server-config-reference.md)
-- [ADR 007 — MTP and quantization](../../adr/007-mtp-quantization.md)
+- [Gemma 4 MTP runbook](gateway-runbooks/gemma4-mtp.md)
