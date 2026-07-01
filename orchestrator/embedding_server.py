@@ -9,7 +9,7 @@ from typing import Any, Literal, Optional, Union
 
 import mlx.core as mx
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 
 from mlx_embeddings import generate, load
@@ -20,6 +20,7 @@ from orchestrator.embedding_response import (
     build_embedding_data_entries,
     normalize_encoding_format,
 )
+from orchestrator.fastapi_openapi import OPENAPI_INFERENCE_ERRORS, InferenceApiError, to_http_exception
 from orchestrator.inference_auth import require_inference_api_key
 from orchestrator.security_utils import public_error_message
 
@@ -65,29 +66,40 @@ def list_models() -> dict[str, Any]:
     }
 
 
-@app.post("/v1/embeddings", dependencies=[Depends(require_inference_api_key)])
+@app.post(
+    "/v1/embeddings",
+    dependencies=[Depends(require_inference_api_key)],
+    responses=OPENAPI_INFERENCE_ERRORS,
+)
 def create_embeddings(body: EmbeddingsRequest) -> dict[str, Any]:
+    try:
+        return _create_embeddings(body)
+    except InferenceApiError as exc:
+        raise to_http_exception(exc) from exc
+
+
+def _create_embeddings(body: EmbeddingsRequest) -> dict[str, Any]:
     model = _state.get("model")
     processor = _state.get("processor")
     if model is None or processor is None:
-        raise HTTPException(status_code=503, detail="Model not loaded.")
+        raise InferenceApiError(503, "Model not loaded.")
 
     texts = [body.input] if isinstance(body.input, str) else list(body.input)
     if not texts:
-        raise HTTPException(status_code=400, detail="input must not be empty.")
+        raise InferenceApiError(400, "input must not be empty.")
 
     try:
         encoding_format = normalize_encoding_format(body.encoding_format)
     except EmbeddingFormatError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise InferenceApiError(400, str(exc)) from exc
 
     try:
         output = generate(model, processor, texts)
         vectors = _extract_embeddings(output).tolist()
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=public_error_message(exc, fallback="Embedding generation failed."),
+        raise InferenceApiError(
+            500,
+            public_error_message(exc, fallback="Embedding generation failed."),
         ) from exc
 
     if isinstance(body.input, str):
@@ -102,7 +114,7 @@ def create_embeddings(body: EmbeddingsRequest) -> dict[str, Any]:
             dimensions=body.dimensions,
         )
     except EmbeddingDimensionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise InferenceApiError(400, str(exc)) from exc
 
     token_count = _estimate_tokens(texts)
     return {
