@@ -21,6 +21,7 @@ from orchestrator.kokoro_voices import (
 )
 from orchestrator.gateway_aliases import normalize_gateway_alias, validate_gateway_alias_format
 from orchestrator.model_registry import apply_registry_server_defaults
+from orchestrator.mtp_draft_validation import validate_mtp_draft_advanced
 
 LaunchModeId = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
 ALL_LAUNCH_MODES: tuple[str, ...] = (
@@ -429,6 +430,7 @@ def validate_and_normalize_server_config(
     validate_gateway_alias_format(str(normalized["model_id"]))
 
     normalized["advanced"] = _validate_advanced(launch_mode, advanced_raw)
+    validate_mtp_draft_advanced(launch_mode, normalized["advanced"])
     return normalized
 
 

@@ -182,6 +182,19 @@ Allowed keys: `adapter_path`, `draft_model`, `draft_kind`, `draft_block_size`, `
 }
 ```
 
+**Example — Gemma 4 MTP (E4B / E2B, bf16 assistant only):**
+
+```json
+{
+  "draft_model": "/path/to/models/gemma-4-E4B-it-assistant-bf16",
+  "draft_kind": "mtp",
+  "draft_block_size": 6
+}
+```
+
+!!! warning "MTP + quantized assistants"
+    For E2B/E4B assistants with `use_ordered_embeddings`, mlx-vlm 0.6.x MTP requires an **unquantized** drafter (`*-assistant-bf16`). Pairing a QAT/4bit target with a QAT/4bit assistant (e.g. `gemma-4-E4B-it-qat-assistant-4bit`) loads successfully but **crashes at first generation** with a `MaskedEmbedder` reshape error. Keep the target quantized if needed; only the `draft_model` must be bf16.
+
 **Example — KV quant for long context:**
 
 ```json

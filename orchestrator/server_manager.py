@@ -62,6 +62,10 @@ _LOG_FAILURE_PATTERNS = (
     re.compile(r"No module named 'num2words'"),
     re.compile(r"requires misaki with English extras"),
     re.compile(r"Unsupported image model folder"),
+    re.compile(
+        r"ValueError: \[reshape\] Cannot reshape array of size \d+ "
+        r"into shape \(1,1,4096,256\)"
+    ),
 )
 
 
