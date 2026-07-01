@@ -28,7 +28,7 @@ from .model_registry import (
     build_registry_defaults_json,
     build_registry_metadata_json,
 )
-from .perf_profiles import perf_profiles_for_ui_json
+from .perf_profiles import mtp_assistant_suggestions_for_ui_json, perf_profiles_for_ui_json
 from .server_config_schema import (
     advanced_keys_for_ui_json,
     config_fields_for_ui_json,
@@ -266,6 +266,7 @@ def servers_view(request):
         'registry_defaults_json': build_registry_defaults_json(installed_names),
         'registry_metadata_json': build_registry_metadata_json(installed_names),
         'perf_profiles_json': perf_profiles_for_ui_json(installed_names),
+        'mtp_assistant_suggestions_json': mtp_assistant_suggestions_for_ui_json(installed_names),
     })
 
 

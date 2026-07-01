@@ -16,11 +16,30 @@ def suggest_mtp_assistant_folder(target_folder: str) -> str | None:
     name = target_folder.strip()
     if not name:
         return None
+    lowered = name.lower()
+    if "qat" not in lowered:
+        return None
     if _E4B_RE.search(name):
         return "gemma-4-E4B-it-assistant-bf16"
     if _E2B_RE.search(name):
         return "gemma-4-E2B-it-assistant-bf16"
     return None
+
+
+def build_mtp_assistant_suggestions(folder_names: list[str]) -> dict[str, str]:
+    """Map installed model folders to suggested bf16 MTP assistant folders."""
+    suggestions: dict[str, str] = {}
+    for folder_name in folder_names:
+        assistant = suggest_mtp_assistant_folder(folder_name)
+        if assistant:
+            suggestions[folder_name] = assistant
+    return suggestions
+
+
+def mtp_assistant_suggestions_for_ui_json(folder_names: list[str]) -> str:
+    import json
+
+    return json.dumps(build_mtp_assistant_suggestions(folder_names))
 
 
 def _pattern_matches(folder_name: str, rule: dict[str, Any]) -> bool:

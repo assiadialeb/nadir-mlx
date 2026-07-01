@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies & run tests
+      - name: Install dependencies
         run: |
           # MLX/mflux are Apple Silicon–only; CI runs on ubuntu-latest with import stubs.
           grep -vE '^(mlx|mlx-|mflux)' requirements.txt | grep -v '^#' | grep -v '^[[:space:]]*$' > /tmp/requirements-ci.txt
@@ -31,6 +31,16 @@ jobs:
           # mflux is pure-Python metadata for image profiles; avoid mlx CUDA wheels on Linux.
           pip install "mflux==0.18.0" --no-deps
           pip install -r requirements-test.txt
+
+      - name: OpenAPI contract tests (MLX-72)
+        run: |
+          export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
+          export MLX_DISABLE_INSTANCE_WATCHDOG=1
+          export NADIR_CI_STUB_MLX=1
+          pytest -m contract orchestrator/tests/contracts -q
+
+      - name: Run unit tests with coverage
+        run: |
           export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
           export MLX_DISABLE_INSTANCE_WATCHDOG=1
           export NADIR_CI_STUB_MLX=1

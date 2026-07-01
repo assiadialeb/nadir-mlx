@@ -51,6 +51,8 @@
                         <a href="{% url 'models' %}?tab=hub" class="underline font-semibold">Install from Hugging Face</a>
                     </p>
                     <p id="registry-hint" class="field-hint mt-1.5 hidden"></p>
+                    <p id="mtp-assistant-hint" class="field-hint mt-1.5 hidden"></p>
+                    <p id="mtp-assistant-warning" class="field-hint field-hint--warning mt-1.5 hidden"></p>
                 </div>
 
                 <div>
@@ -346,6 +348,8 @@ const advancedKeysByMode = {{ advanced_keys_json|safe }};
 const registryDefaultsByMode = {{ registry_defaults_json|safe }};
 const registryMetadata = {{ registry_metadata_json|safe }};
 const perfProfilesByMode = {{ perf_profiles_json|safe }};
+const mtpAssistantSuggestions = {{ mtp_assistant_suggestions_json|safe }};
+const _QUANTIZED_DRAFT_RE = /(qat|[-_]4bit|[-_]8bit)/i;
 const instanceConfigsById = {
 {% for instance in instances %}
     "{{ instance.id }}": {{ instance.server_config_json|safe }}{% if not forloop.last %},{% endif %}
@@ -436,6 +440,82 @@ function applyAdvancedDefaults(defaults) {
     textarea.value = JSON.stringify(mergeAdvancedJson(current, defaults.advanced), null, 2);
 }
 
+function applyMtpAssistantSuggest(mode, modelName) {
+    const hint = document.getElementById('mtp-assistant-hint');
+    if (!hint || mode !== 'MULTIMODAL' || !modelName) {
+        if (hint) hint.classList.add('hidden');
+        warnIncompatibleMtpDraft();
+        return;
+    }
+
+    const assistant = mtpAssistantSuggestions[modelName];
+    if (!assistant) {
+        hint.classList.add('hidden');
+        warnIncompatibleMtpDraft();
+        return;
+    }
+
+    const textarea = document.getElementById('config_advanced');
+    if (!textarea) return;
+
+    let current = {};
+    if (textarea.value.trim()) {
+        try {
+            current = JSON.parse(textarea.value);
+        } catch (_error) {
+            hint.classList.add('hidden');
+            return;
+        }
+    }
+
+    const registryAdvanced = ((registryDefaultsByMode[mode] || {})[modelName] || {}).advanced || {};
+    const draftKind = String(current.draft_kind || registryAdvanced.draft_kind || '').toLowerCase();
+    if (draftKind !== 'mtp') {
+        hint.classList.add('hidden');
+        warnIncompatibleMtpDraft();
+        return;
+    }
+
+    if (!current.draft_model) {
+        current.draft_model = assistant;
+        textarea.value = JSON.stringify(current, null, 2);
+    }
+
+    hint.textContent = `Suggested MTP assistant: ${assistant} (bf16). You can override it in Advanced JSON.`;
+    hint.classList.remove('hidden');
+    warnIncompatibleMtpDraft();
+}
+
+function warnIncompatibleMtpDraft() {
+    const warning = document.getElementById('mtp-assistant-warning');
+    const textarea = document.getElementById('config_advanced');
+    if (!warning || !textarea) return;
+
+    if (!textarea.value.trim()) {
+        warning.classList.add('hidden');
+        return;
+    }
+
+    let current = {};
+    try {
+        current = JSON.parse(textarea.value);
+    } catch (_error) {
+        warning.classList.add('hidden');
+        return;
+    }
+
+    const draftKind = String(current.draft_kind || '').toLowerCase();
+    const draftModel = String(current.draft_model || '');
+    if (draftKind === 'mtp' && _QUANTIZED_DRAFT_RE.test(draftModel)) {
+        warning.textContent =
+            'Quantized MTP assistants (qat/4bit) crash mlx-vlm at generation. Use a bf16 assistant folder.';
+        warning.classList.remove('hidden');
+        return;
+    }
+
+    warning.classList.add('hidden');
+}
+
 function applyPerfProfile(mode, modelName, profileId) {
     const profiles = ((perfProfilesByMode[mode] || {})[modelName] || []);
     const profile = profiles.find(item => item.id === profileId);
@@ -453,6 +533,7 @@ function applyPerfProfile(mode, modelName, profileId) {
         input.value = value;
     });
     applyAdvancedDefaults(defaults);
+    applyMtpAssistantSuggest(mode, modelName);
 }
 
 function updatePerfProfileSelect(mode, modelName) {
@@ -478,6 +559,7 @@ function applyRegistryDefaults(mode, modelName) {
         hint.classList.add('hidden');
         hint.textContent = '';
         updatePerfProfileSelect(mode, '');
+        applyMtpAssistantSuggest(mode, '');
         return;
     }
 
@@ -494,6 +576,7 @@ function applyRegistryDefaults(mode, modelName) {
     });
     applyAdvancedDefaults(defaults);
     updatePerfProfileSelect(mode, modelName);
+    applyMtpAssistantSuggest(mode, modelName);
 
     const meta = registryMetadata[modelName];
     if (meta && (meta.upstream || meta.family_id)) {
@@ -666,7 +749,10 @@ document.getElementById('perf_profile').addEventListener('change', () => {
     }
     applyRegistryDefaults(mode, modelName);
     applyPerfProfile(mode, modelName, profileId);
+    applyMtpAssistantSuggest(mode, modelName);
 });
+
+document.getElementById('config_advanced').addEventListener('input', warnIncompatibleMtpDraft);
 
 document.getElementById('toggle-config-panel').addEventListener('click', () => {
     const panel = document.getElementById('config-panel');

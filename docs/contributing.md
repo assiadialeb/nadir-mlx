@@ -45,6 +45,8 @@ OpenAPI contract tests for gateway endpoints marked ✅ in the coverage matrix:
 pytest -m contract orchestrator/tests/contracts -q
 ```
 
+Contract tests also run on every PR in CI (blocking). Drift against `openapi/nadir-curated.yaml` fails the quality gate workflow.
+
 Live smoke tests (optional, against a running gateway):
 
 ```bash
