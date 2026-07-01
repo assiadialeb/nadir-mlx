@@ -8,6 +8,8 @@ import sys
 from types import ModuleType
 from unittest.mock import MagicMock
 
+import pytest
+
 MLX_CORE_MODULE = "mlx.core"
 MLX_AUDIO_STT_UTILS_MODULE = "mlx_audio.stt.utils"
 MLX_AUDIO_IO_MODULE = "mlx_audio.audio_io"
@@ -77,3 +79,14 @@ def _stub_mlx_runtime() -> None:
 
 
 _stub_mlx_runtime()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gateway_env_from_dotenv(monkeypatch):
+    """Keep developer .env gateway values from overriding @override_settings."""
+    for key in (
+        "NADIR_GATEWAY_HOST",
+        "NADIR_GATEWAY_PORT",
+        "NADIR_GATEWAY_PUBLIC_BASE_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)

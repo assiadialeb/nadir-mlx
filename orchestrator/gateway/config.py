@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
 from django.conf import settings
+
+from orchestrator.env_utils import env_int, env_str
 
 
 @dataclass(frozen=True)
@@ -16,8 +17,8 @@ class GatewayConfig:
 
 def load_gateway_config() -> GatewayConfig:
     """Load gateway bind host/port and validate port allocation."""
-    host = os.environ.get("NADIR_GATEWAY_HOST", settings.NADIR_GATEWAY_HOST)
-    port = int(os.environ.get("NADIR_GATEWAY_PORT", settings.NADIR_GATEWAY_PORT))
+    host = env_str("NADIR_GATEWAY_HOST", settings.NADIR_GATEWAY_HOST)
+    port = env_int("NADIR_GATEWAY_PORT", settings.NADIR_GATEWAY_PORT)
     range_start = settings.INSTANCE_PORT_RANGE_START
     range_end = settings.INSTANCE_PORT_RANGE_END
 

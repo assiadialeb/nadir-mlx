@@ -1,6 +1,8 @@
 """Unit tests for inference instance lifecycle helpers."""
 
 import signal
+import tempfile
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +10,7 @@ from django.test import TestCase as DjangoTestCase
 
 from orchestrator.server_manager import (
     _collect_stop_targets,
+    _detect_log_failure,
     _ensure_port_released,
     _find_reusable_instance,
     _force_stop_pids,
@@ -103,6 +106,22 @@ class ServerManagerStopTests(TestCase):
         with self.assertRaises(RuntimeError):
             stop_instance(instance)
         mock_stop_flag.assert_any_call(instance, active=False)
+
+
+class ServerManagerLogFailureTests(TestCase):
+    def test_detect_log_failure_matches_mtp_masked_embedder_reshape(self) -> None:
+        log_body = (
+            "ValueError: [reshape] Cannot reshape array of size 131072 "
+            "into shape (1,1,4096,256)."
+        )
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            handle.write(log_body)
+            log_path = handle.name
+        try:
+            failure = _detect_log_failure(log_path)
+        finally:
+            Path(log_path).unlink(missing_ok=True)
+        self.assertIn("[reshape]", failure or "")
 
 
 class ServerManagerReuseTests(DjangoTestCase):
