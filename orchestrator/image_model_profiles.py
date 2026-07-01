@@ -431,3 +431,15 @@ def resolve_image_profile(model_path: Path) -> ImageModelProfile:
     profile = _template_to_profile(template, model_path.name)
     hints = parse_readme_inference_hints(model_path)
     return _apply_hints(profile, hints)
+
+
+def apply_quantize_override(
+    profile: ImageModelProfile,
+    quantize_override: int | None,
+) -> ImageModelProfile:
+    """Apply server_config advanced.quantize_override on top of auto-detected bits."""
+    if quantize_override is None:
+        return profile
+    if quantize_override <= 0:
+        raise ValueError("quantize_override must be a positive integer.")
+    return replace(profile, quantize=quantize_override)

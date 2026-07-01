@@ -215,10 +215,10 @@ Allowed keys: `quantize_override`.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `quantize_override` | int | Intended override for mflux quantize bits when auto-detection from the folder name is wrong. |
+| `quantize_override` | int | Override mflux quantize bits when auto-detection from the folder name is wrong. Passed to the image server at launch (`image_model_profiles.apply_quantize_override`). |
 
-!!! warning "Not wired yet"
-    `quantize_override` is accepted in `advanced` JSON validation but is **not** passed to the image launcher today. Quantization is inferred from the model folder name (`image_model_profiles.py`). Track wiring before relying on this key.
+!!! tip "When to use"
+    Quantization is inferred from the model folder name by default (`image_model_profiles.py`). Set `quantize_override` when the folder name does not reflect the checkpoint bit width (e.g. renamed local copy).
 
 ---
 

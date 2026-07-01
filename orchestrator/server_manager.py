@@ -417,7 +417,7 @@ def _build_launch_command(
         return command
 
     if launch_mode == "IMAGE":
-        return [
+        command = [
             python_bin,
             "-m",
             "orchestrator.mlx_image_launcher",
@@ -430,6 +430,10 @@ def _build_launch_command(
             "--model-id",
             model_id,
         ]
+        _append_cli_args(command, {
+            "quantize-override": advanced.get("quantize_override"),
+        })
+        return command
 
     if launch_mode == "TTS":
         command = [

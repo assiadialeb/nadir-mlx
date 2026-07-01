@@ -2,9 +2,11 @@
 
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 from orchestrator.image_model_loader import resolve_image_model_spec
 from orchestrator.image_model_profiles import (
+    apply_quantize_override,
     infer_quantize_from_name,
     parse_readme_inference_hints,
     resolve_image_profile,
@@ -92,6 +94,39 @@ class ImageModeTests(TestCase):
     def test_resolve_image_profile_rejects_unknown_name(self) -> None:
         with self.assertRaises(ValueError):
             resolve_image_profile(Path("Qwen3-Embedding-0.6B-4bit"))
+
+    def test_apply_quantize_override_replaces_inferred_bits(self) -> None:
+        profile = resolve_image_model_spec(Path("FLUX.1-schnell-4bit"))
+        self.assertEqual(profile.quantize, 4)
+
+        overridden = apply_quantize_override(profile, 8)
+        self.assertEqual(overridden.quantize, 8)
+        self.assertEqual(profile.quantize, 4)
+
+    def test_apply_quantize_override_rejects_non_positive(self) -> None:
+        profile = resolve_image_model_spec(Path("FLUX.1-schnell-4bit"))
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            apply_quantize_override(profile, 0)
+
+    @patch("orchestrator.server_manager._get_python_bin", return_value="python")
+    def test_build_launch_command_image_passes_quantize_override(
+        self,
+        _mock_python_bin: object,
+    ) -> None:
+        from orchestrator.server_manager import _build_launch_command
+
+        command = _build_launch_command(
+            "/tmp/flux",
+            11400,
+            "IMAGE",
+            {
+                "host": "127.0.0.1",
+                "advanced": {"quantize_override": 8},
+            },
+            "flux-model",
+        )
+        self.assertIn("--quantize-override", command)
+        self.assertEqual(command[command.index("--quantize-override") + 1], "8")
 
     def _temp_dir(self) -> str:
         import tempfile
