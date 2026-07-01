@@ -66,3 +66,23 @@ class AudioModeTests(TestCase):
         caps = get_model_capabilities("whisper-large-v3-turbo-asr-fp16")
         if caps["supports_stt"]:
             self.assertFalse(caps["supports_text"])
+
+    @patch("orchestrator.server_manager._get_python_bin", return_value="python")
+    def test_build_launch_command_tts_passes_response_format(
+        self,
+        _mock_python_bin: object,
+    ) -> None:
+        from orchestrator.server_manager import _build_launch_command
+
+        command = _build_launch_command(
+            "/tmp/kokoro",
+            11400,
+            "TTS",
+            {
+                "host": "127.0.0.1",
+                "advanced": {"response_format": "opus"},
+            },
+            "kokoro-model",
+        )
+        self.assertIn("--default-response-format", command)
+        self.assertEqual(command[command.index("--default-response-format") + 1], "opus")

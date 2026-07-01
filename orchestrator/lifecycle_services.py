@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from typing import TYPE_CHECKING
 
 from django.conf import settings
 from django.utils import timezone
+
+from orchestrator.env_utils import env_float, env_str
 
 from orchestrator.gateway.router import GatewayRouteError, GatewayTarget
 from orchestrator.gateway.route_cache import clear_gateway_route_cache
@@ -28,24 +29,24 @@ _WAKE_LOCKS_GUARD = threading.Lock()
 
 def gateway_wake_timeout_seconds() -> float:
     """Max seconds to wait for an on_demand instance to become ready after wake."""
-    raw = os.environ.get("NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS")
-    if raw:
-        try:
-            return max(1.0, float(raw))
-        except ValueError:
-            pass
-    return float(getattr(settings, "NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS", 300.0))
+    raw = env_str("NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS", "")
+    if not raw:
+        return float(settings.NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS)
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return float(settings.NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS)
 
 
 def gateway_wake_poll_interval_seconds() -> float:
     """Polling interval while waiting for a waking instance."""
-    raw = os.environ.get("NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS")
-    if raw:
-        try:
-            return max(0.1, float(raw))
-        except ValueError:
-            pass
-    return float(getattr(settings, "NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS", 1.0))
+    raw = env_str("NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS", "")
+    if not raw:
+        return float(settings.NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS)
+    try:
+        return max(0.1, float(raw))
+    except ValueError:
+        return float(settings.NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS)
 
 
 def _wake_lock_for_alias(alias: str) -> threading.Lock:

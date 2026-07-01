@@ -5,7 +5,7 @@ Reference for Nadir inference instance `server_config`: standard form fields, li
 !!! note "Living document"
     Keys and wiring follow `orchestrator/server_config_schema.py` and `orchestrator/server_manager.py`. Update this page when the whitelist or launch commands change.
 
-Last updated: June 2026 (lifecycle modes).
+Last updated: June 2026 (advanced key wiring audit, lifecycle modes).
 
 ## Where to configure
 
@@ -44,6 +44,22 @@ Stored on each `InferenceInstance` as JSON:
 | `ops` | Lifecycle / auto-restart fields | Wake, idle offload, health recovery (not forwarded to mlx-lm / mlx-vlm) |
 
 Unknown keys inside `advanced` are **rejected** at save time for the selected launch mode.
+
+---
+
+## Advanced key wiring status
+
+All whitelisted `advanced` keys are forwarded at instance **Start** via `server_manager._build_launch_command` → mode-specific launcher → MLX backend process.
+
+| Launch mode | Allowed keys | Wired |
+|-------------|--------------|-------|
+| TEXT | `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p` | Yes → `mlx_lm.server` CLI |
+| MULTIMODAL | `adapter_path`, `draft_model`, `draft_kind`, `draft_block_size`, `kv_bits`, `kv_quant_scheme`, `kv_group_size`, `enable_thinking`, `thinking_budget` | Yes → `mlx_vlm.server` CLI |
+| IMAGE | `quantize_override` | Yes → `image_server` (`apply_quantize_override`) |
+| TTS | `response_format` | Yes → `tts_server` default codec |
+| EMBEDDING, RERANKER, STT | — | No advanced keys (empty `{}` only) |
+
+Source of truth: `orchestrator/server_config_schema.py` (`ADVANCED_WHITELIST`) and `orchestrator/server_manager.py`.
 
 ---
 
@@ -215,10 +231,10 @@ Allowed keys: `quantize_override`.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `quantize_override` | int | Intended override for mflux quantize bits when auto-detection from the folder name is wrong. |
+| `quantize_override` | int | Override mflux quantize bits when auto-detection from the folder name is wrong. Passed to the image server at launch (`image_model_profiles.apply_quantize_override`). |
 
-!!! warning "Not wired yet"
-    `quantize_override` is accepted in `advanced` JSON validation but is **not** passed to the image launcher today. Quantization is inferred from the model folder name (`image_model_profiles.py`). Track wiring before relying on this key.
+!!! tip "When to use"
+    Quantization is inferred from the model folder name by default (`image_model_profiles.py`). Set `quantize_override` when the folder name does not reflect the checkpoint bit width (e.g. renamed local copy).
 
 ---
 
@@ -228,10 +244,10 @@ Allowed keys: `response_format`.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `response_format` | string | Intended default audio codec (`wav`, `mp3`, `opus`, `aac`, …). |
+| `response_format` | string | Default audio codec for `POST /v1/audio/speech` when the client omits the field (`wav`, `mp3`, `opus`, `aac`, `flac`, `pcm`). Passed at TTS server launch. |
 
-!!! warning "Not wired yet"
-    `response_format` in `advanced` is validated but **not** applied at server launch. Clients should send `response_format` per `POST /v1/audio/speech` request, or use Kokoro defaults.
+!!! tip "Per-request override"
+    Clients can still send `response_format` on each speech request; `advanced.response_format` only sets the instance default.
 
 ---
 

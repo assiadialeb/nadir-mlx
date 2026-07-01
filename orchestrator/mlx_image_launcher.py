@@ -13,6 +13,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--model-id", default=None)
+    parser.add_argument("--quantize-override", type=int, default=None)
     args = parser.parse_args()
 
     model_path = Path(args.model).resolve()
@@ -29,6 +30,8 @@ def main() -> None:
         "--model-id",
         args.model_id or model_path.name,
     ]
+    if args.quantize_override is not None:
+        sys.argv.extend(["--quantize-override", str(args.quantize_override)])
     server_main()
 
 

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any, AsyncIterator
 
 import httpx
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
+
+from orchestrator.env_utils import env_float
 
 from orchestrator.gateway.router import GatewayRouteError, GatewayTarget
 from orchestrator.gateway.upstream_concurrency import (
@@ -49,7 +51,10 @@ HOP_BY_HOP_RESPONSE_HEADERS = frozenset(
 
 
 def proxy_timeout_seconds() -> float:
-    return float(os.environ.get("NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS", "300"))
+    return env_float(
+        "NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS",
+        float(settings.NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS),
+    )
 
 
 def httpx_client_timeout() -> httpx.Timeout:

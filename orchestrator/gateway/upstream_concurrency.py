@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from django.conf import settings
+
+from orchestrator.env_utils import env_float, env_str
 from orchestrator.gateway.router import GatewayTarget
 
 MSG_QUEUE_TIMEOUT = (
@@ -30,16 +32,19 @@ def _read_positive_int(raw_value: object) -> int | None:
 
 def default_max_concurrent_upstream() -> int | None:
     """Global gateway default from NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM (0 = unlimited)."""
-    raw = os.environ.get("NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM")
-    if raw is None or str(raw).strip() == "":
-        return 16
+    raw = env_str("NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM", "")
+    if not raw:
+        return _read_positive_int(settings.NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM)
     return _read_positive_int(raw)
 
 
 def queue_timeout_seconds() -> float:
-    raw = os.environ.get("NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS")
-    if raw is None or str(raw).strip() == "":
-        return float(os.environ.get("NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS", "300"))
+    raw = env_str("NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS", "")
+    if not raw:
+        return env_float(
+            "NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS",
+            float(settings.NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS),
+        )
     return float(raw)
 
 

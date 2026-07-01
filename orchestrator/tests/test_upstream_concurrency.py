@@ -6,7 +6,7 @@ import asyncio
 import os
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, GatewayTarget
 from orchestrator.gateway.upstream_concurrency import (
@@ -29,7 +29,8 @@ TARGET = GatewayTarget(
 
 
 class UpstreamConcurrencyTests(SimpleTestCase):
-    def test_default_limit_is_sixteen_when_env_unset(self) -> None:
+    @override_settings(NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM=16)
+    def test_default_limit_reads_settings_when_env_unset(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM", None)
             self.assertEqual(default_max_concurrent_upstream(), 16)

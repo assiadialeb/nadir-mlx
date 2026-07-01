@@ -28,7 +28,7 @@ from orchestrator.image_model_loader import (
     load_image_model,
     resolve_image_profile,
 )
-from orchestrator.image_model_profiles import ImageModelProfile
+from orchestrator.image_model_profiles import ImageModelProfile, apply_quantize_override
 from orchestrator.inference_auth import require_inference_api_key
 from orchestrator.security_utils import public_error_message
 
@@ -201,6 +201,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=11400)
     parser.add_argument("--model-id", default=None, help="Model ID exposed via /v1/models")
+    parser.add_argument(
+        "--quantize-override",
+        type=int,
+        default=None,
+        help="Override mflux quantize bits (from server_config advanced.quantize_override)",
+    )
     return parser.parse_args()
 
 
@@ -212,6 +218,7 @@ def main() -> None:
         raise SystemExit(f"Model path not found: {model_path}")
 
     profile = resolve_image_profile(model_path)
+    profile = apply_quantize_override(profile, args.quantize_override)
     print(f"Resolved image profile: {json.dumps(profile.as_api_dict(), indent=2)}")
     print(f"Loading image model ({profile.family}/{profile.config_attr}) from {model_path} ...")
     model = load_image_model(model_path, profile)
