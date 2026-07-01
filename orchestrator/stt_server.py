@@ -7,14 +7,15 @@ import io
 import os
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 import numpy as np
 import uvicorn
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
+from orchestrator.fastapi_openapi import OPENAPI_INFERENCE_ERRORS, InferenceApiError, to_http_exception
 from orchestrator.inference_auth import require_inference_api_key
 from orchestrator.security_utils import public_error_message
 from orchestrator.stt_response_formats import (
@@ -71,14 +72,14 @@ def _decode_uploaded_audio(audio_bytes: bytes) -> np.ndarray:
     except Exception as exc:
         message = str(exc)
         if "ffmpeg" in message.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=(
+            raise InferenceApiError(
+                400,
+                (
                     "This audio format requires ffmpeg. Install ffmpeg "
                     "(brew install ffmpeg) or upload WAV/MP3 decodable by miniaudio."
                 ),
             ) from exc
-        raise HTTPException(status_code=400, detail=f"Audio decode failed: {message}") from exc
+        raise InferenceApiError(400, f"Audio decode failed: {message}") from exc
 
     waveform = np.asarray(audio, dtype=np.float32)
     if waveform.ndim > 1:
@@ -121,9 +122,9 @@ def _parse_optional_float(raw: Optional[str], field_name: str) -> Optional[float
     try:
         return float(raw)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid {field_name}: expected a number.",
+        raise InferenceApiError(
+            400,
+            f"Invalid {field_name}: expected a number.",
         ) from exc
 
 
@@ -166,7 +167,7 @@ def _build_stt_response(payload: dict[str, Any], response_format: str) -> Respon
     try:
         body, media_type = render_stt_response_body(payload, response_format)
     except SttFormatError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise InferenceApiError(400, str(exc)) from exc
 
     if isinstance(body, dict):
         return JSONResponse(body, media_type=media_type)
@@ -188,12 +189,12 @@ async def _create_stt_response(
 ) -> Response:
     stt_model = _state.get("model")
     if stt_model is None:
-        raise HTTPException(status_code=503, detail="STT model not loaded.")
+        raise InferenceApiError(503, "STT model not loaded.")
 
     try:
         normalized_format = normalize_stt_response_format(response_format)
     except SttFormatError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise InferenceApiError(400, str(exc)) from exc
 
     defaults = _defaults()
     effective_language = language or defaults.language
@@ -201,7 +202,7 @@ async def _create_stt_response(
 
     audio_bytes = await file.read()
     if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Empty audio file.")
+        raise InferenceApiError(400, "Empty audio file.")
 
     try:
         waveform = _decode_uploaded_audio(audio_bytes)
@@ -215,60 +216,76 @@ async def _create_stt_response(
             prompt=prompt,
             temperature=temperature,
         )
-    except HTTPException:
+    except InferenceApiError:
         raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=public_error_message(exc, fallback="Transcription failed."),
+        raise InferenceApiError(
+            500,
+            public_error_message(exc, fallback="Transcription failed."),
         ) from exc
 
     return _build_stt_response(payload, normalized_format)
 
 
-@app.post("/v1/audio/transcriptions", response_model=None, dependencies=[Depends(require_inference_api_key)])
+@app.post(
+    "/v1/audio/transcriptions",
+    response_model=None,
+    dependencies=[Depends(require_inference_api_key)],
+    responses=OPENAPI_INFERENCE_ERRORS,
+)
 async def create_transcription(
-    file: UploadFile = File(...),
-    model: str = Form("default_model"),
-    language: Optional[str] = Form(None),
-    response_format: str = Form("json"),
-    chunk_duration: Optional[float] = Form(None),
-    word_timestamps: Optional[str] = Form(None),
-    prompt: Optional[str] = Form(None),
-    temperature: Optional[str] = Form(None),
+    file: Annotated[UploadFile, File()],
+    model: Annotated[str, Form()] = "default_model",
+    language: Annotated[Optional[str], Form()] = None,
+    response_format: Annotated[str, Form()] = "json",
+    chunk_duration: Annotated[Optional[float], Form()] = None,
+    word_timestamps: Annotated[Optional[str], Form()] = None,
+    prompt: Annotated[Optional[str], Form()] = None,
+    temperature: Annotated[Optional[str], Form()] = None,
 ) -> Response:
-    return await _create_stt_response(
-        file=file,
-        task="transcribe",
-        language=language,
-        response_format=response_format,
-        chunk_duration=chunk_duration,
-        word_timestamps=_parse_word_timestamps(word_timestamps),
-        prompt=prompt,
-        temperature=_parse_optional_float(temperature, "temperature"),
-    )
+    try:
+        return await _create_stt_response(
+            file=file,
+            task="transcribe",
+            language=language,
+            response_format=response_format,
+            chunk_duration=chunk_duration,
+            word_timestamps=_parse_word_timestamps(word_timestamps),
+            prompt=prompt,
+            temperature=_parse_optional_float(temperature, "temperature"),
+        )
+    except InferenceApiError as exc:
+        raise to_http_exception(exc) from exc
 
 
-@app.post("/v1/audio/translations", response_model=None, dependencies=[Depends(require_inference_api_key)])
+@app.post(
+    "/v1/audio/translations",
+    response_model=None,
+    dependencies=[Depends(require_inference_api_key)],
+    responses=OPENAPI_INFERENCE_ERRORS,
+)
 async def create_translation(
-    file: UploadFile = File(...),
-    model: str = Form("default_model"),
-    response_format: str = Form("json"),
-    chunk_duration: Optional[float] = Form(None),
-    word_timestamps: Optional[str] = Form(None),
-    prompt: Optional[str] = Form(None),
-    temperature: Optional[str] = Form(None),
+    file: Annotated[UploadFile, File()],
+    model: Annotated[str, Form()] = "default_model",
+    response_format: Annotated[str, Form()] = "json",
+    chunk_duration: Annotated[Optional[float], Form()] = None,
+    word_timestamps: Annotated[Optional[str], Form()] = None,
+    prompt: Annotated[Optional[str], Form()] = None,
+    temperature: Annotated[Optional[str], Form()] = None,
 ) -> Response:
-    return await _create_stt_response(
-        file=file,
-        task="translate",
-        language=None,
-        response_format=response_format,
-        chunk_duration=chunk_duration,
-        word_timestamps=_parse_word_timestamps(word_timestamps),
-        prompt=prompt,
-        temperature=_parse_optional_float(temperature, "temperature"),
-    )
+    try:
+        return await _create_stt_response(
+            file=file,
+            task="translate",
+            language=None,
+            response_format=response_format,
+            chunk_duration=chunk_duration,
+            word_timestamps=_parse_word_timestamps(word_timestamps),
+            prompt=prompt,
+            temperature=_parse_optional_float(temperature, "temperature"),
+        )
+    except InferenceApiError as exc:
+        raise to_http_exception(exc) from exc
 
 
 def _parse_args() -> argparse.Namespace:

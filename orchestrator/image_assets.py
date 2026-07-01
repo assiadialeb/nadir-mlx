@@ -50,14 +50,21 @@ def image_output_ttl_seconds() -> int:
 
 def gateway_public_base_url() -> str:
     """Return the client-facing base URL used in image response URLs."""
-    raw = os.environ.get("NADIR_GATEWAY_PUBLIC_BASE_URL")
-    if raw:
-        return raw.rstrip("/")
-    try:
-        from django.conf import settings
+    from django.conf import settings
 
-        host = str(getattr(settings, "NADIR_GATEWAY_HOST", "127.0.0.1"))
-        port = int(getattr(settings, "NADIR_GATEWAY_PORT", 11380))
+    from orchestrator.env_utils import env_int, env_str
+
+    env_url = env_str("NADIR_GATEWAY_PUBLIC_BASE_URL", "")
+    if env_url:
+        return env_url.rstrip("/")
+
+    configured = str(getattr(settings, "NADIR_GATEWAY_PUBLIC_BASE_URL", "")).strip()
+    if configured:
+        return configured.rstrip("/")
+
+    try:
+        host = env_str("NADIR_GATEWAY_HOST", str(settings.NADIR_GATEWAY_HOST))
+        port = env_int("NADIR_GATEWAY_PORT", int(settings.NADIR_GATEWAY_PORT))
         return f"http://{host}:{port}"
     except Exception:
         return "http://127.0.0.1:11380"

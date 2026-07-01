@@ -15,6 +15,13 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from orchestrator.fastapi_openapi import (
+    OPENAPI_IMAGE_GENERATION,
+    OPENAPI_NOT_IMPLEMENTED,
+    InferenceApiError,
+    open_api_responses,
+    to_http_exception,
+)
 from orchestrator.image_assets import build_generation_response_entry, store_image_png
 from orchestrator.image_model_loader import (
     generate_image_bytes,
@@ -54,7 +61,7 @@ class ImageGenerationRequest(BaseModel):
 def _get_profile() -> ImageModelProfile:
     profile = _state.get("profile")
     if profile is None:
-        raise HTTPException(status_code=503, detail="Model not loaded.")
+        raise InferenceApiError(503, "Model not loaded.")
     return profile  # type: ignore[return-value]
 
 
@@ -66,10 +73,10 @@ def _parse_size(size: str | None, profile: ImageModelProfile) -> tuple[int, int]
         width_str, height_str = size.lower().split("x", maxsplit=1)
         width, height = int(width_str), int(height_str)
     except (ValueError, AttributeError) as exc:
-        raise HTTPException(status_code=400, detail="size must be WIDTHxHEIGHT.") from exc
+        raise InferenceApiError(400, "size must be WIDTHxHEIGHT.") from exc
 
     if width < 256 or height < 256 or width > 2048 or height > 2048:
-        raise HTTPException(status_code=400, detail="size must be between 256 and 2048.")
+        raise InferenceApiError(400, "size must be between 256 and 2048.")
     return width, height
 
 
@@ -78,10 +85,13 @@ def health_check() -> dict[str, str]:
     return {"status": "ok", "model": str(_state.get("model_id", ""))}
 
 
-@app.get("/v1/image/defaults")
+@app.get("/v1/image/defaults", responses=open_api_responses(503))
 def image_defaults() -> dict[str, object]:
     """Return recommended inference parameters for the loaded checkpoint."""
-    profile = _get_profile()
+    try:
+        profile = _get_profile()
+    except InferenceApiError as exc:
+        raise to_http_exception(exc) from exc
     return {"object": "image_generation_defaults", **profile.as_api_dict()}
 
 
@@ -105,15 +115,26 @@ def list_models() -> dict[str, object]:
     }
 
 
-@app.post("/v1/images/generations", dependencies=[Depends(require_inference_api_key)])
+@app.post(
+    "/v1/images/generations",
+    dependencies=[Depends(require_inference_api_key)],
+    responses=OPENAPI_IMAGE_GENERATION,
+)
 def create_images(body: ImageGenerationRequest) -> dict[str, object]:
+    try:
+        return _create_images(body)
+    except InferenceApiError as exc:
+        raise to_http_exception(exc) from exc
+
+
+def _create_images(body: ImageGenerationRequest) -> dict[str, object]:
     model = _state.get("model")
     profile = _get_profile()
     if model is None:
-        raise HTTPException(status_code=503, detail="Model not loaded.")
+        raise InferenceApiError(503, "Model not loaded.")
 
     if not body.prompt.strip():
-        raise HTTPException(status_code=400, detail="prompt must not be empty.")
+        raise InferenceApiError(400, "prompt must not be empty.")
     width, height = _parse_size(body.size, profile)
     steps = profile.resolve_steps(body.quality, body.num_inference_steps)
     guidance = profile.default_guidance if body.guidance is None else body.guidance
@@ -144,15 +165,15 @@ def create_images(body: ImageGenerationRequest) -> dict[str, object]:
                 )
                 print(f"[image] completed image {index + 1}/{body.n}", flush=True)
         except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=public_error_message(exc, fallback="Image generation failed."),
+            raise InferenceApiError(
+                500,
+                public_error_message(exc, fallback="Image generation failed."),
             ) from exc
 
     return {"created": int(time.time()), "data": data}
 
 
-@app.post("/v1/images/edits")
+@app.post("/v1/images/edits", responses=OPENAPI_NOT_IMPLEMENTED)
 def create_image_edits() -> dict[str, object]:
     raise HTTPException(
         status_code=501,
@@ -163,7 +184,7 @@ def create_image_edits() -> dict[str, object]:
     )
 
 
-@app.post("/v1/images/variations")
+@app.post("/v1/images/variations", responses=OPENAPI_NOT_IMPLEMENTED)
 def create_image_variations() -> dict[str, object]:
     raise HTTPException(
         status_code=501,

@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException
 from mlx_lm.utils import load_model, load_tokenizer
 from pydantic import BaseModel
 
+from orchestrator.fastapi_openapi import OPENAPI_INFERENCE_ERRORS
 from orchestrator.tokenizer_compat import install_auto_fix_mistral_regex
 from safetensors.torch import save_file
 
@@ -201,7 +202,7 @@ def health_check() -> dict[str, str]:
     return {"status": "ok", "model": str(_state.get("model_id", ""))}
 
 
-@app.post("/v1/rerank", response_model=RerankResponse)
+@app.post("/v1/rerank", responses=OPENAPI_INFERENCE_ERRORS)
 def rerank_endpoint(request: RerankRequest) -> RerankResponse:
     if _state.get("model") is None:
         raise HTTPException(status_code=503, detail="Model not loaded.")

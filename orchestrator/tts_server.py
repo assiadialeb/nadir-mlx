@@ -11,10 +11,11 @@ from typing import Optional
 
 import numpy as np
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from orchestrator.fastapi_openapi import OPENAPI_INFERENCE_ERRORS, InferenceApiError, to_http_exception
 from orchestrator.inference_auth import require_inference_api_key
 from orchestrator.kokoro_tts_utils import (
     OPENAI_TTS_VOICES,
@@ -112,9 +113,9 @@ def _validate_speech_voice(raw_voice: str) -> None:
         return
     if raw_voice.lower() in OPENAI_TTS_VOICES:
         return
-    raise HTTPException(
-        status_code=400,
-        detail=(
+    raise InferenceApiError(
+        400,
+        (
             f"Unknown voice '{raw_voice}'. Use a Kokoro id (e.g. ff_siwis) "
             "or an OpenAI voice name (alloy, nova, …)."
         ),
@@ -144,20 +145,20 @@ def _synthesize_speech(
     except Exception as exc:
         message = str(exc)
         if "Failed to open file" in message and ".safetensors" in message:
-            raise HTTPException(
-                status_code=400,
-                detail=(
+            raise InferenceApiError(
+                400,
+                (
                     f"Kokoro voice '{voice}' is not available for lang '{lang_code}'. "
                     "Pick a voice from GET /v1/audio/voices (e.g. ff_siwis for French)."
                 ),
             ) from exc
-        raise HTTPException(
-            status_code=500,
-            detail=public_error_message(exc, fallback="Speech synthesis failed."),
+        raise InferenceApiError(
+            500,
+            public_error_message(exc, fallback="Speech synthesis failed."),
         ) from exc
 
     if not audio_chunks or sample_rate is None:
-        raise HTTPException(status_code=400, detail="No audio generated.")
+        raise InferenceApiError(400, "No audio generated.")
     return np.concatenate(audio_chunks), sample_rate
 
 
@@ -171,11 +172,11 @@ def _speech_audio_response(
     try:
         encoded, media_type = encode_speech_audio(audio, sample_rate, response_format)
     except TtsFormatError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise InferenceApiError(400, str(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise InferenceApiError(400, str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise InferenceApiError(400, str(exc)) from exc
 
     headers = {"Content-Disposition": f"attachment; filename=speech.{response_format}"}
     if stream:
@@ -187,15 +188,26 @@ def _speech_audio_response(
     return Response(content=encoded, media_type=media_type, headers=headers)
 
 
-@app.post("/v1/audio/speech", dependencies=[Depends(require_inference_api_key)])
+@app.post(
+    "/v1/audio/speech",
+    dependencies=[Depends(require_inference_api_key)],
+    responses=OPENAPI_INFERENCE_ERRORS,
+)
 def create_speech(body: SpeechRequest) -> Response:
+    try:
+        return _create_speech(body)
+    except InferenceApiError as exc:
+        raise to_http_exception(exc) from exc
+
+
+def _create_speech(body: SpeechRequest) -> Response:
     model = _state.get("model")
     if model is None:
-        raise HTTPException(status_code=503, detail="TTS model not loaded.")
+        raise InferenceApiError(503, "TTS model not loaded.")
 
     text = body.input.strip()
     if not text:
-        raise HTTPException(status_code=400, detail="input must not be empty.")
+        raise InferenceApiError(400, "input must not be empty.")
 
     if body.voice:
         _validate_speech_voice(body.voice.strip())
@@ -217,7 +229,7 @@ def create_speech(body: SpeechRequest) -> Response:
     try:
         response_format = normalize_tts_response_format(body.response_format)
     except TtsFormatError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise InferenceApiError(400, str(exc)) from exc
 
     speed = body.speed if body.speed is not None else defaults.get("speaking_rate", 1.0)
     audio, sample_rate = _synthesize_speech(

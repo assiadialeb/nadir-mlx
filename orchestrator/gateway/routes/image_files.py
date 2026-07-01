@@ -5,12 +5,13 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from orchestrator.fastapi_openapi import OPENAPI_NOT_FOUND
 from orchestrator.image_assets import resolve_image_png_path
 
 router = APIRouter()
 
 
-@router.get("/v1/images/files/{file_id}")
+@router.get("/v1/images/files/{file_id}", responses=OPENAPI_NOT_FOUND)
 def serve_generated_image(file_id: str) -> FileResponse:
     """Serve a PNG generated with response_format=url (local-only, no CDN)."""
     path = resolve_image_png_path(file_id)
