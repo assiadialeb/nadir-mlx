@@ -5,6 +5,7 @@ from django.test import SimpleTestCase
 from orchestrator.model_registry import (
     apply_registry_server_defaults,
     build_registry_defaults_for_folders,
+    deep_merge_registry_defaults,
     resolve_model_registry_profile,
     resolve_registry_family,
 )
@@ -49,3 +50,20 @@ class ModelRegistryTests(SimpleTestCase):
         config = build_default_server_config("STT", "whisper-small-mlx")
         self.assertEqual(config["chunk_duration"], 30.0)
         self.assertEqual(config["registry"]["family_id"], "whisper_stt")
+
+    def test_deep_merge_registry_defaults_merges_nested_advanced(self) -> None:
+        base = {"advanced": {}, "max_tokens": 256}
+        defaults = {"advanced": {"draft_kind": "mtp"}, "max_tokens": 512}
+        merged = deep_merge_registry_defaults(base, defaults)
+        self.assertEqual(merged["advanced"]["draft_kind"], "mtp")
+        self.assertEqual(merged["max_tokens"], 256)
+
+    def test_apply_registry_server_defaults_merges_gemma4_mtp_advanced(self) -> None:
+        base = build_default_server_config("MULTIMODAL", "gemma-4-E4B-it-qat-4bit")
+        merged = apply_registry_server_defaults(
+            "MULTIMODAL",
+            "gemma-4-E4B-it-qat-4bit",
+            base,
+        )
+        self.assertEqual(merged["advanced"]["draft_kind"], "mtp")
+        self.assertEqual(merged["registry"]["family_id"], "gemma4_vlm")

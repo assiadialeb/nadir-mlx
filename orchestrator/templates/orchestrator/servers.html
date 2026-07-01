@@ -51,6 +51,8 @@
                         <a href="{% url 'models' %}?tab=hub" class="underline font-semibold">Install from Hugging Face</a>
                     </p>
                     <p id="registry-hint" class="field-hint mt-1.5 hidden"></p>
+                    <p id="mtp-assistant-hint" class="field-hint mt-1.5 hidden"></p>
+                    <p id="mtp-assistant-warning" class="field-hint field-hint--warning mt-1.5 hidden"></p>
                 </div>
 
                 <div>
@@ -70,6 +72,16 @@
                     Server configuration
                 </button>
                 <div id="config-panel" class="hidden mt-4 space-y-4">
+                    <div id="perf-profile-row" class="hidden">
+                        <label for="perf_profile" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                            Performance profile
+                        </label>
+                        <select id="perf_profile"
+                            class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="">Default (registry only)</option>
+                        </select>
+                        <p class="field-hint mt-1.5">One-click MTP and tuning presets for supported models.</p>
+                    </div>
                     <div id="config-fields" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
                     <details class="rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <summary class="text-sm font-semibold text-slate-700 cursor-pointer">Advanced (JSON)</summary>
@@ -335,6 +347,9 @@ const configFieldsByMode = {{ config_fields_json|safe }};
 const advancedKeysByMode = {{ advanced_keys_json|safe }};
 const registryDefaultsByMode = {{ registry_defaults_json|safe }};
 const registryMetadata = {{ registry_metadata_json|safe }};
+const perfProfilesByMode = {{ perf_profiles_json|safe }};
+const mtpAssistantSuggestions = {{ mtp_assistant_suggestions_json|safe }};
+const _QUANTIZED_DRAFT_RE = /(qat|[-_]4bit|[-_]8bit)/i;
 const instanceConfigsById = {
 {% for instance in instances %}
     "{{ instance.id }}": {{ instance.server_config_json|safe }}{% if not forloop.last %},{% endif %}
@@ -401,16 +416,114 @@ function closeEditInstanceModal() {
     document.getElementById('edit-instance-modal').classList.add('hidden');
 }
 
-function applyRegistryDefaults(mode, modelName) {
-    const hint = document.getElementById('registry-hint');
-    if (!modelName) {
-        hint.classList.add('hidden');
-        hint.textContent = '';
+function mergeAdvancedJson(targetAdvanced, sourceAdvanced) {
+    const merged = { ...targetAdvanced };
+    Object.entries(sourceAdvanced || {}).forEach(([key, value]) => {
+        if (merged[key] == null || merged[key] === '') {
+            merged[key] = value;
+        }
+    });
+    return merged;
+}
+
+function applyAdvancedDefaults(defaults) {
+    const textarea = document.getElementById('config_advanced');
+    if (!textarea || !defaults.advanced) return;
+    let current = {};
+    if (textarea.value.trim()) {
+        try {
+            current = JSON.parse(textarea.value);
+        } catch (_error) {
+            return;
+        }
+    }
+    textarea.value = JSON.stringify(mergeAdvancedJson(current, defaults.advanced), null, 2);
+}
+
+function applyMtpAssistantSuggest(mode, modelName) {
+    const hint = document.getElementById('mtp-assistant-hint');
+    if (!hint || mode !== 'MULTIMODAL' || !modelName) {
+        if (hint) hint.classList.add('hidden');
+        warnIncompatibleMtpDraft();
         return;
     }
 
-    const defaults = (registryDefaultsByMode[mode] || {})[modelName] || {};
+    const assistant = mtpAssistantSuggestions[modelName];
+    if (!assistant) {
+        hint.classList.add('hidden');
+        warnIncompatibleMtpDraft();
+        return;
+    }
+
+    const textarea = document.getElementById('config_advanced');
+    if (!textarea) return;
+
+    let current = {};
+    if (textarea.value.trim()) {
+        try {
+            current = JSON.parse(textarea.value);
+        } catch (_error) {
+            hint.classList.add('hidden');
+            return;
+        }
+    }
+
+    const registryAdvanced = ((registryDefaultsByMode[mode] || {})[modelName] || {}).advanced || {};
+    const draftKind = String(current.draft_kind || registryAdvanced.draft_kind || '').toLowerCase();
+    if (draftKind !== 'mtp') {
+        hint.classList.add('hidden');
+        warnIncompatibleMtpDraft();
+        return;
+    }
+
+    if (!current.draft_model) {
+        current.draft_model = assistant;
+        textarea.value = JSON.stringify(current, null, 2);
+    }
+
+    hint.textContent = `Suggested MTP assistant: ${assistant} (bf16). You can override it in Advanced JSON.`;
+    hint.classList.remove('hidden');
+    warnIncompatibleMtpDraft();
+}
+
+function warnIncompatibleMtpDraft() {
+    const warning = document.getElementById('mtp-assistant-warning');
+    const textarea = document.getElementById('config_advanced');
+    if (!warning || !textarea) return;
+
+    if (!textarea.value.trim()) {
+        warning.classList.add('hidden');
+        return;
+    }
+
+    let current = {};
+    try {
+        current = JSON.parse(textarea.value);
+    } catch (_error) {
+        warning.classList.add('hidden');
+        return;
+    }
+
+    const draftKind = String(current.draft_kind || '').toLowerCase();
+    const draftModel = String(current.draft_model || '');
+    if (draftKind === 'mtp' && _QUANTIZED_DRAFT_RE.test(draftModel)) {
+        warning.textContent =
+            'Quantized MTP assistants (qat/4bit) crash mlx-vlm at generation. Use a bf16 assistant folder.';
+        warning.classList.remove('hidden');
+        return;
+    }
+
+    warning.classList.add('hidden');
+}
+
+function applyPerfProfile(mode, modelName, profileId) {
+    const profiles = ((perfProfilesByMode[mode] || {})[modelName] || []);
+    const profile = profiles.find(item => item.id === profileId);
+    if (!profile) return;
+
+    const defaults = profile.server_config || {};
     Object.entries(defaults).forEach(([key, value]) => {
+        if (key === 'advanced') return;
         const input = document.getElementById(`config_${key}`);
         if (!input) return;
         if (input.type === 'checkbox') {
@@ -419,6 +532,51 @@ function applyRegistryDefaults(mode, modelName) {
         }
         input.value = value;
     });
+    applyAdvancedDefaults(defaults);
+    applyMtpAssistantSuggest(mode, modelName);
+}
+
+function updatePerfProfileSelect(mode, modelName) {
+    const row = document.getElementById('perf-profile-row');
+    const select = document.getElementById('perf_profile');
+    if (!row || !select) return;
+
+    const profiles = ((perfProfilesByMode[mode] || {})[modelName] || []);
+    select.innerHTML = '<option value="">Default (registry only)</option>';
+    profiles.forEach(profile => {
+        const opt = document.createElement('option');
+        opt.value = profile.id;
+        opt.textContent = profile.label;
+        select.appendChild(opt);
+    });
+    row.classList.toggle('hidden', profiles.length === 0);
+    select.value = '';
+}
+
+function applyRegistryDefaults(mode, modelName) {
+    const hint = document.getElementById('registry-hint');
+    if (!modelName) {
+        hint.classList.add('hidden');
+        hint.textContent = '';
+        updatePerfProfileSelect(mode, '');
+        applyMtpAssistantSuggest(mode, '');
+        return;
+    }
+
+    const defaults = (registryDefaultsByMode[mode] || {})[modelName] || {};
+    Object.entries(defaults).forEach(([key, value]) => {
+        if (key === 'advanced') return;
+        const input = document.getElementById(`config_${key}`);
+        if (!input) return;
+        if (input.type === 'checkbox') {
+            input.checked = Boolean(value);
+            return;
+        }
+        input.value = value;
+    });
+    applyAdvancedDefaults(defaults);
+    updatePerfProfileSelect(mode, modelName);
+    applyMtpAssistantSuggest(mode, modelName);
 
     const meta = registryMetadata[modelName];
     if (meta && (meta.upstream || meta.family_id)) {
@@ -537,6 +695,7 @@ function renderConfigFields(mode, modelName = '') {
         ? `Allowed keys: ${allowed.join(', ')}`
         : 'No advanced options for this server type.';
     document.getElementById('config_advanced').value = '';
+    document.getElementById('perf_profile').value = '';
 }
 
 function updateModelSelect() {
@@ -579,6 +738,21 @@ document.getElementById('model_name').addEventListener('change', () => {
     applyRegistryDefaults(mode, modelName);
     applyGatewayAliasDefault(modelName);
 });
+
+document.getElementById('perf_profile').addEventListener('change', () => {
+    const mode = document.getElementById('launch_mode').value;
+    const modelName = document.getElementById('model_name').value;
+    const profileId = document.getElementById('perf_profile').value;
+    if (!profileId) {
+        applyRegistryDefaults(mode, modelName);
+        return;
+    }
+    applyRegistryDefaults(mode, modelName);
+    applyPerfProfile(mode, modelName, profileId);
+    applyMtpAssistantSuggest(mode, modelName);
+});
+
+document.getElementById('config_advanced').addEventListener('input', warnIncompatibleMtpDraft);
 
 document.getElementById('toggle-config-panel').addEventListener('click', () => {
     const panel = document.getElementById('config-panel');

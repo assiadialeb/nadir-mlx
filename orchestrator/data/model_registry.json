@@ -70,7 +70,10 @@
       ],
       "server_config": {
         "max_tokens": 512,
-        "max_kv_size": 8192
+        "max_kv_size": 8192,
+        "advanced": {
+          "draft_kind": "mtp"
+        }
       },
       "sources": [
         "readme:mlx",
@@ -646,6 +649,40 @@
     {
       "match": "gemma-2",
       "family": "gemma3_text"
+    }
+  ],
+  "perf_profiles": [
+    {
+      "id": "gemma4_e4b_mtp_perf",
+      "label": "Gemma 4 E4B MTP (perf)",
+      "launch_mode": "MULTIMODAL",
+      "family": "gemma4_vlm",
+      "match": "e4b",
+      "requires": [
+        "qat"
+      ],
+      "resolve_mtp_assistant": true,
+      "server_config": {
+        "advanced": {
+          "draft_kind": "mtp"
+        }
+      }
+    },
+    {
+      "id": "gemma4_e2b_mtp_perf",
+      "label": "Gemma 4 E2B MTP (perf)",
+      "launch_mode": "MULTIMODAL",
+      "family": "gemma4_vlm",
+      "match": "e2b",
+      "requires": [
+        "qat"
+      ],
+      "resolve_mtp_assistant": true,
+      "server_config": {
+        "advanced": {
+          "draft_kind": "mtp"
+        }
+      }
     }
   ]
 }

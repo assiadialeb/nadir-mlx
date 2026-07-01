@@ -78,6 +78,29 @@ def get_registry_family(family_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _is_mergeable_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return isinstance(value, dict) and not value
+
+
+def deep_merge_registry_defaults(
+    base: dict[str, Any],
+    defaults: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge registry defaults without overriding explicit user values."""
+    merged = dict(base)
+    for key, default_value in defaults.items():
+        if key not in merged or _is_mergeable_empty(merged[key]):
+            merged[key] = default_value
+            continue
+        if isinstance(merged[key], dict) and isinstance(default_value, dict):
+            merged[key] = deep_merge_registry_defaults(merged[key], default_value)
+    return merged
+
+
 def resolve_model_registry_profile(
     folder_name: str,
     launch_mode: str,
@@ -117,10 +140,10 @@ def apply_registry_server_defaults(
     if not profile:
         return base_config
 
-    merged = dict(base_config)
-    for key, value in (profile.get("server_config") or {}).items():
-        if key not in merged or merged[key] in (None, ""):
-            merged[key] = value
+    merged = deep_merge_registry_defaults(
+        dict(base_config),
+        profile.get("server_config") or {},
+    )
 
     registry_meta = merged.setdefault("registry", {})
     registry_meta.update({

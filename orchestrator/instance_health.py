@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
-from typing import Literal
+import time
+from typing import Any, Literal
 
 import httpx
 from django.utils import timezone
 
+from orchestrator.env_utils import env_int, env_str
 from orchestrator.models import InferenceInstance
 from orchestrator.security_utils import build_validated_http_url, validate_server_bind_host
 from orchestrator.server_manager import (
@@ -21,6 +23,8 @@ HealthStatus = Literal["HEALTHY", "DEGRADED", "DOWN", "UNKNOWN"]
 
 HEALTH_PATH = "/health"
 HEALTH_TIMEOUT_SECONDS = 2.0
+GENERATION_PROBE_TIMEOUT_SECONDS = 30.0
+_last_generation_probe_at: dict[int, float] = {}
 
 
 def _connect_host(instance: InferenceInstance) -> str:
@@ -37,6 +41,60 @@ def probe_http_health(instance: InferenceInstance) -> bool:
         response = httpx.get(url, timeout=HEALTH_TIMEOUT_SECONDS)
         return response.status_code < 500
     except httpx.HTTPError:
+        return False
+
+
+def _generation_probe_payload(launch_mode: str) -> tuple[str, dict[str, Any]] | None:
+    if launch_mode in ("TEXT", "MULTIMODAL"):
+        return "/v1/chat/completions", {
+            "messages": [{"role": "user", "content": "ok"}],
+            "max_tokens": 1,
+        }
+    if launch_mode == "EMBEDDING":
+        return "/v1/embeddings", {"input": "health probe"}
+    if launch_mode == "RERANKER":
+        return "/v1/rerank", {
+            "query": "health",
+            "documents": ["probe"],
+        }
+    return None
+
+
+def deep_generation_health_enabled() -> bool:
+    return env_str("NADIR_DEEP_INSTANCE_HEALTH", "") == "1"
+
+
+def _generation_probe_interval_seconds() -> int:
+    return max(30, env_int("NADIR_DEEP_HEALTH_INTERVAL_SECONDS", 300))
+
+
+def _should_probe_generation(instance: InferenceInstance) -> bool:
+    if not deep_generation_health_enabled():
+        return False
+    if instance.status != "RUNNING":
+        return False
+    if _generation_probe_payload(instance.launch_mode) is None:
+        return False
+
+    now = time.monotonic()
+    last_probe = _last_generation_probe_at.get(instance.id, 0.0)
+    return (now - last_probe) >= _generation_probe_interval_seconds()
+
+
+def probe_generation_health(instance: InferenceInstance) -> bool:
+    """Return True when a minimal inference request succeeds."""
+    probe = _generation_probe_payload(instance.launch_mode)
+    if probe is None:
+        return True
+
+    path, payload = probe
+    url = build_validated_http_url(_connect_host(instance), instance.port, path)
+    try:
+        response = httpx.post(url, json=payload, timeout=GENERATION_PROBE_TIMEOUT_SECONDS)
+        _last_generation_probe_at[instance.id] = time.monotonic()
+        return response.status_code < 500
+    except httpx.HTTPError:
+        _last_generation_probe_at[instance.id] = time.monotonic()
         return False
 
 
@@ -57,9 +115,11 @@ def evaluate_instance_health(instance: InferenceInstance) -> HealthStatus:
         return "DOWN"
     if not pid_alive or not port_listening:
         return "DEGRADED"
-    if probe_http_health(instance):
-        return "HEALTHY"
-    return "DEGRADED"
+    if not probe_http_health(instance):
+        return "DEGRADED"
+    if _should_probe_generation(instance) and not probe_generation_health(instance):
+        return "DEGRADED"
+    return "HEALTHY"
 
 
 def refresh_instance_health(instance: InferenceInstance) -> HealthStatus:

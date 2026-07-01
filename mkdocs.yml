@@ -79,9 +79,11 @@ nav:
       - API coverage matrix: usage/nadir-gateway-coverage-matrix.md
       - Chat tools model matrix: usage/chat-tools-model-matrix.md
       - VLM vision model matrix: usage/vlm-vision-model-matrix.md
+      - Draft / MTP compatibility: usage/draft-mtp-compatibility-matrix.md
       - Gateway runbooks:
           - Chat: usage/gateway-runbooks/chat.md
           - VLM (vision): usage/gateway-runbooks/vlm.md
+          - Gemma 4 MTP: usage/gateway-runbooks/gemma4-mtp.md
           - Embeddings: usage/gateway-runbooks/embedding.md
           - Reranker: usage/gateway-runbooks/reranker.md
           - Image generation: usage/gateway-runbooks/image.md

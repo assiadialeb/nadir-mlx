@@ -5,7 +5,10 @@ from unittest.mock import MagicMock, patch
 from django.test import TestCase, override_settings
 
 from orchestrator.instance_health import (
+    _last_generation_probe_at,
+    deep_generation_health_enabled,
     evaluate_instance_health,
+    probe_generation_health,
     probe_http_health,
     refresh_instance_health,
     should_skip_watchdog,
@@ -19,6 +22,10 @@ from orchestrator.models import InferenceInstance
 
 
 class InstanceHealthTests(TestCase):
+    def setUp(self) -> None:
+        # Module-level rate-limit cache survives across tests in the same pytest session.
+        _last_generation_probe_at.clear()
+
     def test_probe_http_health_returns_true_on_success(self) -> None:
         instance = MagicMock(port=11400, server_config={"host": "127.0.0.1"})
         with patch("orchestrator.instance_health.httpx.get") as mock_get:
@@ -43,6 +50,49 @@ class InstanceHealthTests(TestCase):
     ) -> None:
         instance = MagicMock(status="RUNNING", pid=123, port=11400, server_config={})
         self.assertEqual(evaluate_instance_health(instance), "HEALTHY")
+
+    @patch.dict("os.environ", {"NADIR_DEEP_INSTANCE_HEALTH": "1"})
+    @patch("orchestrator.instance_health._should_probe_generation", return_value=True)
+    @patch("orchestrator.instance_health.probe_generation_health", return_value=False)
+    @patch("orchestrator.instance_health.probe_http_health", return_value=True)
+    @patch("orchestrator.instance_health._find_listener_pids", return_value=[123])
+    @patch("orchestrator.instance_health._is_process_alive", return_value=True)
+    def test_evaluate_instance_health_degraded_when_generation_fails(
+        self,
+        _mock_alive: MagicMock,
+        _mock_listeners: MagicMock,
+        _mock_http: MagicMock,
+        _mock_generation: MagicMock,
+        _mock_should_probe: MagicMock,
+    ) -> None:
+        instance = MagicMock(
+            id=999_001,
+            status="RUNNING",
+            pid=123,
+            port=11400,
+            launch_mode="MULTIMODAL",
+            server_config={},
+        )
+        self.assertEqual(evaluate_instance_health(instance), "DEGRADED")
+        _mock_should_probe.assert_called_once_with(instance)
+        _mock_generation.assert_called_once_with(instance)
+
+    def test_probe_generation_health_posts_chat_completion(self) -> None:
+        instance = MagicMock(
+            id=7,
+            port=11400,
+            launch_mode="MULTIMODAL",
+            server_config={"host": "127.0.0.1"},
+        )
+        with patch("orchestrator.instance_health.httpx.post") as mock_post:
+            mock_post.return_value.status_code = 200
+            self.assertTrue(probe_generation_health(instance))
+        mock_post.assert_called_once()
+        self.assertIn("/v1/chat/completions", mock_post.call_args[0][0])
+
+    def test_deep_generation_health_disabled_by_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(deep_generation_health_enabled())
 
     @patch("orchestrator.instance_watchdog.refresh_all_instance_health")
     @patch("orchestrator.instance_watchdog._attempt_auto_restart")

@@ -7,6 +7,7 @@ Run against a running Nadir gateway on the host (not CI by default):
     export NADIR_SMOKE_ON_DEMAND_ALIAS=<on-demand-text-alias> # wake smoke (MLX-60)
     export NADIR_SMOKE_EMBED_ALIAS=<embedding-alias>          # embeddings smoke (MLX-63)
     export NADIR_SMOKE_RERANK_ALIAS=<reranker-alias>        # rerank smoke (MLX-63)
+    export NADIR_SMOKE_MTP_ALIAS=<multimodal-mtp-alias>     # MTP generation smoke (MLX-70)
     pytest -m smoke orchestrator/tests/smoke -q
 """
 
@@ -135,3 +136,26 @@ def test_smoke_rerank_non_stream() -> None:
     payload = response.json()
     assert isinstance(payload.get("results"), list)
     assert payload["results"]
+
+
+@pytest.mark.smoke
+def test_smoke_multimodal_mtp_generation() -> None:
+    """MLX-70: live chat on a MULTIMODAL alias configured with MTP draft."""
+    base_url = _smoke_base_url()
+    model_alias = os.environ.get("NADIR_SMOKE_MTP_ALIAS", "").strip()
+    if not base_url or not model_alias:
+        pytest.skip("Set NADIR_SMOKE_GATEWAY_URL and NADIR_SMOKE_MTP_ALIAS.")
+
+    response = httpx.post(
+        f"{base_url}/v1/chat/completions",
+        json={
+            "model": model_alias,
+            "messages": [{"role": "user", "content": "Reply with the word ok."}],
+            "max_tokens": 16,
+        },
+        timeout=httpx.Timeout(600.0, connect=10.0),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    assert payload.get("object") == "chat.completion"
+    assert payload.get("choices")
