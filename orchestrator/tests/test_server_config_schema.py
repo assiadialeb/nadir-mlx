@@ -1,5 +1,6 @@
 """Tests for server configuration schema validation."""
 
+import json
 from unittest import TestCase
 
 from orchestrator.server_config_schema import (
@@ -85,3 +86,49 @@ class ServerConfigSchemaTests(TestCase):
                 {"ops": {"lifecycle_mode": "on_demand", "idle_minutes": 2}},
                 "model-a",
             )
+
+    def test_validate_multimodal_advanced_keys(self) -> None:
+        config = validate_and_normalize_server_config(
+            "MULTIMODAL",
+            {
+                "advanced": {
+                    "draft_kind": "mtp",
+                    "enable_thinking": True,
+                    "kv_bits": 4,
+                },
+            },
+            "gemma-4-e2b",
+        )
+        self.assertEqual(config["advanced"]["draft_kind"], "mtp")
+        self.assertTrue(config["advanced"]["enable_thinking"])
+
+    def test_validate_image_quantize_override_advanced(self) -> None:
+        config = validate_and_normalize_server_config(
+            "IMAGE",
+            {"advanced": {"quantize_override": 8}},
+            "FLUX.1-schnell-4bit",
+        )
+        self.assertEqual(config["advanced"]["quantize_override"], 8)
+
+    def test_validate_tts_response_format_advanced(self) -> None:
+        config = validate_and_normalize_server_config(
+            "TTS",
+            {"advanced": {"response_format": "opus"}},
+            "Kokoro-82M-bf16",
+        )
+        self.assertEqual(config["advanced"]["response_format"], "opus")
+
+    def test_parse_post_rejects_invalid_advanced_json(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_server_config_from_post(
+                {"config_advanced": "not-json"},
+                "TEXT",
+                "model-a",
+            )
+
+    def test_config_fields_for_ui_json_includes_ops_section(self) -> None:
+        from orchestrator.server_config_schema import config_fields_for_ui_json
+
+        payload = json.loads(config_fields_for_ui_json())
+        text_fields = {field["name"]: field for field in payload["TEXT"]}
+        self.assertEqual(text_fields["lifecycle_mode"]["section"], "ops")

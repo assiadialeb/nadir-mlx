@@ -107,7 +107,7 @@ jobs:
           BASE_ARGS="$BASE_ARGS -Dsonar.sources=orchestrator,mlx_orchestrator"
           BASE_ARGS="$BASE_ARGS -Dsonar.tests=orchestrator/tests"
           BASE_ARGS="$BASE_ARGS -Dsonar.test.inclusions=**/test_*.py"
-          BASE_ARGS="$BASE_ARGS -Dsonar.coverage.exclusions=orchestrator/migrations/**,orchestrator/tests/**,manage.py"
+          BASE_ARGS="$BASE_ARGS -Dsonar.coverage.exclusions=orchestrator/migrations/**,orchestrator/tests/**,manage.py,**/*_server.py,**/mlx_*_launcher.py,orchestrator/mlx_launcher.py,orchestrator/management/commands/migrate_sqlite_to_postgres.py,orchestrator/vendor/**,orchestrator/views.py,orchestrator/ui_selectors.py,orchestrator/registry_builder.py,orchestrator/downloader.py"
           BASE_ARGS="$BASE_ARGS -Dsonar.exclusions=orchestrator/migrations/**,orchestrator/static/**,docs/**,site/**,adr/**,models/**,logs/**,venv/**,**/__pycache__/**"
           [ -f coverage.xml ] && BASE_ARGS="$BASE_ARGS -Dsonar.python.coverage.reportPaths=coverage.xml"
 

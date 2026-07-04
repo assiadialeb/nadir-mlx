@@ -6,7 +6,9 @@ from orchestrator.model_registry import (
     apply_registry_server_defaults,
     build_registry_defaults_for_folders,
     deep_merge_registry_defaults,
+    get_registry_family,
     resolve_model_registry_profile,
+    resolve_registry_entry,
     resolve_registry_family,
 )
 from orchestrator.server_config_schema import build_default_server_config
@@ -67,3 +69,18 @@ class ModelRegistryTests(SimpleTestCase):
         )
         self.assertEqual(merged["advanced"]["draft_kind"], "mtp")
         self.assertEqual(merged["registry"]["family_id"], "gemma4_vlm")
+
+    def test_get_registry_family_returns_launch_modes(self) -> None:
+        family = get_registry_family("flux_lite")
+        self.assertIsNotNone(family)
+        assert family is not None
+        self.assertIn("IMAGE", family.get("launch_modes", []))
+
+    def test_resolve_registry_entry_returns_explicit_model(self) -> None:
+        entry = resolve_registry_entry("Flux-1.lite-8B-MLX-Q4")
+        self.assertIsNotNone(entry)
+        assert entry is not None
+        self.assertEqual(entry["folder_name"], "Flux-1.lite-8B-MLX-Q4")
+
+    def test_resolve_registry_family_returns_none_for_unknown_folder(self) -> None:
+        self.assertIsNone(resolve_registry_family("totally-unknown-model-folder-xyz"))

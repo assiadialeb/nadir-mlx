@@ -3,20 +3,30 @@
 from django.test import TestCase
 
 from orchestrator.benchmark_selectors import (
+    benchmark_detail_phase_message,
     benchmark_endpoint_kind,
     benchmark_history_model_query,
     benchmark_preset_key,
+    benchmark_run_label,
     benchmark_run_list_row,
+    build_benchmark_history_query,
+    build_benchmark_status_payload,
     build_comparison_snapshot,
     chart_series_for_runs,
+    comparison_pair_label,
     comparison_rows,
+    detail_perf_chart_payload,
     detail_quality_chart_payload,
     detail_render_ready,
     filter_benchmark_runs,
     find_comparison_candidates,
+    format_preset_label,
+    list_filter_options,
     paginate_benchmark_runs,
     parse_benchmark_history_query,
     resolve_perf_summaries,
+    resolve_quality_metrics,
+    runs_for_chart_filters,
     summary_for_scenario,
 )
 from orchestrator.models import BenchmarkRun, InferenceInstance
@@ -325,3 +335,177 @@ class BenchmarkSelectorsTests(TestCase):
         rows = comparison_rows(run_a, run_b)
         scenarios = {row["scenario"] for row in rows}
         self.assertEqual(scenarios, {"medium_conc1", "medium_conc4"})
+
+    def test_format_preset_label_includes_request_count(self) -> None:
+        label = format_preset_label(self.params, benchmark_kind="PERF")
+        self.assertIn("20", label)
+        self.assertIn("medium", label.lower())
+
+    def test_list_filter_options_exposes_launch_modes(self) -> None:
+        options = list_filter_options()
+        self.assertIn("launch_modes", options)
+        self.assertIn("TEXT", options["launch_modes"])
+
+    def test_build_benchmark_history_query_serializes_filters(self) -> None:
+        query = build_benchmark_history_query(model_name="gemma", status="COMPLETED", page=2)
+        self.assertIn("model=gemma", query)
+        self.assertIn("status=COMPLETED", query)
+        self.assertIn("page=2", query)
+
+    def test_build_benchmark_status_payload_for_complete_run(self) -> None:
+        parent = BenchmarkRun.objects.create(
+            benchmark_kind="COMPLETE",
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results={
+                "perf_summaries": [{"scenario": "medium_conc4", "aggregate_tps": 50}],
+                "quality_summary": {"gsm8k_exact_match": 72.0},
+            },
+        )
+        perf_child = BenchmarkRun.objects.create(
+            benchmark_kind="PERF",
+            parent_run=parent,
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        quality_child = BenchmarkRun.objects.create(
+            benchmark_kind="QUALITY",
+            parent_run=parent,
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results={"metrics": {"gsm8k_exact_match": 72.0}},
+        )
+        payload = build_benchmark_status_payload(parent, perf_child, quality_child)
+        self.assertTrue(payload["render_ready"])
+        self.assertEqual(payload["phase"]["perf_status"], "COMPLETED")
+        self.assertEqual(payload["quality_metrics"]["gsm8k_exact_match"], 72.0)
+
+    def test_benchmark_detail_phase_message_describes_perf_phase(self) -> None:
+        parent = BenchmarkRun.objects.create(
+            benchmark_kind="COMPLETE",
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="RUNNING",
+        )
+        perf_child = BenchmarkRun.objects.create(
+            benchmark_kind="PERF",
+            parent_run=parent,
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="RUNNING",
+        )
+        message = benchmark_detail_phase_message(parent, perf_child, None)
+        self.assertIn("Phase 1", message)
+
+    def test_benchmark_detail_phase_message_describes_quality_phase(self) -> None:
+        parent = BenchmarkRun.objects.create(
+            benchmark_kind="COMPLETE",
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="RUNNING",
+        )
+        perf_child = BenchmarkRun.objects.create(
+            benchmark_kind="PERF",
+            parent_run=parent,
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+        )
+        quality_child = BenchmarkRun.objects.create(
+            benchmark_kind="QUALITY",
+            parent_run=parent,
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="RUNNING",
+        )
+        message = benchmark_detail_phase_message(parent, perf_child, quality_child)
+        self.assertIn("Phase 2", message)
+
+    def test_detail_perf_chart_payload_returns_empty_without_summaries(self) -> None:
+        self.assertEqual(detail_perf_chart_payload([]), {})
+
+    def test_runs_for_chart_filters_limits_completed_runs(self) -> None:
+        BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        runs = runs_for_chart_filters({"model_name": "gemma"}, limit=5)
+        self.assertEqual(len(runs), 1)
+
+    def test_benchmark_run_label_includes_endpoint_kind(self) -> None:
+        run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11380/v1",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        label = benchmark_run_label(run, gateway_port=11380)
+        self.assertIn("gemma-test", label)
+
+    def test_comparison_pair_label_joins_run_labels(self) -> None:
+        left = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        right = BenchmarkRun.objects.create(
+            target_type="ENDPOINT",
+            endpoint_url="http://127.0.0.1:11434/v1",
+            params=self.params,
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        label = comparison_pair_label(left, right, gateway_port=11380)
+        self.assertIn("vs", label)
+
+    def test_resolve_quality_metrics_reads_child_results(self) -> None:
+        parent = BenchmarkRun.objects.create(
+            benchmark_kind="COMPLETE",
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results={"quality_summary": {"ifeval_strict_acc": 80.0}},
+        )
+        quality_child = BenchmarkRun.objects.create(
+            benchmark_kind="QUALITY",
+            parent_run=parent,
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params=self.params,
+            status="COMPLETED",
+            results={"metrics": {"ifeval_strict_acc": 81.0}},
+        )
+        metrics = resolve_quality_metrics(parent, quality_child)
+        self.assertEqual(metrics["ifeval_strict_acc"], 81.0)

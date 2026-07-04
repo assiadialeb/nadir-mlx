@@ -180,3 +180,47 @@ class RunIdleOffloadCycleTests(TestCase):
         )
         run_idle_offload_cycle()
         self.assertEqual(mock_attempt.call_count, 1)
+
+
+class IdleWatcherStartupTests(TestCase):
+    def setUp(self) -> None:
+        import orchestrator.instance_idle_watcher as module
+
+        module._idle_watcher_started = False
+
+    @patch.dict(os.environ, {"NADIR_IDLE_OFFLOAD_ENABLED": "false"}, clear=False)
+    def test_start_idle_watcher_respects_disabled_env(self) -> None:
+        with patch("threading.Thread") as mock_thread:
+            from orchestrator.instance_idle_watcher import start_idle_watcher_if_needed
+
+            start_idle_watcher_if_needed()
+        mock_thread.assert_not_called()
+
+    @patch("orchestrator.instance_idle_watcher.should_skip_watchdog", return_value=True)
+    def test_start_idle_watcher_skips_when_watchdog_blocked(
+        self,
+        _mock_skip: MagicMock,
+    ) -> None:
+        with patch("threading.Thread") as mock_thread:
+            from orchestrator.instance_idle_watcher import start_idle_watcher_if_needed
+
+            start_idle_watcher_if_needed()
+        mock_thread.assert_not_called()
+
+    @patch("orchestrator.instance_idle_watcher.should_skip_watchdog", return_value=False)
+    @patch.dict(os.environ, {"RUN_MAIN": "true"}, clear=False)
+    @patch("sys.argv", ["manage.py", "runserver"])
+    def test_start_idle_watcher_starts_daemon_thread_once(
+        self,
+        _mock_skip: MagicMock,
+    ) -> None:
+        with patch("threading.Thread") as mock_thread:
+            from orchestrator.instance_idle_watcher import start_idle_watcher_if_needed
+
+            mock_thread.return_value = MagicMock()
+            start_idle_watcher_if_needed()
+            start_idle_watcher_if_needed()
+        mock_thread.assert_called_once()
+        kwargs = mock_thread.call_args.kwargs
+        self.assertTrue(kwargs["daemon"])
+        self.assertEqual(kwargs["name"], "mlx-instance-idle-watcher")
