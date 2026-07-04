@@ -94,6 +94,33 @@ class InstanceHealthTests(TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertFalse(deep_generation_health_enabled())
 
+    @patch("orchestrator.instance_health.probe_http_health", return_value=False)
+    @patch("orchestrator.instance_health._find_listener_pids", return_value=[])
+    def test_evaluate_instance_health_down_when_http_probe_fails(
+        self,
+        _mock_listeners: MagicMock,
+        _mock_probe: MagicMock,
+    ) -> None:
+        instance = MagicMock(status="RUNNING", pid=123, port=11400, server_config={})
+        self.assertEqual(evaluate_instance_health(instance), "DOWN")
+
+    def test_refresh_instance_health_persists_status(self) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="health-model",
+            port=11458,
+            launch_mode="TEXT",
+            server_config={"model_id": "health-chat"},
+            status="RUNNING",
+        )
+        with (
+            patch("orchestrator.instance_health.check_instance_status"),
+            patch("orchestrator.instance_health.evaluate_instance_health", return_value="HEALTHY"),
+        ):
+            status = refresh_instance_health(instance)
+        self.assertEqual(status, "HEALTHY")
+        instance.refresh_from_db()
+        self.assertEqual(instance.health_status, "HEALTHY")
+
     @patch("orchestrator.instance_watchdog.refresh_all_instance_health")
     @patch("orchestrator.instance_watchdog._attempt_auto_restart")
     @patch("orchestrator.models.InferenceInstance.objects")

@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from django.conf import settings
 from django.test import TestCase, override_settings
 
 from orchestrator.benchmark_service import (
     BENCHMARK_MAX_REQUESTS_PER_SCENARIO,
+    _build_command,
     _resolve_target,
+    delete_benchmark_runs_for_model,
+    execute_perf_benchmark,
     parse_benchmark_form,
     resolve_benchmark_model_id,
+    start_benchmark,
 )
-from orchestrator.models import InferenceInstance
+from orchestrator.models import BenchmarkRun, InferenceInstance
 
 
 class ParseBenchmarkFormTests(TestCase):
@@ -182,3 +190,130 @@ class ResolveBenchmarkTargetTests(TestCase):
     def test_endpoint_target_rejects_metadata_ip(self) -> None:
         with self.assertRaises(ValueError):
             _resolve_target("ENDPOINT", None, "169.254.169.254", 11434)
+
+
+@override_settings(LOGS_DIR="/tmp/mlx-bench-exec-tests")
+class ExecutePerfBenchmarkTests(TestCase):
+    def setUp(self) -> None:
+        self.logs_dir = Path(settings.LOGS_DIR)
+        (self.logs_dir / "benchmarks").mkdir(parents=True, exist_ok=True)
+        self.instance = InferenceInstance.objects.create(
+            model_name="gemma-test",
+            port=11446,
+            launch_mode="TEXT",
+            status="RUNNING",
+            pid=1234,
+        )
+
+    def test_build_command_includes_model_and_categories(self) -> None:
+        run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            model_id="gemma-chat",
+            params={
+                "host": "127.0.0.1",
+                "port": 11446,
+                "num_requests": 10,
+                "concurrency": [1, 4],
+                "categories": ["medium", "short"],
+            },
+            status="PENDING",
+        )
+        command = _build_command(run, Path("/tmp/out.json"))
+        self.assertIn("--model", command)
+        self.assertIn("gemma-chat", command)
+        self.assertEqual(command.count("--categories"), 2)
+
+    @patch("orchestrator.benchmark_service.subprocess.run")
+    def test_execute_perf_benchmark_persists_completed_results(
+        self,
+        mock_run: MagicMock,
+    ) -> None:
+        run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params={
+                "host": "127.0.0.1",
+                "port": 11446,
+                "num_requests": 5,
+                "concurrency": [1],
+                "categories": ["medium"],
+            },
+            status="PENDING",
+        )
+        output_path = self.logs_dir / "benchmarks" / f"bench_{run.id}.json"
+        output_path.write_text(json.dumps({"results": [{"summary": {"scenario": "medium_conc1"}}]}), encoding="utf-8")
+        mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
+
+        execute_perf_benchmark(run)
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, "COMPLETED")
+        self.assertIn("results", run.results)
+
+    @patch("orchestrator.benchmark_service.subprocess.run")
+    def test_execute_perf_benchmark_marks_failed_on_nonzero_exit(
+        self,
+        mock_run: MagicMock,
+    ) -> None:
+        run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params={"host": "127.0.0.1", "port": 11446, "concurrency": [1], "categories": ["medium"]},
+            status="PENDING",
+        )
+        mock_run.return_value = MagicMock(returncode=1, stderr="bench crashed", stdout="")
+
+        execute_perf_benchmark(run)
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, "FAILED")
+        self.assertIn("bench crashed", run.error_message)
+
+    def test_delete_benchmark_runs_for_model_removes_matching_rows(self) -> None:
+        run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params={},
+            status="COMPLETED",
+        )
+        deleted = delete_benchmark_runs_for_model(self.instance.model_name)
+        self.assertEqual(deleted, 1)
+        self.assertFalse(BenchmarkRun.objects.filter(id=run.id).exists())
+
+    @patch(
+        "orchestrator.benchmark_service.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="bench", timeout=1),
+    )
+    def test_execute_perf_benchmark_marks_failed_on_timeout(self, _mock_run: MagicMock) -> None:
+        run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params={"host": "127.0.0.1", "port": 11446, "concurrency": [1], "categories": ["medium"]},
+            status="PENDING",
+        )
+        execute_perf_benchmark(run)
+        run.refresh_from_db()
+        self.assertEqual(run.status, "FAILED")
+        self.assertIn("timed out", run.error_message.lower())
+
+    @patch("orchestrator.benchmark_service._start_benchmark_thread")
+    @override_settings(NADIR_GATEWAY_HOST="127.0.0.1", NADIR_GATEWAY_PORT=11380)
+    def test_start_benchmark_creates_pending_run(self, mock_thread: MagicMock) -> None:
+        run = start_benchmark(
+            "INSTANCE",
+            self.instance.id,
+            None,
+            None,
+            "",
+            {"categories": ["medium"], "concurrency": [1], "num_requests": 5},
+            benchmark_kind="PERF",
+        )
+        self.assertEqual(run.status, "PENDING")
+        self.assertEqual(run.benchmark_kind, "PERF")
+        mock_thread.assert_called_once_with(run)

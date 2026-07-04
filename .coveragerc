@@ -1,0 +1,19 @@
+[run]
+source = orchestrator, mlx_orchestrator
+omit =
+    */migrations/*
+    */tests/*
+    *_server.py
+    mlx_*_launcher.py
+    mlx_launcher.py
+    */management/commands/migrate_sqlite_to_postgres.py
+    */vendor/*
+    orchestrator/views.py
+    orchestrator/ui_selectors.py
+    orchestrator/registry_builder.py
+    orchestrator/downloader.py
+    */wsgi.py
+    */asgi.py
+
+[report]
+show_missing = false

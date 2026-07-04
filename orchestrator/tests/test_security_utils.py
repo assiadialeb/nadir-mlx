@@ -7,12 +7,15 @@ from unittest.mock import patch
 from django.test import SimpleTestCase, override_settings
 
 from orchestrator.security_utils import (
+    assert_path_under_directory,
     benchmark_compare_export_filename,
     benchmark_endpoint_enabled,
     build_models_redirect_url,
     build_validated_http_url,
+    extract_bearer_token,
     public_error_message,
     safe_path_under_root,
+    safe_positive_int,
     sanitize_hf_search_query,
     validated_sqlite_migration_path,
     validate_benchmark_endpoint_host,
@@ -23,6 +26,31 @@ from orchestrator.security_utils import (
 
 
 class SecurityUtilsTests(SimpleTestCase):
+    def test_extract_bearer_token_parses_authorization_header(self) -> None:
+        self.assertEqual(extract_bearer_token("Bearer secret-token"), "secret-token")
+        self.assertEqual(extract_bearer_token("secret-token"), "secret-token")
+        self.assertEqual(extract_bearer_token(None), "")
+
+    def test_sanitize_hf_search_query_truncates_long_input(self) -> None:
+        long_query = "a" * 250
+        self.assertEqual(len(sanitize_hf_search_query(long_query)), 200)
+
+    def test_safe_positive_int_rejects_zero(self) -> None:
+        with self.assertRaises(ValueError):
+            safe_positive_int(0, field_name="run id")
+
+    def test_assert_path_under_directory_rejects_escape(self) -> None:
+        root = Path("/tmp/nadir-root")
+        with self.assertRaises(ValueError):
+            assert_path_under_directory(Path("/etc/passwd"), root)
+
+    @override_settings(DEBUG=False, NADIR_BENCHMARK_ENDPOINT_ENABLED=True)
+    @patch.dict(os.environ, {"NADIR_BENCHMARK_ENDPOINT_ALLOWED_HOSTS": "10.0.0.5"}, clear=False)
+    def test_validate_benchmark_endpoint_host_honors_env_allowlist(self) -> None:
+        self.assertEqual(validate_benchmark_endpoint_host("10.0.0.5"), "10.0.0.5")
+        with self.assertRaises(ValueError):
+            validate_benchmark_endpoint_host("192.168.1.10")
+
     def test_validate_outbound_http_host_allows_loopback(self) -> None:
         self.assertEqual(validate_outbound_http_host("127.0.0.1"), "127.0.0.1")
         self.assertEqual(validate_outbound_http_host("localhost"), "localhost")
