@@ -381,6 +381,8 @@ jobs:
           NEW_VULNS=$(echo "$DATA" | jq -r '.new_vulnerabilities // 0')
           NEW_SMELLS=$(echo "$DATA" | jq -r '.new_code_smells // 0')
           NEW_DUP=$(echo "$DATA" | jq -r '.new_duplication_pct // 0')
+          NEW_COV=$(echo "$DATA" | jq -r '.new_coverage // empty')
+          TOTAL_COV=$(echo "$DATA" | jq -r '.total_coverage // empty')
 
           TOTAL_BUGS=$(echo "$DATA" | jq -r '.total_bugs // "—"')
           TOTAL_VULNS=$(echo "$DATA" | jq -r '.total_vulnerabilities // "—"')
@@ -388,6 +390,17 @@ jobs:
 
           RELIABILITY=$(echo "$DATA" | jq -r '.reliability_rating // "—"')
           MAINTAINABILITY=$(echo "$DATA" | jq -r '.maintainability_rating // "—"')
+
+          if [ -n "$NEW_COV" ]; then
+            COVERAGE_LABEL="Coverage on New Code"
+            COVERAGE_VALUE="${NEW_COV}%"
+          elif [ -n "$TOTAL_COV" ]; then
+            COVERAGE_LABEL="Coverage (overall)"
+            COVERAGE_VALUE="${TOTAL_COV}%"
+          else
+            COVERAGE_LABEL="Coverage"
+            COVERAGE_VALUE="—"
+          fi
 
           case "$STATUS" in
             passed)   ICON="✅"; LABEL="Quality Gate passed" ;;
@@ -418,6 +431,7 @@ jobs:
           | Metric | Value |
           |---|:---:|
           | Duplication on New Code | ${NEW_DUP}% |
+          | ${COVERAGE_LABEL} | ${COVERAGE_VALUE} |
           | Reliability | $RELIABILITY |
           | Maintainability | $MAINTAINABILITY |
           $FAILED_CONDITIONS
