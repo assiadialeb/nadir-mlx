@@ -1,11 +1,21 @@
 # Spectra Quality Gate — CI/CD integration
-# Runs on every PR targeting main.
-# Posts a quality summary as a PR comment with a link to the detailed analysis.
+# Runs on every PR targeting main, or manually via workflow_dispatch.
+#
+# Required configuration:
+#   vars.SPECTRA_URL       — Spectra instance URL
+#   secrets.SPECTRA_CI_KEY — API key from Spectra → Code Analysis → repo Settings
+#   secrets.SONAR_TOKEN    — Sonar token (API Client mode; Managed mode uses Spectra token)
 name: Spectra Quality Gate
 
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: "PR number (optional — enables Sonar PR analysis and posts a comment on the PR)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -14,6 +24,11 @@ permissions:
 jobs:
   quality-gate:
     runs-on: ubuntu-latest
+    env:
+      CI_PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pull_request_number || '' }}
+      CI_BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+      CI_SCM_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      CI_TRIGGERED_BY: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -59,6 +74,20 @@ jobs:
           echo "coverage.xml size: $(wc -c < coverage.xml) bytes"
           exit "$PYTEST_EXIT"
 
+      - name: Verify coverage report for Sonar
+        run: |
+          if [ ! -f coverage.xml ]; then
+            echo "coverage.xml is missing — Sonar will not receive coverage."
+            exit 1
+          fi
+          echo "coverage.xml size: $(wc -c < coverage.xml) bytes"
+          if grep -qE '<source>/|<class filename="/' coverage.xml; then
+            echo "WARNING: absolute paths detected in coverage.xml; Sonar may fail to match files."
+            head -20 coverage.xml
+          fi
+          covered_files=$(grep -c '<class ' coverage.xml || true)
+          echo "Cobertura classes in report: $covered_files"
+
       - name: Register scan with Spectra
         id: scan
         run: |
@@ -66,8 +95,8 @@ jobs:
           BODY=$(jq -n \
             --arg sha "$GITHUB_SHA" \
             --arg branch "$BRANCH_NAME" \
-            --arg pr "${{ github.event.pull_request.number }}" \
-            --arg trigger "pull_request" \
+            --arg pr "$CI_PR_NUMBER" \
+            --arg trigger "$CI_TRIGGERED_BY" \
             '{commit_sha: $sha, branch: $branch, pull_request: $pr, triggered_by: $trigger}')
 
           RESPONSE=$(curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans" \
@@ -95,44 +124,70 @@ jobs:
 
       - name: Run SonarQube analysis
         if: steps.scan.outputs.status != 'bypassed'
+        env:
+          SONAR_HOST_URL: ${{ steps.scan.outputs.sonar_url }}
+          SONAR_PROJECT_KEY: ${{ steps.scan.outputs.sonar_key }}
+          SONAR_TOKEN_MANAGED: ${{ steps.scan.outputs.sonar_token }}
+          SONAR_TOKEN_CI: ${{ secrets.SONAR_TOKEN }}
         run: |
+          if [ -n "$SONAR_TOKEN_MANAGED" ]; then
+            SONAR_TOKEN="$SONAR_TOKEN_MANAGED"
+          else
+            SONAR_TOKEN="$SONAR_TOKEN_CI"
+          fi
+          if [ -z "$SONAR_HOST_URL" ] || [ -z "$SONAR_PROJECT_KEY" ]; then
+            echo "Sonar host URL or project key missing. Check Spectra CI repo settings."
+            exit 1
+          fi
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "Missing Sonar token. Set secrets.SONAR_TOKEN (API Client) or use Managed mode."
+            exit 1
+          fi
+
           curl -sSLo sonar-scanner.zip "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.1.0.6389-linux-x64.zip"
           unzip -q sonar-scanner.zip
           BRANCH_NAME="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          BASE_ARGS="-Dsonar.host.url=${{ steps.scan.outputs.sonar_url }}"
-          BASE_ARGS="$BASE_ARGS -Dsonar.token=${{ steps.scan.outputs.sonar_token }}"
-          BASE_ARGS="$BASE_ARGS -Dsonar.projectKey=${{ steps.scan.outputs.sonar_key }}"
+          BASE_ARGS="-Dsonar.host.url=$SONAR_HOST_URL"
+          BASE_ARGS="$BASE_ARGS -Dsonar.token=$SONAR_TOKEN"
+          BASE_ARGS="$BASE_ARGS -Dsonar.projectKey=$SONAR_PROJECT_KEY"
           BASE_ARGS="$BASE_ARGS -Dsonar.projectVisibility=private"
-          BASE_ARGS="$BASE_ARGS -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }}"
+          BASE_ARGS="$BASE_ARGS -Dsonar.python.version=3.12"
+          BASE_ARGS="$BASE_ARGS -Dsonar.scm.revision=$CI_SCM_REVISION"
           BASE_ARGS="$BASE_ARGS -Dsonar.sources=orchestrator,mlx_orchestrator"
           BASE_ARGS="$BASE_ARGS -Dsonar.tests=orchestrator/tests"
           BASE_ARGS="$BASE_ARGS -Dsonar.test.inclusions=**/test_*.py"
           BASE_ARGS="$BASE_ARGS -Dsonar.coverage.exclusions=orchestrator/migrations/**,orchestrator/tests/**,manage.py,**/*_server.py,**/mlx_*_launcher.py,orchestrator/mlx_launcher.py,orchestrator/management/commands/migrate_sqlite_to_postgres.py,orchestrator/vendor/**,orchestrator/views.py,orchestrator/ui_selectors.py,orchestrator/registry_builder.py,orchestrator/downloader.py"
           BASE_ARGS="$BASE_ARGS -Dsonar.exclusions=orchestrator/migrations/**,orchestrator/static/**,docs/**,site/**,adr/**,models/**,logs/**,venv/**,**/__pycache__/**"
-          [ -f coverage.xml ] && BASE_ARGS="$BASE_ARGS -Dsonar.python.coverage.reportPaths=coverage.xml"
+          BASE_ARGS="$BASE_ARGS -Dsonar.python.coverage.reportPaths=coverage.xml"
 
-          PR_ARGS="-Dsonar.pullrequest.key=${{ github.event.pull_request.number }}"
-          PR_ARGS="$PR_ARGS -Dsonar.pullrequest.branch=$BRANCH_NAME"
-          PR_ARGS="$PR_ARGS -Dsonar.pullrequest.base=${{ github.event.pull_request.base.ref }}"
           BRANCH_ARGS="-Dsonar.branch.name=$BRANCH_NAME"
 
-          set +e
-          ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $PR_ARGS 2>&1 | tee sonar.log
-          SONAR_EXIT=${PIPESTATUS[0]}
-          set -e
+          if [ -n "$CI_PR_NUMBER" ]; then
+            PR_ARGS="-Dsonar.pullrequest.key=$CI_PR_NUMBER"
+            PR_ARGS="$PR_ARGS -Dsonar.pullrequest.branch=$BRANCH_NAME"
+            PR_ARGS="$PR_ARGS -Dsonar.pullrequest.base=$CI_BASE_REF"
 
-          if [ "$SONAR_EXIT" -ne 0 ] && grep -q "Developer Edition or above is required" sonar.log; then
-            echo "PR parameters not supported. Retrying with branch context to protect main baseline."
             set +e
-            ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS 2>&1 | tee sonar-branch.log
-            BRANCH_EXIT=${PIPESTATUS[0]}
+            ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $PR_ARGS 2>&1 | tee sonar.log
+            SONAR_EXIT=${PIPESTATUS[0]}
             set -e
-            if [ "$BRANCH_EXIT" -ne 0 ]; then
-              echo "Target SonarQube does not support PR/branch analysis. Aborting to avoid overwriting main baseline."
-              exit "$BRANCH_EXIT"
+
+            if [ "$SONAR_EXIT" -ne 0 ] && grep -q "Developer Edition or above is required" sonar.log; then
+              echo "PR parameters not supported. Retrying with branch context to protect main baseline."
+              set +e
+              ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS 2>&1 | tee sonar-branch.log
+              BRANCH_EXIT=${PIPESTATUS[0]}
+              set -e
+              if [ "$BRANCH_EXIT" -ne 0 ]; then
+                echo "Target SonarQube does not support PR/branch analysis. Aborting to avoid overwriting main baseline."
+                exit "$BRANCH_EXIT"
+              fi
+            elif [ "$SONAR_EXIT" -ne 0 ]; then
+              exit "$SONAR_EXIT"
             fi
-          elif [ "$SONAR_EXIT" -ne 0 ]; then
-            exit "$SONAR_EXIT"
+          else
+            echo "No PR context — running branch analysis on $BRANCH_NAME."
+            ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS
           fi
 
       - name: Run SAST analysis (OpenGrep)
@@ -294,7 +349,7 @@ jobs:
           SCAN_ID: ${{ steps.scan.outputs.scan_id }}
 
       - name: Post PR comment
-        if: always() && steps.scan.outputs.scan_id != ''
+        if: always() && steps.scan.outputs.scan_id != '' && env.CI_PR_NUMBER != ''
         env:
           GH_TOKEN: ${{ github.token }}
           SPECTRA_URL: ${{ vars.SPECTRA_URL }}
@@ -360,7 +415,7 @@ jobs:
 
           BODY=$(echo "$BODY" | sed 's/^          //')
 
-          gh pr comment "${{ github.event.pull_request.number }}" --body "$BODY"
+          gh pr comment "$CI_PR_NUMBER" --body "$BODY"
 
       - name: Enforce gate result
         if: always()

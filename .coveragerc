@@ -1,5 +1,6 @@
 [run]
 source = orchestrator, mlx_orchestrator
+relative_files = True
 omit =
     */migrations/*
     */tests/*
