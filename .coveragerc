@@ -1,5 +1,5 @@
 [run]
-source = orchestrator, mlx_orchestrator
+source = .
 relative_files = True
 omit =
     */migrations/*

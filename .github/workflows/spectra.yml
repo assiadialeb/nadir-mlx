@@ -1,5 +1,5 @@
 # Spectra Quality Gate — CI/CD integration
-# Runs on every PR targeting main, or manually via workflow_dispatch.
+# Runs on every PR targeting main, on push to main (coverage baseline), or via workflow_dispatch.
 #
 # Required configuration:
 #   vars.SPECTRA_URL       — Spectra instance URL
@@ -9,6 +9,8 @@ name: Spectra Quality Gate
 
 on:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -65,8 +67,7 @@ jobs:
           export NADIR_CI_STUB_MLX=1
           set +e
           pytest orchestrator/tests \
-            --cov=orchestrator \
-            --cov=mlx_orchestrator \
+            --cov=. \
             --cov-report=xml:coverage.xml
           PYTEST_EXIT=$?
           set -e
@@ -87,6 +88,10 @@ jobs:
           fi
           covered_files=$(grep -c '<class ' coverage.xml || true)
           echo "Cobertura classes in report: $covered_files"
+          if ! grep -qE 'filename="(orchestrator|mlx_orchestrator)/' coverage.xml; then
+            echo "WARNING: coverage.xml paths may not match Sonar (expected orchestrator/ or mlx_orchestrator/ prefix)."
+            grep -o 'filename="[^"]*"' coverage.xml | head -5
+          fi
 
       - name: Register scan with Spectra
         id: scan
@@ -161,6 +166,7 @@ jobs:
           BASE_ARGS="$BASE_ARGS -Dsonar.python.coverage.reportPaths=coverage.xml"
 
           BRANCH_ARGS="-Dsonar.branch.name=$BRANCH_NAME"
+          REF_BRANCH_ARG="-Dsonar.newCode.referenceBranch=$CI_BASE_REF"
 
           if [ -n "$CI_PR_NUMBER" ]; then
             PR_ARGS="-Dsonar.pullrequest.key=$CI_PR_NUMBER"
@@ -168,11 +174,19 @@ jobs:
             PR_ARGS="$PR_ARGS -Dsonar.pullrequest.base=$CI_BASE_REF"
 
             set +e
-            ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $PR_ARGS 2>&1 | tee sonar.log
+            ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $REF_BRANCH_ARG $PR_ARGS 2>&1 | tee sonar.log
             SONAR_EXIT=${PIPESTATUS[0]}
             set -e
 
-            if [ "$SONAR_EXIT" -ne 0 ] && grep -q "Developer Edition or above is required" sonar.log; then
+            if [ "$SONAR_EXIT" -ne 0 ] && grep -qiE "No branch exists in Sonar(qube)? with the name" sonar.log; then
+              echo "Base branch '$CI_BASE_REF' not in Sonar yet — bootstrapping with branch analysis on $BRANCH_NAME (no PR params)."
+              set +e
+              ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS 2>&1 | tee sonar-bootstrap.log
+              SONAR_EXIT=${PIPESTATUS[0]}
+              set -e
+            fi
+
+            if [ "$SONAR_EXIT" -ne 0 ] && grep -q "Developer Edition or above is required" sonar.log sonar-bootstrap.log 2>/dev/null; then
               echo "PR parameters not supported. Retrying with branch context to protect main baseline."
               set +e
               ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS 2>&1 | tee sonar-branch.log
