@@ -613,6 +613,8 @@ def validate_and_normalize_server_config(
     normalized = build_default_server_config(launch_mode, model_name)
 
     for field in get_config_fields_for_mode(launch_mode):
+        if field.name == "gateway_aliases":
+            continue
         if field.name not in raw:
             continue
         value = raw[field.name]
@@ -628,7 +630,7 @@ def validate_and_normalize_server_config(
         normalized["model_id"] = normalize_gateway_alias(str(normalized["model_id"]))
     validate_gateway_alias_format(str(normalized["model_id"]))
     normalized["gateway_aliases"] = normalize_gateway_aliases_list(
-        normalized.get("gateway_aliases"),
+        raw.get("gateway_aliases"),
         primary_alias=str(normalized["model_id"]),
     )
 

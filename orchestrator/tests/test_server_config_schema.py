@@ -111,6 +111,22 @@ class ServerConfigSchemaTests(TestCase):
         )
         self.assertEqual(config["gateway_aliases"], ["dev-chat", "prod-chat"])
 
+    def test_validate_accepts_gateway_aliases_list_from_stored_config(self) -> None:
+        config = validate_and_normalize_server_config(
+            "MULTIMODAL",
+            {"model_id": "gemma-4-e4b", "gateway_aliases": ["dev-alias", "prod-alias"]},
+            "gemma-4-E4B-it-qat-4bit",
+        )
+        self.assertEqual(config["gateway_aliases"], ["dev-alias", "prod-alias"])
+
+    def test_validate_accepts_empty_gateway_aliases_list_from_stored_config(self) -> None:
+        config = validate_and_normalize_server_config(
+            "MULTIMODAL",
+            {"model_id": "gemma-4-e4b", "gateway_aliases": []},
+            "gemma-4-E4B-it-qat-4bit",
+        )
+        self.assertEqual(config["gateway_aliases"], [])
+
     def test_validate_image_quantize_override_advanced(self) -> None:
         config = validate_and_normalize_server_config(
             "IMAGE",

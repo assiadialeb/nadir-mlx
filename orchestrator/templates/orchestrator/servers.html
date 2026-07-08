@@ -530,6 +530,10 @@ function applyPerfProfile(mode, modelName, profileId) {
             input.checked = Boolean(value);
             return;
         }
+        if (key === 'gateway_aliases') {
+            input.value = formatGatewayAliasesFieldValue(value);
+            return;
+        }
         input.value = value;
     });
     applyAdvancedDefaults(defaults);
@@ -572,6 +576,10 @@ function applyRegistryDefaults(mode, modelName) {
             input.checked = Boolean(value);
             return;
         }
+        if (key === 'gateway_aliases') {
+            input.value = formatGatewayAliasesFieldValue(value);
+            return;
+        }
         input.value = value;
     });
     applyAdvancedDefaults(defaults);
@@ -601,6 +609,16 @@ function bindLifecycleFieldsVisibility(idPrefix) {
     };
     modeInput.addEventListener('change', sync);
     sync();
+}
+
+function formatGatewayAliasesFieldValue(value) {
+    if (Array.isArray(value)) {
+        return value.join(', ');
+    }
+    if (value == null) {
+        return '';
+    }
+    return String(value);
 }
 
 function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfig = {}, idPrefix = 'config') {
@@ -657,7 +675,9 @@ function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfi
             if (field.placeholder) input.placeholder = field.placeholder;
             if (field.min != null) input.min = field.min;
             if (field.max != null) input.max = field.max;
-            if (existingValue != null && existingValue !== '') {
+            if (field.name === 'gateway_aliases') {
+                input.value = formatGatewayAliasesFieldValue(existingValue);
+            } else if (existingValue != null && existingValue !== '') {
                 input.value = existingValue;
             } else if (field.default != null) {
                 input.value = field.default;
