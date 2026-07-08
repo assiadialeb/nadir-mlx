@@ -442,4 +442,4 @@ def apply_quantize_override(
         return profile
     if quantize_override <= 0:
         raise ValueError("quantize_override must be a positive integer.")
-    return replace(profile, quantize=quantize_override)
+    return cast(ImageModelProfile, replace(profile, quantize=quantize_override))

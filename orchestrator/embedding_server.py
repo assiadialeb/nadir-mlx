@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import time
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional
 
 import mlx.core as mx
 import uvicorn
@@ -30,7 +30,7 @@ _state: dict[str, Any] = {}
 
 class EmbeddingsRequest(BaseModel):
     model: str = "default_model"
-    input: Union[str, list[str]]
+    input: str | list[str]
     encoding_format: Literal["float", "base64"] = "float"
     dimensions: Optional[int] = None
 
