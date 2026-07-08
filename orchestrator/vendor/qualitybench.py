@@ -9,6 +9,13 @@ from typing import Any
 
 import httpx
 
+from orchestrator.security_utils import (
+    build_validated_http_url,
+    validated_launch_port,
+    validated_subprocess_model_reference,
+    validate_outbound_http_host,
+)
+
 SUITE_DIR = Path(__file__).resolve().parent.parent / "data" / "quality_suites"
 DEFAULT_SUITE_NAMES = ("text_platform",)
 
@@ -117,14 +124,17 @@ def run_suite_case(
     timeout_seconds: float = 120.0,
 ) -> dict[str, Any]:
     """Execute one suite case against the chat-completions API."""
-    base_url = f"http://{host}:{port}/v1/chat/completions"
+    safe_host = validate_outbound_http_host(host)
+    safe_port = validated_launch_port(port)
+    safe_model = validated_subprocess_model_reference(model)
+    url = build_validated_http_url(safe_host, safe_port, "/v1/chat/completions")
     payload = {
-        "model": model,
+        "model": safe_model,
         "messages": [{"role": "user", "content": case["prompt"]}],
         "temperature": 0,
         "max_tokens": int(case.get("max_tokens", 128)),
     }
-    response = httpx.post(base_url, json=payload, timeout=timeout_seconds)
+    response = httpx.post(url, json=payload, timeout=timeout_seconds)
     response.raise_for_status()
     body = response.json()
     content = (

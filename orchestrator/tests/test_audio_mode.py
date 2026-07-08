@@ -3,6 +3,8 @@
 from unittest import TestCase
 from unittest.mock import patch
 
+from django.test import override_settings
+
 from orchestrator.model_utils import (
     get_model_capabilities,
     is_stt_focused_model,
@@ -49,11 +51,13 @@ class AudioModeTests(TestCase):
         assert config["language"] == "fr"
         assert config["chunk_duration"] == 15
 
+    @override_settings(MODELS_DIR="/tmp")
     @patch("orchestrator.model_utils.is_model_complete", return_value=True)
     def test_tts_detection_from_folder_name(self, _mock_complete: object) -> None:
         self.assertTrue(is_tts_focused_model("/tmp/Kokoro-82M-bf16"))
         self.assertFalse(is_tts_focused_model("/tmp/Llama-3-8B"))
 
+    @override_settings(MODELS_DIR="/tmp")
     @patch("orchestrator.model_utils.is_model_complete", return_value=True)
     def test_stt_detection_from_folder_name(self, _mock_complete: object) -> None:
         self.assertTrue(is_stt_focused_model("/tmp/whisper-large-v3-turbo-asr-fp16"))
@@ -67,6 +71,7 @@ class AudioModeTests(TestCase):
         if caps["supports_stt"]:
             self.assertFalse(caps["supports_text"])
 
+    @override_settings(MODELS_DIR="/tmp")
     @patch("orchestrator.server_manager._get_python_bin", return_value="python")
     def test_build_launch_command_tts_passes_response_format(
         self,

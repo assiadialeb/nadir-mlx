@@ -9,6 +9,8 @@ import time
 import uuid
 from pathlib import Path
 
+from orchestrator.security_utils import safe_path_under_root
+
 _FILE_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 
 
@@ -100,7 +102,10 @@ def resolve_image_png_path(file_id: str) -> Path | None:
     """Resolve a file id to an on-disk PNG path when it exists."""
     if not is_valid_image_file_id(file_id):
         return None
-    path = image_output_dir() / f"{file_id}.png"
+    try:
+        path = safe_path_under_root(image_output_dir().resolve(), f"{file_id}.png")
+    except ValueError:
+        return None
     if not path.is_file():
         return None
     return path

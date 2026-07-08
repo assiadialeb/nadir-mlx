@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from orchestrator.server_manager import _append_cli_args, _build_launch_command
 
 
+@override_settings(MODELS_DIR="/tmp")
 class ServerManagerLaunchCommandTests(SimpleTestCase):
     @patch("orchestrator.server_manager._get_python_bin", return_value="python")
     def test_build_launch_command_text_includes_sampling_flags(

@@ -12,6 +12,7 @@ from django.db.models import Q
 from orchestrator.benchmark_service import delete_benchmark_runs_for_model
 from orchestrator.model_utils import resolve_log_file_path, resolve_model_dir, validate_model_folder_name
 from orchestrator.models import BenchmarkRun, InferenceInstance, ModelDownload
+from orchestrator.security_utils import assert_path_under_directory, models_root_path
 from orchestrator.server_manager import delete_instance
 
 
@@ -63,7 +64,7 @@ def _remove_instance_logs(folder_name: str) -> int:
 def delete_installed_model(folder_name: str) -> DeleteModelResult:
     """Stop related servers, purge benchmarks/logs, and remove model files."""
     name = validate_model_folder_name(folder_name)
-    model_dir = resolve_model_dir(name)
+    model_dir = assert_path_under_directory(resolve_model_dir(name), models_root_path())
     folder_exists = model_dir.is_dir()
 
     if _is_model_downloading(name, model_dir):

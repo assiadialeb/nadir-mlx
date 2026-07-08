@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
+from django.test import override_settings
+
 from orchestrator.image_model_loader import resolve_image_model_spec
 from orchestrator.image_model_profiles import (
     apply_quantize_override,
@@ -84,12 +86,13 @@ class ImageModeTests(TestCase):
     def test_supports_image_mode_requires_weights(self) -> None:
         model_dir = Path(self._temp_dir()) / "FLUX.1-schnell-4bit"
         model_dir.mkdir()
-        self.assertFalse(supports_image_mode(model_dir))
+        with override_settings(MODELS_DIR=str(model_dir.parent)):
+            self.assertFalse(supports_image_mode(model_dir))
 
-        weight_file = model_dir / "model.safetensors"
-        weight_file.write_bytes(b"\x00" * 128)
-        self.assertTrue(supports_image_mode(model_dir))
-        self.assertTrue(is_image_focused_model(model_dir))
+            weight_file = model_dir / "model.safetensors"
+            weight_file.write_bytes(b"\x00" * 128)
+            self.assertTrue(supports_image_mode(model_dir))
+            self.assertTrue(is_image_focused_model(model_dir))
 
     def test_resolve_image_profile_rejects_unknown_name(self) -> None:
         with self.assertRaises(ValueError):
@@ -108,6 +111,7 @@ class ImageModeTests(TestCase):
         with self.assertRaisesRegex(ValueError, "positive integer"):
             apply_quantize_override(profile, 0)
 
+    @override_settings(MODELS_DIR="/tmp")
     @patch("orchestrator.server_manager._get_python_bin", return_value="python")
     def test_build_launch_command_image_passes_quantize_override(
         self,

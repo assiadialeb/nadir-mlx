@@ -17,6 +17,8 @@ from orchestrator.security_utils import (
     safe_path_under_root,
     safe_positive_int,
     sanitize_hf_search_query,
+    validated_launch_port,
+    validated_subprocess_model_reference,
     validated_sqlite_migration_path,
     validate_benchmark_endpoint_host,
     validate_huggingface_api_url,
@@ -155,3 +157,14 @@ class SecurityUtilsTests(SimpleTestCase):
     def test_validated_sqlite_migration_path_rejects_traversal(self) -> None:
         with self.assertRaises(ValueError):
             validated_sqlite_migration_path("../etc/passwd")
+
+    def test_validated_launch_port_rejects_invalid_values(self) -> None:
+        with self.assertRaises(ValueError):
+            validated_launch_port(0)
+        with self.assertRaises(ValueError):
+            validated_launch_port(70000)
+
+    def test_validated_subprocess_model_reference_rejects_shell_chars(self) -> None:
+        with self.assertRaises(ValueError):
+            validated_subprocess_model_reference("model;rm -rf /")
+        self.assertEqual(validated_subprocess_model_reference("llama-chat"), "llama-chat")

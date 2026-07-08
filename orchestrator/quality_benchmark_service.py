@@ -10,7 +10,14 @@ from typing import Any
 from django.utils import timezone
 
 from orchestrator.models import BenchmarkRun
-from orchestrator.security_utils import public_error_message, validated_benchmark_artifact_path
+from orchestrator.security_utils import (
+    build_validated_http_url,
+    public_error_message,
+    validated_benchmark_artifact_path,
+    validated_launch_port,
+    validate_benchmark_endpoint_host,
+    validate_outbound_http_host,
+)
 from orchestrator.vendor.lm_eval_runner import run_lm_eval
 from orchestrator.vendor.qualitybench import (
     run_platform_suites,
@@ -148,8 +155,12 @@ def _phase_errors(industry: dict[str, Any], platform: dict[str, Any]) -> list[st
 def execute_quality_benchmark(run: BenchmarkRun) -> None:
     """Run quality suites synchronously and persist results on the run."""
     params = run.params or {}
-    host = str(params["host"])
-    port = int(params["port"])
+    raw_host = str(params["host"])
+    if run.target_type == "ENDPOINT":
+        safe_host = validate_benchmark_endpoint_host(raw_host)
+    else:
+        safe_host = validate_outbound_http_host(raw_host)
+    safe_port = validated_launch_port(int(params["port"]))
     model = run.model_id or ""
     preset = str(params.get("quality_preset", "industry_lite"))
 
@@ -162,8 +173,8 @@ def execute_quality_benchmark(run: BenchmarkRun) -> None:
         run.save(update_fields=["status"])
 
         output_dir = _quality_output_dir(run.id)
-        industry = _run_industry_phase(host, port, model, output_dir, preset=preset)
-        platform = _run_platform_phase(host, port, model)
+        industry = _run_industry_phase(safe_host, safe_port, model, output_dir, preset=preset)
+        platform = _run_platform_phase(safe_host, safe_port, model)
         phase_errors = _phase_errors(industry, platform)
         phase_warnings = _phase_warnings(industry, platform)
 

@@ -153,6 +153,24 @@ def safe_positive_int(value: int, *, field_name: str = "id") -> int:
     return value
 
 
+def validated_launch_port(port: int) -> int:
+    """Validate a TCP port before subprocess or HTTP client use."""
+    if port < 1 or port > 65535:
+        raise ValueError("Port must be between 1 and 65535.")
+    return port
+
+
+def validated_subprocess_model_reference(model: str) -> str:
+    """Sanitize an OpenAI model id before embedding it in subprocess argv."""
+    cleaned = model.strip()
+    if not cleaned or len(cleaned) > 200:
+        raise ValueError("Invalid model id.")
+    forbidden = ("\n", "\r", "\0", ";", "&", "|", "`", "$", "\x00")
+    if any(character in cleaned for character in forbidden):
+        raise ValueError("Invalid model id.")
+    return cleaned
+
+
 def safe_path_under_root(root: Path, relative_name: str) -> Path:
     """Join a single relative segment and ensure the result stays under root."""
     if not relative_name or relative_name in {".", ".."}:
