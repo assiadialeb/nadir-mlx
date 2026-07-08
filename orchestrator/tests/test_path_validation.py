@@ -61,8 +61,20 @@ class PathValidationTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             coerce_model_path("/etc/passwd")
 
-    def test_validated_optional_model_filesystem_ref_accepts_folder_name(self) -> None:
+    def test_coerce_model_path_accepts_folder_under_models_root(self) -> None:
+        from orchestrator.model_utils import coerce_model_path
+
+        resolved = coerce_model_path("Kokoro-82M-6bit")
+        self.assertEqual(resolved, Path("/tmp/mlx-models/Kokoro-82M-6bit").resolve())
+
+    def test_validated_optional_model_filesystem_ref_rejects_traversal(self) -> None:
         from orchestrator.model_utils import validated_optional_model_filesystem_ref
 
         with self.assertRaises(ValueError):
             validated_optional_model_filesystem_ref("../secret")
+
+    def test_validated_optional_model_filesystem_ref_resolves_folder_name(self) -> None:
+        from orchestrator.model_utils import validated_optional_model_filesystem_ref
+
+        resolved = validated_optional_model_filesystem_ref("whisper-small-mlx")
+        self.assertEqual(resolved, str(Path("/tmp/mlx-models/whisper-small-mlx").resolve()))

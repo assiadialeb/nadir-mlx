@@ -59,6 +59,56 @@ def _is_upload_file(value: object) -> bool:
     return isinstance(value, (StarletteUploadFile,))
 
 
+async def _parse_multipart_payload(
+    form: Any,
+    target: GatewayTarget,
+) -> tuple[dict[str, str], dict[str, tuple[str | None, bytes, str | None]]]:
+    multipart_data: dict[str, str] = {}
+    multipart_files: dict[str, tuple[str | None, bytes, str | None]] = {}
+    for key, value in form.multi_items():
+        if key == "model":
+            multipart_data["model"] = target.upstream_model
+            continue
+        if _is_upload_file(value):
+            multipart_files[key] = (
+                value.filename,
+                await value.read(),
+                value.content_type,
+            )
+            continue
+        multipart_data[key] = str(value)
+    return multipart_data, multipart_files
+
+
+def _gateway_transport_error(exc: Exception) -> Response:
+    if isinstance(exc, UpstreamQueueTimeoutError):
+        return gateway_error(503, "upstream_queue_timeout", exc.message)
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
+    return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
+
+
+async def _upstream_stream_error_response(
+    response: httpx.Response,
+    client: httpx.AsyncClient,
+) -> Response:
+    error_body = await response.aread()
+    await response.aclose()
+    await client.aclose()
+    content_type = response.headers.get("content-type", CONTENT_TYPE_JSON)
+    if CONTENT_TYPE_JSON in content_type:
+        try:
+            payload = json.loads(error_body)
+        except json.JSONDecodeError:
+            payload = {"error": {"message": error_body.decode(), "type": "upstream_error"}}
+        return JSONResponse(status_code=response.status_code, content=payload)
+    return Response(
+        content=error_body,
+        status_code=response.status_code,
+        media_type=content_type,
+    )
+
+
 async def proxy_embeddings(body: dict[str, Any], headers: Any) -> Response:
     target = await resolve_target_from_body(body)
     validate_target_launch_mode(target, EMBEDDING_MODES, "embeddings")
@@ -104,21 +154,7 @@ async def _proxy_multipart_request(
     target = await resolve_target_from_model(str(model) if model is not None else "")
     validate_target_launch_mode(target, allowed_modes, endpoint_label)
 
-    multipart_data: dict[str, str] = {}
-    multipart_files: dict[str, tuple[str | None, bytes, str | None]] = {}
-    for key, value in form.multi_items():
-        if key == "model":
-            multipart_data["model"] = target.upstream_model
-            continue
-        if _is_upload_file(value):
-            multipart_files[key] = (
-                value.filename,
-                await value.read(),
-                value.content_type,
-            )
-            continue
-        multipart_data[key] = str(value)
-
+    multipart_data, multipart_files = await _parse_multipart_payload(form, target)
     timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, upstream_path)
     try:
@@ -161,20 +197,7 @@ async def _proxy_multipart_stream_request(
     target = await resolve_target_from_model(str(model) if model is not None else "")
     validate_target_launch_mode(target, allowed_modes, endpoint_label)
 
-    multipart_data: dict[str, str] = {}
-    multipart_files: dict[str, tuple[str | None, bytes, str | None]] = {}
-    for key, value in form.multi_items():
-        if key == "model":
-            multipart_data["model"] = target.upstream_model
-            continue
-        if _is_upload_file(value):
-            multipart_files[key] = (
-                value.filename,
-                await value.read(),
-                value.content_type,
-            )
-            continue
-        multipart_data[key] = str(value)
+    multipart_data, multipart_files = await _parse_multipart_payload(form, target)
 
     timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, upstream_path)
@@ -189,32 +212,12 @@ async def _proxy_multipart_stream_request(
                     files=multipart_files or None,
                 )
                 response = await client.send(upstream_request, stream=True)
-    except UpstreamQueueTimeoutError as exc:
+    except (UpstreamQueueTimeoutError, TimeoutError, httpx.TimeoutException, httpx.HTTPError) as exc:
         await client.aclose()
-        return gateway_error(503, "upstream_queue_timeout", exc.message)
-    except (TimeoutError, httpx.TimeoutException):
-        await client.aclose()
-        return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
-    except httpx.HTTPError:
-        await client.aclose()
-        return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
+        return _gateway_transport_error(exc)
 
     if response.status_code >= 400:
-        error_body = await response.aread()
-        await response.aclose()
-        await client.aclose()
-        content_type = response.headers.get("content-type", CONTENT_TYPE_JSON)
-        if CONTENT_TYPE_JSON in content_type:
-            try:
-                payload = json.loads(error_body)
-            except json.JSONDecodeError:
-                payload = {"error": {"message": error_body.decode(), "type": "upstream_error"}}
-            return JSONResponse(status_code=response.status_code, content=payload)
-        return Response(
-            content=error_body,
-            status_code=response.status_code,
-            media_type=content_type,
-        )
+        return await _upstream_stream_error_response(response, client)
 
     media_type = response.headers.get("content-type", "text/event-stream")
     passthrough = passthrough_response_headers(response.headers)

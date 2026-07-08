@@ -74,6 +74,55 @@ def _nadir_model_metadata(instance: InferenceInstance) -> dict[str, object]:
     }
 
 
+def _record_alias_status(
+    alias_status: dict[str, str],
+    instance: InferenceInstance,
+) -> None:
+    for alias in instance_gateway_aliases(instance):
+        alias_key = alias.casefold()
+        if alias_key not in alias_status:
+            alias_status[alias_key] = instance.status
+
+
+def _register_running_aliases(
+    running_targets: dict[str, GatewayTarget],
+    instance: InferenceInstance,
+) -> None:
+    if instance.status != "RUNNING":
+        return
+    try:
+        base_target = _gateway_target_from_instance(instance)
+    except GatewayRouteError:
+        return
+    for alias in instance_gateway_aliases(instance):
+        alias_key = alias.casefold()
+        if alias_key in running_targets:
+            continue
+        running_targets[alias_key] = replace(base_target, alias=alias)
+
+
+def _append_model_entry(
+    model_entries: list[dict[str, object]],
+    seen_model_aliases: set[str],
+    instance: InferenceInstance,
+    created_at: int,
+) -> None:
+    for alias in instance_gateway_aliases(instance):
+        alias_key = alias.casefold()
+        if alias_key in seen_model_aliases:
+            continue
+        seen_model_aliases.add(alias_key)
+        model_entries.append(
+            {
+                "id": alias,
+                "object": "model",
+                "created": created_at,
+                "owned_by": "nadir",
+                "metadata": _nadir_model_metadata(instance),
+            }
+        )
+
+
 def build_route_snapshot_from_db() -> RouteCacheSnapshot:
     """Load all gateway routing data from the database in one pass."""
     running_targets: dict[str, GatewayTarget] = {}
@@ -82,42 +131,13 @@ def build_route_snapshot_from_db() -> RouteCacheSnapshot:
     seen_model_aliases: set[str] = set()
     created_at = int(time.time())
 
-    for instance in InferenceInstance.objects.all().order_by("-created_at"):
-        aliases = instance_gateway_aliases(instance)
-        for alias in aliases:
-            alias_key = alias.casefold()
-            if alias_key not in alias_status:
-                alias_status[alias_key] = instance.status
+    instances = list(InferenceInstance.objects.all())
+    for instance in sorted(instances, key=lambda row: row.created_at, reverse=True):
+        _record_alias_status(alias_status, instance)
+        _register_running_aliases(running_targets, instance)
 
-        if instance.status != "RUNNING":
-            continue
-
-        try:
-            base_target = _gateway_target_from_instance(instance)
-        except GatewayRouteError:
-            continue
-
-        for alias in aliases:
-            alias_key = alias.casefold()
-            if alias_key in running_targets:
-                continue
-            running_targets[alias_key] = replace(base_target, alias=alias)
-
-    for instance in InferenceInstance.objects.all().order_by("model_name"):
-        for alias in instance_gateway_aliases(instance):
-            alias_key = alias.casefold()
-            if alias_key in seen_model_aliases:
-                continue
-            seen_model_aliases.add(alias_key)
-            model_entries.append(
-                {
-                    "id": alias,
-                    "object": "model",
-                    "created": created_at,
-                    "owned_by": "nadir",
-                    "metadata": _nadir_model_metadata(instance),
-                }
-            )
+    for instance in sorted(instances, key=lambda row: row.model_name):
+        _append_model_entry(model_entries, seen_model_aliases, instance, created_at)
 
     return RouteCacheSnapshot(
         built_at=time.monotonic(),

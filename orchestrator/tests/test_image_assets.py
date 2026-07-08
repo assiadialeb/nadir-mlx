@@ -65,3 +65,7 @@ class ImageAssetTests(SimpleTestCase):
     def test_is_valid_image_file_id_rejects_path_traversal(self) -> None:
         self.assertFalse(is_valid_image_file_id("../etc/passwd"))
         self.assertFalse(is_valid_image_file_id("not-hex"))
+
+    def test_resolve_image_png_path_returns_none_for_invalid_id(self) -> None:
+        self.assertIsNone(resolve_image_png_path("invalid"))
+        self.assertIsNone(resolve_image_png_path("a" * 31))

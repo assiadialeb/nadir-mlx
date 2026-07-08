@@ -67,35 +67,43 @@ def list_perf_profiles() -> list[dict[str, Any]]:
     return [item for item in profiles if isinstance(item, dict)]
 
 
+def _profile_matches_model(
+    folder_name: str,
+    launch_mode: str,
+    profile: dict[str, Any],
+    family_id: str,
+) -> bool:
+    if str(profile.get("launch_mode") or "") != launch_mode:
+        return False
+    profile_family = str(profile.get("family") or "").strip()
+    if profile_family and profile_family != family_id:
+        return False
+    return _pattern_matches(folder_name, profile)
+
+
+def _serialize_perf_profile(folder_name: str, profile: dict[str, Any]) -> dict[str, Any]:
+    server_config = dict(profile.get("server_config") or {})
+    advanced = dict(server_config.get("advanced") or {})
+    draft_model = _resolve_draft_model(folder_name, profile)
+    if draft_model:
+        advanced["draft_model"] = draft_model
+    if advanced:
+        server_config["advanced"] = advanced
+    return {
+        "id": str(profile.get("id") or ""),
+        "label": str(profile.get("label") or profile.get("id") or "Profile"),
+        "server_config": server_config,
+    }
+
+
 def resolve_perf_profiles_for_model(folder_name: str, launch_mode: str) -> list[dict[str, Any]]:
     """Return applicable perf profiles for a model folder and launch mode."""
     family_id = resolve_registry_family(folder_name)
-    resolved: list[dict[str, Any]] = []
-
-    for profile in list_perf_profiles():
-        if str(profile.get("launch_mode") or "") != launch_mode:
-            continue
-        profile_family = str(profile.get("family") or "").strip()
-        if profile_family and profile_family != family_id:
-            continue
-        if not _pattern_matches(folder_name, profile):
-            continue
-
-        server_config = dict(profile.get("server_config") or {})
-        advanced = dict(server_config.get("advanced") or {})
-        draft_model = _resolve_draft_model(folder_name, profile)
-        if draft_model:
-            advanced["draft_model"] = draft_model
-        if advanced:
-            server_config["advanced"] = advanced
-
-        resolved.append({
-            "id": str(profile.get("id") or ""),
-            "label": str(profile.get("label") or profile.get("id") or "Profile"),
-            "server_config": server_config,
-        })
-
-    return resolved
+    return [
+        _serialize_perf_profile(folder_name, profile)
+        for profile in list_perf_profiles()
+        if _profile_matches_model(folder_name, launch_mode, profile, family_id)
+    ]
 
 
 def build_perf_profiles_for_folders(folder_names: list[str]) -> dict[str, dict[str, list[dict[str, Any]]]]:

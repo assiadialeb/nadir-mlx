@@ -1,0 +1,4 @@
+name: nadir/nadir-sanitizers
+version: 0.0.1
+libraryPathDependencies:
+  - codeql/python-all

@@ -274,12 +274,12 @@ async def _create_stt_stream_response(
                 temperature=temperature,
                 payload_from_result=_transcription_payload_from_result,
             )
-        except Exception as exc:
+        except Exception:
             yield encode_sse_event(
                 "error",
                 {
                     "object": "stt.transcript.error",
-                    "message": public_error_message(exc, fallback="Transcription failed."),
+                    "message": "Transcription failed.",
                 },
             )
 
