@@ -86,6 +86,7 @@ nav:
           - Gemma 4 MTP: usage/gateway-runbooks/gemma4-mtp.md
           - Embeddings: usage/gateway-runbooks/embedding.md
           - Reranker: usage/gateway-runbooks/reranker.md
+          - Local RAG playbook: usage/gateway-runbooks/rag.md
           - Image generation: usage/gateway-runbooks/image.md
           - Text-to-speech: usage/gateway-runbooks/tts.md
           - Speech-to-text: usage/gateway-runbooks/stt.md

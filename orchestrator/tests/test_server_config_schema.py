@@ -2,6 +2,7 @@
 
 import json
 from unittest import TestCase
+from unittest.mock import patch
 
 from orchestrator.server_config_schema import (
     _default_bind_host,
@@ -132,3 +133,39 @@ class ServerConfigSchemaTests(TestCase):
         payload = json.loads(config_fields_for_ui_json())
         text_fields = {field["name"]: field for field in payload["TEXT"]}
         self.assertEqual(text_fields["lifecycle_mode"]["section"], "ops")
+
+    def test_validate_rejects_invalid_draft_kind_enum(self) -> None:
+        with self.assertRaisesRegex(ValueError, "advanced.draft_kind"):
+            validate_and_normalize_server_config(
+                "MULTIMODAL",
+                {"advanced": {"draft_kind": "invalid-kind"}},
+                "gemma-4-e2b",
+            )
+
+    def test_validate_rejects_num_draft_tokens_out_of_range(self) -> None:
+        with self.assertRaisesRegex(ValueError, "advanced.num_draft_tokens"):
+            validate_and_normalize_server_config(
+                "TEXT",
+                {"advanced": {"num_draft_tokens": 99}},
+                "llama-text",
+            )
+
+    def test_advanced_schema_for_ui_json_includes_version(self) -> None:
+        from orchestrator.server_config_schema import advanced_schema_for_ui_json
+
+        payload = json.loads(advanced_schema_for_ui_json())
+        self.assertEqual(payload["version"], 1)
+        self.assertIn("draft_kind", payload["fields"])
+
+    def test_text_mtp_preview_extends_whitelist(self) -> None:
+        from orchestrator.server_config_schema import advanced_whitelist_for_mode
+
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("NADIR_TEXT_MTP_PREVIEW", None)
+            base_keys = advanced_whitelist_for_mode("TEXT")
+            self.assertNotIn("draft_kind", base_keys)
+        with patch.dict("os.environ", {"NADIR_TEXT_MTP_PREVIEW": "1"}):
+            preview_keys = advanced_whitelist_for_mode("TEXT")
+            self.assertIn("draft_kind", preview_keys)

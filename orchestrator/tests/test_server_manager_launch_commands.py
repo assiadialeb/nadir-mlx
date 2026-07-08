@@ -112,3 +112,23 @@ class ServerManagerLaunchCommandTests(SimpleTestCase):
             "flag-d": {"k": "v"},
         })
         self.assertEqual(command, ["python", "--flag-c", "--flag-d", '{"k": "v"}'])
+
+    @patch.dict("os.environ", {"NADIR_TEXT_MTP_PREVIEW": "1"})
+    def test_text_launch_command_includes_draft_kind_when_preview_enabled(self) -> None:
+        command = _build_launch_command(
+            "/tmp/llama",
+            11405,
+            "TEXT",
+            {
+                "host": "127.0.0.1",
+                "advanced": {
+                    "draft_kind": "mtp",
+                    "draft_block_size": 4,
+                    "draft_model": "assistant-model",
+                },
+            },
+            "llama-model",
+        )
+        self.assertIn("--draft-kind", command)
+        self.assertIn("mtp", command)
+        self.assertIn("--draft-block-size", command)

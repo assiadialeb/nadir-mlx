@@ -13,7 +13,11 @@ from django.utils import timezone
 
 from .gateway_aliases import validate_gateway_alias_unique
 from .models import InferenceInstance
-from .server_config_schema import build_default_server_config, validate_and_normalize_server_config
+from .server_config_schema import (
+    build_default_server_config,
+    text_mtp_preview_enabled,
+    validate_and_normalize_server_config,
+)
 from .model_utils import (
     is_model_complete,
     prepare_model_for_multimodal_inference,
@@ -502,6 +506,11 @@ def _build_launch_command(
         "top-k": advanced.get("top_k"),
         "min-p": advanced.get("min_p"),
     })
+    if text_mtp_preview_enabled():
+        _append_cli_args(command, {
+            "draft-kind": advanced.get("draft_kind"),
+            "draft-block-size": advanced.get("draft_block_size"),
+        })
     return command
 
 

@@ -259,6 +259,176 @@ ADVANCED_WHITELIST: dict[str, frozenset[str]] = {
     "STT": frozenset(),
 }
 
+TEXT_MTP_PREVIEW_KEYS = frozenset({"draft_kind", "draft_block_size"})
+
+AdvancedValueType = Literal["string", "int", "float", "bool", "object", "enum"]
+
+
+@dataclass(frozen=True)
+class AdvancedFieldSpec:
+    """Lite JSON Schema rules for server_config.advanced keys."""
+
+    value_type: AdvancedValueType
+    modes: frozenset[str]
+    choices: frozenset[str | int] = frozenset()
+    min_value: int | float | None = None
+    max_value: int | float | None = None
+
+
+ADVANCED_FIELD_SPECS: dict[str, AdvancedFieldSpec] = {
+    "draft_kind": AdvancedFieldSpec(
+        value_type="enum",
+        modes=frozenset({"MULTIMODAL"}),
+        choices=frozenset({"dflash", "eagle3", "mtp"}),
+    ),
+    "draft_block_size": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"MULTIMODAL"}),
+        min_value=1,
+        max_value=256,
+    ),
+    "num_draft_tokens": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"TEXT"}),
+        min_value=1,
+        max_value=16,
+    ),
+    "kv_bits": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"MULTIMODAL"}),
+        choices=frozenset({4, 8}),
+    ),
+    "kv_group_size": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"MULTIMODAL"}),
+        min_value=1,
+        max_value=128,
+    ),
+    "enable_thinking": AdvancedFieldSpec(
+        value_type="bool",
+        modes=frozenset({"MULTIMODAL"}),
+    ),
+    "thinking_budget": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"MULTIMODAL"}),
+        min_value=1,
+        max_value=32_768,
+    ),
+    "quantize_override": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"IMAGE"}),
+        choices=frozenset({4, 8, 16}),
+    ),
+    "response_format": AdvancedFieldSpec(
+        value_type="enum",
+        modes=frozenset({"TTS"}),
+        choices=frozenset({"wav", "mp3", "opus", "flac", "pcm"}),
+    ),
+    "temp": AdvancedFieldSpec(
+        value_type="float",
+        modes=frozenset({"TEXT"}),
+        min_value=0.0,
+        max_value=2.0,
+    ),
+    "top_p": AdvancedFieldSpec(
+        value_type="float",
+        modes=frozenset({"TEXT"}),
+        min_value=0.0,
+        max_value=1.0,
+    ),
+    "top_k": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"TEXT"}),
+        min_value=0,
+        max_value=200,
+    ),
+    "min_p": AdvancedFieldSpec(
+        value_type="float",
+        modes=frozenset({"TEXT"}),
+        min_value=0.0,
+        max_value=1.0,
+    ),
+    "chat_template_args": AdvancedFieldSpec(
+        value_type="object",
+        modes=frozenset({"TEXT"}),
+    ),
+}
+
+
+def text_mtp_preview_enabled() -> bool:
+    """Gate TEXT MTP keys until mlx-lm ships --draft-kind (MLX-67)."""
+    import os
+
+    return os.environ.get("NADIR_TEXT_MTP_PREVIEW", "").strip() == "1"
+
+
+def advanced_whitelist_for_mode(launch_mode: str) -> frozenset[str]:
+    allowed = set(ADVANCED_WHITELIST.get(launch_mode, frozenset()))
+    if launch_mode == "TEXT" and text_mtp_preview_enabled():
+        allowed.update(TEXT_MTP_PREVIEW_KEYS)
+    return frozenset(allowed)
+
+
+def _validate_advanced_value(key: str, value: Any, launch_mode: str) -> Any:
+    spec = ADVANCED_FIELD_SPECS.get(key)
+    if spec is None:
+        if isinstance(value, (str, int, float, bool, dict, list)):
+            return value
+        raise ValueError(f"advanced.{key}: unsupported value type.")
+
+    applicable_modes = set(spec.modes)
+    if text_mtp_preview_enabled() and key in TEXT_MTP_PREVIEW_KEYS:
+        applicable_modes.add("TEXT")
+    if launch_mode not in applicable_modes:
+        return value
+
+    if spec.value_type == "object":
+        if not isinstance(value, dict):
+            raise ValueError(f"advanced.{key}: must be a JSON object.")
+        return value
+
+    if spec.value_type == "bool":
+        if isinstance(value, bool):
+            return value
+        if str(value).lower() in ("1", "true", "on", "yes"):
+            return True
+        if str(value).lower() in ("0", "false", "off", "no"):
+            return False
+        raise ValueError(f"advanced.{key}: must be a boolean.")
+
+    if spec.value_type == "enum":
+        normalized = str(value).strip()
+        if spec.choices and normalized not in {str(choice) for choice in spec.choices}:
+            allowed = ", ".join(str(choice) for choice in sorted(spec.choices))
+            raise ValueError(f"advanced.{key}: must be one of: {allowed}.")
+        if not spec.choices:
+            raise ValueError(f"advanced.{key}: invalid enum configuration.")
+        return normalized
+
+    if spec.value_type == "int":
+        number = int(value) if not isinstance(value, bool) else int(str(value))
+        if spec.choices and number not in spec.choices:
+            allowed = ", ".join(str(choice) for choice in sorted(spec.choices))
+            raise ValueError(f"advanced.{key}: must be one of: {allowed}.")
+        if spec.min_value is not None and number < spec.min_value:
+            raise ValueError(f"advanced.{key}: minimum {spec.min_value}.")
+        if spec.max_value is not None and number > spec.max_value:
+            raise ValueError(f"advanced.{key}: maximum {spec.max_value}.")
+        return number
+
+    if spec.value_type == "float":
+        number = float(value)
+        if spec.min_value is not None and number < spec.min_value:
+            raise ValueError(f"advanced.{key}: minimum {spec.min_value}.")
+        if spec.max_value is not None and number > spec.max_value:
+            raise ValueError(f"advanced.{key}: maximum {spec.max_value}.")
+        return number
+
+    if not isinstance(value, str) or not str(value).strip():
+        raise ValueError(f"advanced.{key}: must be a non-empty string.")
+    return str(value).strip()
+
+
 ALL_FIELD_SPECS: tuple[ConfigFieldSpec, ...] = COMMON_FIELDS + MODE_FIELDS
 OPS_FIELD_NAMES: frozenset[str] = frozenset(field.name for field in OPS_FIELDS)
 
@@ -388,7 +558,7 @@ def _validate_advanced(launch_mode: str, advanced: Any) -> dict[str, Any]:
     if not isinstance(advanced, dict):
         raise ValueError("The advanced section must be a JSON object.")
 
-    allowed = ADVANCED_WHITELIST.get(launch_mode, frozenset())
+    allowed = advanced_whitelist_for_mode(launch_mode)
     unknown = set(advanced.keys()) - allowed
     if unknown:
         labels = ", ".join(sorted(unknown))
@@ -398,7 +568,7 @@ def _validate_advanced(launch_mode: str, advanced: Any) -> dict[str, Any]:
     for key, value in advanced.items():
         if value is None:
             continue
-        normalized[key] = value
+        normalized[key] = _validate_advanced_value(key, value, launch_mode)
     return normalized
 
 
@@ -507,4 +677,26 @@ def config_fields_for_ui_json() -> str:
 
 
 def advanced_keys_for_ui_json() -> str:
-    return json.dumps({mode: sorted(keys) for mode, keys in ADVANCED_WHITELIST.items()})
+    return json.dumps(
+        {mode: sorted(advanced_whitelist_for_mode(mode)) for mode in ALL_LAUNCH_MODES},
+    )
+
+
+def advanced_schema_for_ui_json() -> str:
+    """Versioned lite schema for Advanced JSON editor hints (MLX-87)."""
+    payload: dict[str, dict[str, Any]] = {}
+    for key, spec in ADVANCED_FIELD_SPECS.items():
+        entry: dict[str, Any] = {
+            "type": spec.value_type,
+            "modes": sorted(spec.modes),
+        }
+        if text_mtp_preview_enabled() and key in TEXT_MTP_PREVIEW_KEYS:
+            entry["modes"] = sorted(set(entry["modes"]) | {"TEXT"})
+        if spec.choices:
+            entry["choices"] = sorted(spec.choices)
+        if spec.min_value is not None:
+            entry["min"] = spec.min_value
+        if spec.max_value is not None:
+            entry["max"] = spec.max_value
+        payload[key] = entry
+    return json.dumps({"version": 1, "fields": payload})
