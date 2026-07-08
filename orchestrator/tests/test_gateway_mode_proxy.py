@@ -439,6 +439,30 @@ class GatewayModeProxyTests(SimpleTestCase):
             "http://127.0.0.1:11445/v1/audio/transcriptions/stream",
         )
 
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready")
+    @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
+    def test_audio_transcriptions_stream_returns_upstream_error_json(
+        self,
+        mock_client_cls: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = STT_TARGET
+        upstream = MagicMock()
+        upstream.status_code = 503
+        upstream.headers = httpx.Headers({"content-type": "application/json"})
+        upstream.aread = AsyncMock(return_value=b'{"error":"busy"}')
+        upstream.aclose = AsyncMock()
+        _mock_streaming_client(mock_client_cls, upstream)
+
+        response = self.client.post(
+            "/v1/audio/transcriptions/stream",
+            files={"file": ("sample.wav", b"RIFF", "audio/wav")},
+            data={"model": "whispers"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"], "busy")
+
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TTS_TARGET)
     def test_audio_transcriptions_rejects_tts_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(

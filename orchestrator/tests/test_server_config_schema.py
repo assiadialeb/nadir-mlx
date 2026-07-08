@@ -150,6 +150,22 @@ class ServerConfigSchemaTests(TestCase):
                 "gemma-4-e2b",
             )
 
+    def test_validate_advanced_bool_accepts_string_literals(self) -> None:
+        config = validate_and_normalize_server_config(
+            "MULTIMODAL",
+            {"advanced": {"enable_thinking": "true"}},
+            "gemma-vlm",
+        )
+        self.assertTrue(config["advanced"]["enable_thinking"])
+
+    def test_validate_advanced_float_rejects_out_of_range(self) -> None:
+        with self.assertRaisesRegex(ValueError, "advanced.temp"):
+            validate_and_normalize_server_config(
+                "TEXT",
+                {"advanced": {"temp": 99.0}},
+                "llama-text",
+            )
+
     def test_validate_rejects_num_draft_tokens_out_of_range(self) -> None:
         with self.assertRaisesRegex(ValueError, "advanced.num_draft_tokens"):
             validate_and_normalize_server_config(

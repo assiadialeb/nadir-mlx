@@ -381,6 +381,48 @@ def advanced_whitelist_for_mode(launch_mode: str) -> frozenset[str]:
     return frozenset(allowed)
 
 
+def _validate_advanced_bool(key: str, value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    lowered = str(value).lower()
+    if lowered in ("1", "true", "on", "yes"):
+        return True
+    if lowered in ("0", "false", "off", "no"):
+        return False
+    raise ValueError(f"advanced.{key}: must be a boolean.")
+
+
+def _validate_advanced_enum(key: str, value: Any, spec: AdvancedFieldSpec) -> str:
+    normalized = str(value).strip()
+    if spec.choices and normalized not in {str(choice) for choice in spec.choices}:
+        allowed = ", ".join(str(choice) for choice in sorted(spec.choices))
+        raise ValueError(f"advanced.{key}: must be one of: {allowed}.")
+    if not spec.choices:
+        raise ValueError(f"advanced.{key}: invalid enum configuration.")
+    return normalized
+
+
+def _validate_advanced_int(key: str, value: Any, spec: AdvancedFieldSpec) -> int:
+    number = int(value) if not isinstance(value, bool) else int(str(value))
+    if spec.choices and number not in spec.choices:
+        allowed = ", ".join(str(choice) for choice in sorted(spec.choices))
+        raise ValueError(f"advanced.{key}: must be one of: {allowed}.")
+    if spec.min_value is not None and number < spec.min_value:
+        raise ValueError(f"advanced.{key}: minimum {spec.min_value}.")
+    if spec.max_value is not None and number > spec.max_value:
+        raise ValueError(f"advanced.{key}: maximum {spec.max_value}.")
+    return number
+
+
+def _validate_advanced_float(key: str, value: Any, spec: AdvancedFieldSpec) -> float:
+    number = float(value)
+    if spec.min_value is not None and number < spec.min_value:
+        raise ValueError(f"advanced.{key}: minimum {spec.min_value}.")
+    if spec.max_value is not None and number > spec.max_value:
+        raise ValueError(f"advanced.{key}: maximum {spec.max_value}.")
+    return number
+
+
 def _validate_advanced_value(key: str, value: Any, launch_mode: str) -> Any:
     spec = ADVANCED_FIELD_SPECS.get(key)
     if spec is None:
@@ -400,41 +442,16 @@ def _validate_advanced_value(key: str, value: Any, launch_mode: str) -> Any:
         return value
 
     if spec.value_type == "bool":
-        if isinstance(value, bool):
-            return value
-        if str(value).lower() in ("1", "true", "on", "yes"):
-            return True
-        if str(value).lower() in ("0", "false", "off", "no"):
-            return False
-        raise ValueError(f"advanced.{key}: must be a boolean.")
+        return _validate_advanced_bool(key, value)
 
     if spec.value_type == "enum":
-        normalized = str(value).strip()
-        if spec.choices and normalized not in {str(choice) for choice in spec.choices}:
-            allowed = ", ".join(str(choice) for choice in sorted(spec.choices))
-            raise ValueError(f"advanced.{key}: must be one of: {allowed}.")
-        if not spec.choices:
-            raise ValueError(f"advanced.{key}: invalid enum configuration.")
-        return normalized
+        return _validate_advanced_enum(key, value, spec)
 
     if spec.value_type == "int":
-        number = int(value) if not isinstance(value, bool) else int(str(value))
-        if spec.choices and number not in spec.choices:
-            allowed = ", ".join(str(choice) for choice in sorted(spec.choices))
-            raise ValueError(f"advanced.{key}: must be one of: {allowed}.")
-        if spec.min_value is not None and number < spec.min_value:
-            raise ValueError(f"advanced.{key}: minimum {spec.min_value}.")
-        if spec.max_value is not None and number > spec.max_value:
-            raise ValueError(f"advanced.{key}: maximum {spec.max_value}.")
-        return number
+        return _validate_advanced_int(key, value, spec)
 
     if spec.value_type == "float":
-        number = float(value)
-        if spec.min_value is not None and number < spec.min_value:
-            raise ValueError(f"advanced.{key}: minimum {spec.min_value}.")
-        if spec.max_value is not None and number > spec.max_value:
-            raise ValueError(f"advanced.{key}: maximum {spec.max_value}.")
-        return number
+        return _validate_advanced_float(key, value, spec)
 
     if not isinstance(value, str) or not str(value).strip():
         raise ValueError(f"advanced.{key}: must be a non-empty string.")

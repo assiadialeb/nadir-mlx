@@ -475,18 +475,10 @@ def find_comparison_candidates(
     return pairs
 
 
-def find_draft_ab_pairs(
-    queryset: QuerySet[BenchmarkRun],
-    *,
-    preset_key: str | None = None,
-    max_pairs: int = 12,
-) -> list[tuple[BenchmarkRun, BenchmarkRun]]:
-    """Pair completed INSTANCE runs on the same slot with different draft profiles."""
-    completed = list(
-        queryset.filter(status="COMPLETED", target_type="INSTANCE")
-        .select_related("instance")
-        .order_by("-completed_at")
-    )
+def _draft_ab_buckets(
+    completed: list[BenchmarkRun],
+    preset_key: str | None,
+) -> dict[tuple[str, int], dict[str, BenchmarkRun]]:
     buckets: dict[tuple[str, int], dict[str, BenchmarkRun]] = {}
     for run in completed:
         if not run.instance_id:
@@ -497,10 +489,16 @@ def find_draft_ab_pairs(
         draft_key = draft_profile_key(run.params)
         group_key = (preset, run.instance_id)
         group = buckets.setdefault(group_key, {})
-        existing = group.get(draft_key)
-        if existing is None:
+        if group.get(draft_key) is None:
             group[draft_key] = run
+    return buckets
 
+
+def _collect_draft_ab_pairs(
+    buckets: dict[tuple[str, int], dict[str, BenchmarkRun]],
+    *,
+    max_pairs: int,
+) -> list[tuple[BenchmarkRun, BenchmarkRun]]:
     pairs: list[tuple[BenchmarkRun, BenchmarkRun]] = []
     seen_ids: set[tuple[int, int]] = set()
     for group in buckets.values():
@@ -519,6 +517,22 @@ def find_draft_ab_pairs(
                 if len(pairs) >= max_pairs:
                     return pairs
     return pairs
+
+
+def find_draft_ab_pairs(
+    queryset: QuerySet[BenchmarkRun],
+    *,
+    preset_key: str | None = None,
+    max_pairs: int = 12,
+) -> list[tuple[BenchmarkRun, BenchmarkRun]]:
+    """Pair completed INSTANCE runs on the same slot with different draft profiles."""
+    completed = list(
+        queryset.filter(status="COMPLETED", target_type="INSTANCE")
+        .select_related("instance")
+        .order_by("-completed_at")
+    )
+    buckets = _draft_ab_buckets(completed, preset_key)
+    return _collect_draft_ab_pairs(buckets, max_pairs=max_pairs)
 
 
 def runs_for_chart_filters(filters: dict[str, Any], *, limit: int = 50) -> list[BenchmarkRun]:

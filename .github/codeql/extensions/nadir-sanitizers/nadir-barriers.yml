@@ -1,0 +1,23 @@
+extensions:
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["orchestrator.security_utils", "Function[assert_path_under_directory].ReturnValue", "path-injection"]
+      - ["orchestrator.security_utils", "Function[safe_path_under_root].ReturnValue", "path-injection"]
+      - ["orchestrator.security_utils", "Function[validated_benchmark_artifact_path].ReturnValue", "path-injection"]
+      - ["orchestrator.security_utils", "Function[validated_sqlite_migration_path].ReturnValue", "path-injection"]
+      - ["orchestrator.security_utils", "Function[build_validated_http_url].ReturnValue", "full-ssrf"]
+      - ["orchestrator.security_utils", "Function[validate_outbound_http_host].ReturnValue", "full-ssrf"]
+      - ["orchestrator.security_utils", "Function[validate_benchmark_endpoint_host].ReturnValue", "full-ssrf"]
+      - ["orchestrator.security_utils", "Function[validate_server_bind_host].ReturnValue", "full-ssrf"]
+      - ["orchestrator.security_utils", "Function[validated_launch_port].ReturnValue", "command-line-injection"]
+      - ["orchestrator.security_utils", "Function[validated_subprocess_model_reference].ReturnValue", "command-line-injection"]
+      - ["orchestrator.security_utils", "Function[public_error_message].ReturnValue", "stack-trace-exposure"]
+      - ["orchestrator.model_utils", "Function[validate_model_folder_name].ReturnValue", "path-injection"]
+      - ["orchestrator.model_utils", "Function[resolve_model_dir].ReturnValue", "path-injection"]
+      - ["orchestrator.model_utils", "Function[coerce_model_path].ReturnValue", "path-injection"]
+      - ["orchestrator.model_utils", "Function[validated_optional_model_filesystem_ref].ReturnValue", "path-injection"]
+      - ["orchestrator.model_utils", "Function[resolve_log_file_path].ReturnValue", "path-injection"]
+      - ["orchestrator.model_utils", "Function[get_model_path].ReturnValue", "path-injection"]
+      - ["orchestrator.image_assets", "Function[resolve_image_png_path].ReturnValue", "path-injection"]
