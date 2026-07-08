@@ -19,7 +19,11 @@ from orchestrator.kokoro_voices import (
     KOKORO_LANG_CODES,
     KOKORO_VOICES,
 )
-from orchestrator.gateway_aliases import normalize_gateway_alias, validate_gateway_alias_format
+from orchestrator.gateway_aliases import (
+    normalize_gateway_alias,
+    normalize_gateway_aliases_list,
+    validate_gateway_alias_format,
+)
 from orchestrator.model_registry import apply_registry_server_defaults
 from orchestrator.mtp_draft_validation import validate_mtp_draft_advanced
 
@@ -74,6 +78,14 @@ COMMON_FIELDS: tuple[ConfigFieldSpec, ...] = (
         modes=("TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"),
         placeholder="Prefilled from model folder name",
         help_text="Value sent in the OpenAI `model` field.",
+    ),
+    ConfigFieldSpec(
+        name="gateway_aliases",
+        label="Extra gateway aliases",
+        widget="text",
+        modes=ALL_LAUNCH_MODES,
+        placeholder="dev-alias, prod-alias",
+        help_text="Optional comma-separated aliases that route to this instance.",
     ),
 )
 
@@ -598,6 +610,10 @@ def validate_and_normalize_server_config(
     else:
         normalized["model_id"] = normalize_gateway_alias(str(normalized["model_id"]))
     validate_gateway_alias_format(str(normalized["model_id"]))
+    normalized["gateway_aliases"] = normalize_gateway_aliases_list(
+        normalized.get("gateway_aliases"),
+        primary_alias=str(normalized["model_id"]),
+    )
 
     normalized["advanced"] = _validate_advanced(launch_mode, advanced_raw)
     validate_mtp_draft_advanced(launch_mode, normalized["advanced"])

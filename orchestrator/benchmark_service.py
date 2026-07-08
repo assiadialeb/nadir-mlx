@@ -14,6 +14,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
+from .benchmark_selectors import draft_profile_from_server_config
 from .gateway_aliases import instance_gateway_alias
 from .models import BenchmarkRun, InferenceInstance
 from .quality_benchmark_service import execute_quality_benchmark
@@ -352,6 +353,10 @@ def start_benchmark(
         "host": resolved_host,
         "port": resolved_port,
     }
+    if instance is not None:
+        full_params["draft_profile"] = draft_profile_from_server_config(
+            instance.server_config or {},
+        )
     endpoint_url = f"http://{resolved_host}:{resolved_port}"
     resolved_model_id = resolve_benchmark_model_id(
         resolved_host,

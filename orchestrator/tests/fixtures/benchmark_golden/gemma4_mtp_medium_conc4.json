@@ -1,0 +1,9 @@
+{
+  "scenario": "medium_conc4",
+  "tolerance_percent": 15,
+  "metrics": {
+    "aggregate_tps": 180.0,
+    "ttft_p50_ms": 120.5,
+    "latency_p50_ms": 800.0
+  }
+}

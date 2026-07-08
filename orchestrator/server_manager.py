@@ -11,7 +11,9 @@ from typing import Any, Literal, Optional
 from django.conf import settings
 from django.utils import timezone
 
-from .gateway_aliases import validate_gateway_alias_unique
+from orchestrator.gateway.route_cache import clear_gateway_route_cache
+
+from .gateway_aliases import validate_instance_gateway_aliases
 from .models import InferenceInstance
 from .server_config_schema import (
     build_default_server_config,
@@ -319,8 +321,9 @@ def _resolve_server_config(
         server_config or build_default_server_config(launch_mode),
         model_name,
     )
-    validate_gateway_alias_unique(
-        _config_model_id(normalized, model_name),
+    validate_instance_gateway_aliases(
+        normalized,
+        model_name,
         exclude_instance_id=exclude_instance_id,
     )
     return normalized
@@ -675,6 +678,7 @@ def start_instance(
 
         instance.status = "RUNNING"
         instance.save(update_fields=["status"])
+        clear_gateway_route_cache()
         return instance
     except Exception:
         if instance.status != "FAILED":
@@ -874,6 +878,7 @@ def update_stopped_instance(
     instance.launch_mode = new_mode
     instance.server_config = new_config
     instance.save(update_fields=["port", "launch_mode", "server_config"])
+    clear_gateway_route_cache()
     return instance
 
 

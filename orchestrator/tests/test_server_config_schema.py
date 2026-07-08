@@ -103,6 +103,14 @@ class ServerConfigSchemaTests(TestCase):
         self.assertEqual(config["advanced"]["draft_kind"], "mtp")
         self.assertTrue(config["advanced"]["enable_thinking"])
 
+    def test_validate_normalizes_gateway_aliases_list(self) -> None:
+        config = validate_and_normalize_server_config(
+            "TEXT",
+            {"model_id": "primary-chat", "gateway_aliases": "dev-chat, prod-chat"},
+            "folder-name",
+        )
+        self.assertEqual(config["gateway_aliases"], ["dev-chat", "prod-chat"])
+
     def test_validate_image_quantize_override_advanced(self) -> None:
         config = validate_and_normalize_server_config(
             "IMAGE",
