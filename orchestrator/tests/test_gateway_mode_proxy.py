@@ -401,6 +401,44 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(file_field[1], b"RIFFtestdata")
         self.assertEqual(call_kwargs["data"]["model"], "whispers")
 
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready")
+    @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
+    def test_audio_transcriptions_stream_relays_sse(
+        self,
+        mock_client_cls: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = STT_TARGET
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.headers = httpx.Headers({"content-type": "text/event-stream"})
+
+        async def _aiter_bytes() -> AsyncIterator[bytes]:
+            yield b"event: transcript\ndata: {\"text\":\"hi\"}\n\n"
+            yield b"event: done\ndata: {}\n\n"
+
+        upstream.aiter_bytes = _aiter_bytes
+        upstream.aread = AsyncMock(return_value=b"")
+        upstream.aclose = AsyncMock()
+        mock_client = _mock_streaming_client(mock_client_cls, upstream)
+
+        response = self.client.post(
+            "/v1/audio/transcriptions/stream",
+            files={"file": ("sample.wav", b"RIFFtestdata", "audio/wav")},
+            data={"model": "whispers"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"event: transcript", response.content)
+        self.assertIn(b"event: done", response.content)
+        self.assertEqual(response.headers.get("content-type"), "text/event-stream")
+        mock_client.send.assert_awaited_once()
+        request = mock_client.build_request.call_args
+        self.assertEqual(
+            request.args[1],
+            "http://127.0.0.1:11445/v1/audio/transcriptions/stream",
+        )
+
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TTS_TARGET)
     def test_audio_transcriptions_rejects_tts_instance(self, _mock_resolve: MagicMock) -> None:
         response = self.client.post(

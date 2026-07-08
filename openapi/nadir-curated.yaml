@@ -203,6 +203,36 @@ paths:
         "503":
           $ref: "#/components/responses/UnavailableError"
 
+  /v1/audio/transcriptions/stream:
+    post:
+      operationId: createTranscriptionStream
+      summary: Speech-to-text streaming (SSE)
+      description: |
+        Multipart upload with partial transcript events over Server-Sent Events.
+        Not OpenAI Realtime WebSocket — custom `transcript` and `done` event types.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AudioTranscriptionStreamRequest"
+      responses:
+        "200":
+          description: SSE transcript stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Frames: `event: transcript` with JSON delta/completed payloads,
+                  then `event: done`.
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          $ref: "#/components/responses/UnavailableError"
+
   /v1/audio/translations:
     post:
       operationId: createTranslation
@@ -570,6 +600,27 @@ components:
           format: binary
         response_format:
           type: string
+      additionalProperties: true
+
+    AudioTranscriptionStreamRequest:
+      type: object
+      required: [model, file]
+      properties:
+        model:
+          type: string
+        file:
+          type: string
+          format: binary
+        language:
+          type: string
+        chunk_duration:
+          type: number
+        word_timestamps:
+          type: boolean
+        prompt:
+          type: string
+        temperature:
+          type: number
       additionalProperties: true
 
     TranscriptionResponse:

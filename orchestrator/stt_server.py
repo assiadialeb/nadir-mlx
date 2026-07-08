@@ -12,12 +12,18 @@ from typing import Annotated, Any, Optional
 import numpy as np
 import uvicorn
 from fastapi import Depends, FastAPI, File, Form, UploadFile
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from orchestrator.fastapi_openapi import OPENAPI_INFERENCE_ERRORS, InferenceApiError, to_http_exception
 from orchestrator.inference_auth import require_inference_api_key
 from orchestrator.security_utils import public_error_message
+from orchestrator.stt_streaming import (
+    SSE_MEDIA_TYPE,
+    build_generate_kwargs,
+    encode_sse_event,
+    iter_transcription_sse,
+)
 from orchestrator.stt_response_formats import (
     SttFormatError,
     normalize_stt_response_format,
@@ -145,19 +151,15 @@ def _run_transcription(
     prompt: Optional[str],
     temperature: Optional[float],
 ) -> dict[str, Any]:
-    generate_kwargs: dict[str, object] = {
-        "chunk_duration": effective_chunk,
-        "stream": False,
-        "task": task,
-        "word_timestamps": word_timestamps,
-        "return_timestamps": True,
-    }
-    if effective_language:
-        generate_kwargs["language"] = effective_language
-    if prompt:
-        generate_kwargs["initial_prompt"] = prompt
-    if temperature is not None:
-        generate_kwargs["temperature"] = temperature
+    generate_kwargs = build_generate_kwargs(
+        task=task,
+        effective_language=effective_language,
+        effective_chunk=effective_chunk,
+        word_timestamps=word_timestamps,
+        prompt=prompt,
+        temperature=temperature,
+        stream=False,
+    )
 
     result = stt_model.generate(waveform, **generate_kwargs)
     return _transcription_payload_from_result(result, task=task)
@@ -227,6 +229,63 @@ async def _create_stt_response(
     return _build_stt_response(payload, normalized_format)
 
 
+async def _create_stt_stream_response(
+    *,
+    file: UploadFile,
+    task: str,
+    language: Optional[str],
+    chunk_duration: Optional[float],
+    word_timestamps: bool,
+    prompt: Optional[str],
+    temperature: Optional[float],
+) -> StreamingResponse:
+    stt_model = _state.get("model")
+    if stt_model is None:
+        raise InferenceApiError(503, "STT model not loaded.")
+
+    defaults = _defaults()
+    effective_language = language or defaults.language
+    effective_chunk = chunk_duration if chunk_duration is not None else defaults.chunk_duration
+
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise InferenceApiError(400, "Empty audio file.")
+
+    try:
+        waveform = _decode_uploaded_audio(audio_bytes)
+    except InferenceApiError:
+        raise
+    except Exception as exc:
+        raise InferenceApiError(
+            500,
+            public_error_message(exc, fallback="Audio decode failed."),
+        ) from exc
+
+    def event_stream():
+        try:
+            yield from iter_transcription_sse(
+                stt_model,
+                waveform,
+                task=task,
+                effective_language=effective_language,
+                effective_chunk=effective_chunk,
+                word_timestamps=word_timestamps,
+                prompt=prompt,
+                temperature=temperature,
+                payload_from_result=_transcription_payload_from_result,
+            )
+        except Exception as exc:
+            yield encode_sse_event(
+                "error",
+                {
+                    "object": "stt.transcript.error",
+                    "message": public_error_message(exc, fallback="Transcription failed."),
+                },
+            )
+
+    return StreamingResponse(event_stream(), media_type=SSE_MEDIA_TYPE)
+
+
 @app.post(
     "/v1/audio/transcriptions",
     response_model=None,
@@ -279,6 +338,35 @@ async def create_translation(
             task="translate",
             language=None,
             response_format=response_format,
+            chunk_duration=chunk_duration,
+            word_timestamps=_parse_word_timestamps(word_timestamps),
+            prompt=prompt,
+            temperature=_parse_optional_float(temperature, "temperature"),
+        )
+    except InferenceApiError as exc:
+        raise to_http_exception(exc) from exc
+
+
+@app.post(
+    "/v1/audio/transcriptions/stream",
+    response_model=None,
+    dependencies=[Depends(require_inference_api_key)],
+    responses=OPENAPI_INFERENCE_ERRORS,
+)
+async def create_transcription_stream(
+    file: Annotated[UploadFile, File()],
+    model: Annotated[str, Form()] = "default_model",
+    language: Annotated[Optional[str], Form()] = None,
+    chunk_duration: Annotated[Optional[float], Form()] = None,
+    word_timestamps: Annotated[Optional[str], Form()] = None,
+    prompt: Annotated[Optional[str], Form()] = None,
+    temperature: Annotated[Optional[str], Form()] = None,
+) -> StreamingResponse:
+    try:
+        return await _create_stt_stream_response(
+            file=file,
+            task="transcribe",
+            language=language,
             chunk_duration=chunk_duration,
             word_timestamps=_parse_word_timestamps(word_timestamps),
             prompt=prompt,
