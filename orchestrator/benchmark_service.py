@@ -14,6 +14,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
+from .benchmark_selectors import draft_profile_from_server_config
 from .gateway_aliases import instance_gateway_alias
 from .models import BenchmarkRun, InferenceInstance
 from .quality_benchmark_service import execute_quality_benchmark
@@ -22,6 +23,8 @@ from .security_utils import (
     build_validated_http_url,
     public_error_message,
     validated_benchmark_artifact_path,
+    validated_launch_port,
+    validated_subprocess_model_reference,
     validate_benchmark_endpoint_host,
     validate_outbound_http_host,
 )
@@ -86,13 +89,19 @@ def delete_benchmark_runs_for_model(folder_name: str) -> int:
 
 def _build_command(run: BenchmarkRun, output_path: Path) -> list[str]:
     params = run.params or {}
+    raw_host = str(params["host"])
+    if run.target_type == "ENDPOINT":
+        safe_host = validate_benchmark_endpoint_host(raw_host)
+    else:
+        safe_host = validate_outbound_http_host(raw_host)
+    safe_port = validated_launch_port(int(params["port"]))
     cmd = [
         sys.executable,
         str(LLMBENCH_SCRIPT),
         "--host",
-        str(params["host"]),
+        safe_host,
         "--port",
-        str(params["port"]),
+        str(safe_port),
         "--num-requests",
         str(params.get("num_requests", 5)),
         "--temperature",
@@ -108,7 +117,7 @@ def _build_command(run: BenchmarkRun, output_path: Path) -> list[str]:
         cmd.extend(["--categories", category])
 
     if run.model_id:
-        cmd.extend(["--model", run.model_id])
+        cmd.extend(["--model", validated_subprocess_model_reference(run.model_id)])
 
     return cmd
 
@@ -296,7 +305,8 @@ def resolve_benchmark_model_id(
         return _default_model_id_for_instance(instance)
 
     safe_host = validate_outbound_http_host(host)
-    models_url = build_validated_http_url(safe_host, port, "/v1/models")
+    safe_port = validated_launch_port(port)
+    models_url = build_validated_http_url(safe_host, safe_port, "/v1/models")
     try:
         response = httpx.get(models_url, timeout=10)
         response.raise_for_status()
@@ -352,6 +362,10 @@ def start_benchmark(
         "host": resolved_host,
         "port": resolved_port,
     }
+    if instance is not None:
+        full_params["draft_profile"] = draft_profile_from_server_config(
+            instance.server_config or {},
+        )
     endpoint_url = f"http://{resolved_host}:{resolved_port}"
     resolved_model_id = resolve_benchmark_model_id(
         resolved_host,

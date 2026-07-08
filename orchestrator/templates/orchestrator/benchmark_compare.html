@@ -27,6 +27,21 @@
     </div>
     {% endif %}
 
+    {% if suggested_draft_pairs %}
+    <div class="bg-white border border-indigo-200 rounded-2xl p-5 shadow-sm">
+        <h2 class="text-sm font-bold text-slate-900 mb-1">MTP / draft A&ndash;B pairs</h2>
+        <p class="text-xs text-slate-500 mb-3">Same instance and preset with different draft profiles (MLX-84).</p>
+        <div class="flex flex-wrap gap-2">
+            {% for run_a, run_b, pair_label in suggested_draft_pairs %}
+            <a href="{% url 'benchmark_compare' %}?run_a={{ run_a.id }}&run_b={{ run_b.id }}"
+                class="text-xs font-semibold px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-900">
+                {{ pair_label }}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
     <form method="get" class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

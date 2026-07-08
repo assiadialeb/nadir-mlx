@@ -6,26 +6,41 @@ import socket
 import subprocess
 import signal
 import time
+from pathlib import Path
 from typing import Any, Literal, Optional
 
 from django.conf import settings
 from django.utils import timezone
 
-from .gateway_aliases import validate_gateway_alias_unique
+from orchestrator.gateway.route_cache import clear_gateway_route_cache
+
+from .gateway_aliases import validate_instance_gateway_aliases
 from .models import InferenceInstance
-from .server_config_schema import build_default_server_config, validate_and_normalize_server_config
+from .server_config_schema import (
+    build_default_server_config,
+    text_mtp_preview_enabled,
+    validate_and_normalize_server_config,
+)
 from .model_utils import (
     is_model_complete,
     prepare_model_for_multimodal_inference,
     prepare_model_for_text_inference,
     resolve_log_file_path,
     resolve_model_dir,
+    validate_model_folder_name,
+    validated_optional_model_filesystem_ref,
     supports_embedding_mode,
     supports_image_mode,
     supports_multimodal_mode,
     supports_rerank_mode,
     supports_stt_mode,
     supports_tts_mode,
+)
+from .security_utils import (
+    assert_path_under_directory,
+    models_root_path,
+    validate_server_bind_host,
+    validated_launch_port,
 )
 
 LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
@@ -81,8 +96,11 @@ def get_downloaded_models() -> list[str]:
 
     models = []
     for name in os.listdir(models_dir):
-        path = os.path.join(models_dir, name)
-        if os.path.isdir(path) and is_model_complete(path):
+        try:
+            path = resolve_model_dir(name)
+        except ValueError:
+            continue
+        if path.is_dir() and is_model_complete(path):
             models.append(name)
     return sorted(models)
 
@@ -99,9 +117,10 @@ def parse_launch_mode(raw_mode: Optional[str]) -> LaunchMode:
 
 def is_port_free(port: int) -> bool:
     """Check whether a TCP port is free on localhost."""
+    safe_port = validated_launch_port(port)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
-            sock.bind(("127.0.0.1", port))
+            sock.bind(("127.0.0.1", safe_port))
             return True
         except OSError:
             return False
@@ -109,9 +128,10 @@ def is_port_free(port: int) -> bool:
 
 def _find_listener_pids(port: int) -> list[int]:
     """Return PIDs listening on a TCP port (macOS/Linux via lsof)."""
+    safe_port = validated_launch_port(port)
     try:
         result = subprocess.run(
-            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+            ["lsof", "-nP", f"-iTCP:{safe_port}", "-sTCP:LISTEN", "-t"],
             capture_output=True,
             text=True,
             check=False,
@@ -133,7 +153,8 @@ def _find_listener_pids(port: int) -> list[int]:
 
 def _find_orchestrator_launcher_pids(port: int) -> list[int]:
     """Return PIDs for orchestrator launcher modules bound to a port."""
-    pattern = f"orchestrator\\.mlx_.*launcher.*--port {port}"
+    safe_port = validated_launch_port(port)
+    pattern = f"orchestrator\\.mlx_.*launcher.*--port {safe_port}"
     try:
         result = subprocess.run(
             ["pgrep", "-f", pattern],
@@ -315,15 +336,16 @@ def _resolve_server_config(
         server_config or build_default_server_config(launch_mode),
         model_name,
     )
-    validate_gateway_alias_unique(
-        _config_model_id(normalized, model_name),
+    validate_instance_gateway_aliases(
+        normalized,
+        model_name,
         exclude_instance_id=exclude_instance_id,
     )
     return normalized
 
 
 def _config_host(server_config: dict[str, Any]) -> str:
-    return str(server_config.get("host") or default_server_host())
+    return validate_server_bind_host(str(server_config.get("host") or default_server_host()))
 
 
 def _config_model_id(server_config: dict[str, Any], model_name: str) -> str:
@@ -350,9 +372,15 @@ def _build_launch_command(
     server_config: dict[str, Any],
     model_name: str,
 ) -> list[str]:
+    safe_model_path = str(
+        assert_path_under_directory(Path(model_path).resolve(), models_root_path()),
+    )
     host = _config_host(server_config)
+    safe_port = validated_launch_port(port)
     model_id = _config_model_id(server_config, model_name)
     advanced = server_config.get("advanced") or {}
+    adapter_path = validated_optional_model_filesystem_ref(advanced.get("adapter_path"))
+    draft_model = validated_optional_model_filesystem_ref(advanced.get("draft_model"))
     python_bin = _get_python_bin()
 
     if launch_mode == "MULTIMODAL":
@@ -361,19 +389,19 @@ def _build_launch_command(
             "-m",
             "orchestrator.mlx_vlm_launcher",
             "--model",
-            model_path,
+            safe_model_path,
             "--host",
             host,
             "--port",
-            str(port),
+            str(safe_port),
         ]
         _append_cli_args(command, {
             "model-id": model_id,
             "max-tokens": server_config.get("max_tokens"),
             "max-kv-size": server_config.get("max_kv_size"),
             "trust-remote-code": server_config.get("trust_remote_code"),
-            "adapter-path": advanced.get("adapter_path"),
-            "draft-model": advanced.get("draft_model"),
+            "adapter-path": adapter_path,
+            "draft-model": draft_model,
             "draft-kind": advanced.get("draft_kind"),
             "draft-block-size": advanced.get("draft_block_size"),
             "kv-bits": advanced.get("kv_bits"),
@@ -390,11 +418,11 @@ def _build_launch_command(
             "-m",
             "orchestrator.mlx_embedding_launcher",
             "--model",
-            model_path,
+            safe_model_path,
             "--host",
             host,
             "--port",
-            str(port),
+            str(safe_port),
             "--model-id",
             model_id,
         ]
@@ -405,11 +433,11 @@ def _build_launch_command(
             "-m",
             "orchestrator.mlx_reranker_launcher",
             "--model",
-            model_path,
+            safe_model_path,
             "--host",
             host,
             "--port",
-            str(port),
+            str(safe_port),
         ]
         if server_config.get("disable_batching"):
             command.append("--disable-batching")
@@ -422,11 +450,11 @@ def _build_launch_command(
             "-m",
             "orchestrator.mlx_image_launcher",
             "--model",
-            model_path,
+            safe_model_path,
             "--host",
             host,
             "--port",
-            str(port),
+            str(safe_port),
             "--model-id",
             model_id,
         ]
@@ -441,11 +469,11 @@ def _build_launch_command(
             "-m",
             "orchestrator.mlx_tts_launcher",
             "--model",
-            model_path,
+            safe_model_path,
             "--host",
             host,
             "--port",
-            str(port),
+            str(safe_port),
             "--model-id",
             model_id,
         ]
@@ -463,11 +491,11 @@ def _build_launch_command(
             "-m",
             "orchestrator.mlx_stt_launcher",
             "--model",
-            model_path,
+            safe_model_path,
             "--host",
             host,
             "--port",
-            str(port),
+            str(safe_port),
             "--model-id",
             model_id,
         ]
@@ -482,19 +510,19 @@ def _build_launch_command(
         "-m",
         "orchestrator.mlx_launcher",
         "--model",
-        model_path,
+        safe_model_path,
         "--host",
         host,
         "--port",
-        str(port),
+        str(safe_port),
         "--model-id",
         model_id,
     ]
     _append_cli_args(command, {
         "max-tokens": server_config.get("max_tokens"),
         "trust-remote-code": server_config.get("trust_remote_code"),
-        "adapter-path": advanced.get("adapter_path"),
-        "draft-model": advanced.get("draft_model"),
+        "adapter-path": adapter_path,
+        "draft-model": draft_model,
         "num-draft-tokens": advanced.get("num_draft_tokens"),
         "chat-template-args": advanced.get("chat_template_args"),
         "temp": advanced.get("temp"),
@@ -502,6 +530,11 @@ def _build_launch_command(
         "top-k": advanced.get("top_k"),
         "min-p": advanced.get("min_p"),
     })
+    if text_mtp_preview_enabled():
+        _append_cli_args(command, {
+            "draft-kind": advanced.get("draft_kind"),
+            "draft-block-size": advanced.get("draft_block_size"),
+        })
     return command
 
 
@@ -604,12 +637,13 @@ def start_instance(
 ) -> InferenceInstance:
     """Launch an inference server in the background."""
     launch_mode = parse_launch_mode(launch_mode)
-    model_path = str(resolve_model_dir(model_name))
+    safe_model_name = validate_model_folder_name(model_name)
+    model_path = str(resolve_model_dir(safe_model_name))
     if not os.path.isdir(model_path):
-        raise ValueError(f"Model folder '{model_name}' was not found in ./models.")
+        raise ValueError(f"Model folder '{safe_model_name}' was not found in ./models.")
     if not is_model_complete(model_path):
         raise ValueError(
-            f"Model '{model_name}' is incomplete. Wait for the download to finish."
+            f"Model '{safe_model_name}' is incomplete. Wait for the download to finish."
         )
 
     _prepare_model_for_launch(model_path, launch_mode)
@@ -617,13 +651,13 @@ def start_instance(
     if not port:
         port = get_free_port()
     else:
-        port = int(port)
+        port = validated_launch_port(int(port))
 
-    reusable = _find_reusable_instance(model_name, port)
+    reusable = _find_reusable_instance(safe_model_name, port)
     normalized_config = _resolve_server_config(
         launch_mode,
         server_config,
-        model_name,
+        safe_model_name,
         exclude_instance_id=reusable.pk if reusable else None,
     )
 
@@ -632,11 +666,11 @@ def start_instance(
         raise ValueError(f"Port {port} is already in use.")
 
     os.makedirs(settings.LOGS_DIR, exist_ok=True)
-    log_file_path = str(resolve_log_file_path(model_name, port))
+    log_file_path = str(resolve_log_file_path(safe_model_name, port))
     log_file = open(log_file_path, "w", encoding="utf-8")
 
-    instance = _get_or_create_instance(model_name, port, launch_mode, normalized_config)
-    cmd = _build_launch_command(model_path, port, launch_mode, normalized_config, model_name)
+    instance = _get_or_create_instance(safe_model_name, port, launch_mode, normalized_config)
+    cmd = _build_launch_command(model_path, port, launch_mode, normalized_config, safe_model_name)
 
     try:
         process = subprocess.Popen(
@@ -666,6 +700,7 @@ def start_instance(
 
         instance.status = "RUNNING"
         instance.save(update_fields=["status"])
+        clear_gateway_route_cache()
         return instance
     except Exception:
         if instance.status != "FAILED":
@@ -865,13 +900,14 @@ def update_stopped_instance(
     instance.launch_mode = new_mode
     instance.server_config = new_config
     instance.save(update_fields=["port", "launch_mode", "server_config"])
+    clear_gateway_route_cache()
     return instance
 
 
 def restart_instance(instance: InferenceInstance) -> InferenceInstance:
     """Gracefully stop a running instance and relaunch with the same configuration."""
-    model_name = instance.model_name
-    port = instance.port
+    model_name = validate_model_folder_name(instance.model_name)
+    port = validated_launch_port(instance.port)
     launch_mode = parse_launch_mode(instance.launch_mode)
     server_config = dict(instance.server_config or {})
 
@@ -885,7 +921,9 @@ def restart_instance(instance: InferenceInstance) -> InferenceInstance:
 def get_instance_logs(model_name: str, port: int) -> str:
     """Read the last 500 lines of logs for the given instance."""
     try:
-        log_file_path = resolve_log_file_path(model_name, port)
+        safe_name = validate_model_folder_name(model_name)
+        safe_port = validated_launch_port(port)
+        log_file_path = resolve_log_file_path(safe_name, safe_port)
     except ValueError:
         return "Log file not found."
 

@@ -67,6 +67,8 @@ from .benchmark_selectors import (
     comparison_rows,
     filter_benchmark_runs,
     find_comparison_candidates,
+    find_draft_ab_pairs,
+    benchmark_draft_label,
     quality_metric_label,
     list_distinct_preset_keys,
     list_filter_options,
@@ -603,6 +605,10 @@ def benchmark_compare_view(request):
         completed,
         preset_key=preset_key,
     )
+    suggested_draft_pairs = find_draft_ab_pairs(
+        completed,
+        preset_key=preset_key,
+    )
 
     run_a_id = str(request.GET.get("run_a") or "").strip()
     run_b_id = str(request.GET.get("run_b") or "").strip()
@@ -625,10 +631,19 @@ def benchmark_compare_view(request):
         (run_a, run_b, comparison_pair_label(run_a, run_b, gateway_port))
         for run_a, run_b in suggested_pairs
     ]
+    suggested_draft_pair_labels = [
+        (
+            run_a,
+            run_b,
+            f"{benchmark_draft_label(run_a.params)} vs {benchmark_draft_label(run_b.params)}",
+        )
+        for run_a, run_b in suggested_draft_pairs
+    ]
 
     return render(request, "orchestrator/benchmark_compare.html", {
         "filters": filters,
         "suggested_pairs": suggested_pair_labels,
+        "suggested_draft_pairs": suggested_draft_pair_labels,
         "completed_runs": completed_runs,
         "completed_run_options": completed_run_options,
         "gateway_port": gateway_port,

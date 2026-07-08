@@ -317,3 +317,25 @@ class ExecutePerfBenchmarkTests(TestCase):
         self.assertEqual(run.status, "PENDING")
         self.assertEqual(run.benchmark_kind, "PERF")
         mock_thread.assert_called_once_with(run)
+
+    @patch("orchestrator.benchmark_service._start_benchmark_thread")
+    @override_settings(NADIR_GATEWAY_HOST="127.0.0.1", NADIR_GATEWAY_PORT=11380)
+    def test_start_benchmark_stores_draft_profile_from_instance(
+        self,
+        mock_thread: MagicMock,
+    ) -> None:
+        self.instance.server_config = {
+            "model_id": "gemma-chat",
+            "advanced": {"draft_kind": "mtp", "draft_model": "assistant"},
+        }
+        self.instance.save(update_fields=["server_config"])
+        run = start_benchmark(
+            "INSTANCE",
+            self.instance.id,
+            None,
+            None,
+            "",
+            {"categories": ["medium"], "concurrency": [1], "num_requests": 5},
+            benchmark_kind="PERF",
+        )
+        self.assertEqual(run.params["draft_profile"]["draft_kind"], "mtp")

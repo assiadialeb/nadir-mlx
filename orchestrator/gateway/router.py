@@ -25,6 +25,7 @@ IMAGE_VARIATIONS_PATH = "/v1/images/variations"
 IMAGE_FILES_PATH = "/v1/images/files"
 AUDIO_SPEECH_PATH = "/v1/audio/speech"
 AUDIO_TRANSCRIPTIONS_PATH = "/v1/audio/transcriptions"
+AUDIO_TRANSCRIPTIONS_STREAM_PATH = "/v1/audio/transcriptions/stream"
 AUDIO_TRANSLATIONS_PATH = "/v1/audio/translations"
 
 LAUNCH_MODE_API_PATH: dict[str, str] = {

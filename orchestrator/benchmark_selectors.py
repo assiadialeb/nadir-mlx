@@ -20,6 +20,43 @@ VALID_LAUNCH_MODES = frozenset(
 )
 
 
+def draft_profile_from_server_config(server_config: dict[str, Any] | None) -> dict[str, Any]:
+    """Capture draft/MTP settings at benchmark launch time (MLX-84)."""
+    advanced = (server_config or {}).get("advanced") or {}
+    profile: dict[str, Any] = {}
+    for key in ("draft_kind", "draft_model", "num_draft_tokens"):
+        value = advanced.get(key)
+        if value not in (None, ""):
+            profile[key] = value
+    return profile
+
+
+def draft_profile_key(params: dict[str, Any] | None) -> str:
+    """Stable grouping key for draft-on vs draft-off benchmark runs."""
+    profile = (params or {}).get("draft_profile") or {}
+    draft_kind = str(profile.get("draft_kind") or "").strip().lower()
+    if draft_kind:
+        return f"kind:{draft_kind}"
+    draft_model = str(profile.get("draft_model") or "").strip().lower()
+    if draft_model:
+        tokens = profile.get("num_draft_tokens")
+        return f"draft:{draft_model}|n:{tokens}"
+    return "none"
+
+
+def benchmark_draft_label(params: dict[str, Any] | None) -> str:
+    """Human-readable draft profile for benchmark tables and exports."""
+    profile = (params or {}).get("draft_profile") or {}
+    draft_kind = str(profile.get("draft_kind") or "").strip().lower()
+    if draft_kind == "mtp":
+        return "MTP"
+    if draft_kind:
+        return draft_kind.upper()
+    if profile.get("draft_model"):
+        return "Speculative"
+    return "No draft"
+
+
 def benchmark_preset_key(params: dict[str, Any] | None) -> str:
     """Stable key for runs sharing the same llmbench preset."""
     raw = params or {}
@@ -165,6 +202,7 @@ def benchmark_run_list_row(run: BenchmarkRun, scenario: str = "medium_conc4") ->
         "aggregate_tps": summary.get("aggregate_tps") if summary else None,
         "quality_headline": headline_quality,
         "scenario": summary.get("scenario") if summary else scenario,
+        "draft_label": benchmark_draft_label(run.params),
     }
 
 
@@ -328,6 +366,8 @@ def _run_snapshot(run: BenchmarkRun) -> dict[str, Any]:
         "launch_mode": run.instance.launch_mode if run.instance_id else "",
         "status": run.status,
         "params": run.params,
+        "draft_label": benchmark_draft_label(run.params),
+        "draft_profile_key": draft_profile_key(run.params),
         "summaries": run.summaries,
     }
 
@@ -432,6 +472,52 @@ def find_comparison_candidates(
     for runs in groups.values():
         if _append_unique_endpoint_pairs(runs, seen_ids, pairs, max_pairs=12):
             return pairs
+    return pairs
+
+
+def find_draft_ab_pairs(
+    queryset: QuerySet[BenchmarkRun],
+    *,
+    preset_key: str | None = None,
+    max_pairs: int = 12,
+) -> list[tuple[BenchmarkRun, BenchmarkRun]]:
+    """Pair completed INSTANCE runs on the same slot with different draft profiles."""
+    completed = list(
+        queryset.filter(status="COMPLETED", target_type="INSTANCE")
+        .select_related("instance")
+        .order_by("-completed_at")
+    )
+    buckets: dict[tuple[str, int], dict[str, BenchmarkRun]] = {}
+    for run in completed:
+        if not run.instance_id:
+            continue
+        preset = benchmark_preset_key(run.params)
+        if preset_key and preset != preset_key:
+            continue
+        draft_key = draft_profile_key(run.params)
+        group_key = (preset, run.instance_id)
+        group = buckets.setdefault(group_key, {})
+        existing = group.get(draft_key)
+        if existing is None:
+            group[draft_key] = run
+
+    pairs: list[tuple[BenchmarkRun, BenchmarkRun]] = []
+    seen_ids: set[tuple[int, int]] = set()
+    for group in buckets.values():
+        runs = list(group.values())
+        if len(runs) < 2:
+            continue
+        for index, run_a in enumerate(runs):
+            for run_b in runs[index + 1 :]:
+                if draft_profile_key(run_a.params) == draft_profile_key(run_b.params):
+                    continue
+                pair_ids = tuple(sorted((run_a.id, run_b.id)))
+                if pair_ids in seen_ids:
+                    continue
+                seen_ids.add(pair_ids)
+                pairs.append((run_a, run_b))
+                if len(pairs) >= max_pairs:
+                    return pairs
     return pairs
 
 

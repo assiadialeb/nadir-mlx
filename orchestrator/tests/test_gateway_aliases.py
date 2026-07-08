@@ -5,9 +5,12 @@ from django.test import TestCase
 from orchestrator.gateway_aliases import (
     find_instance_by_gateway_alias,
     instance_gateway_alias,
+    instance_gateway_aliases,
     normalize_gateway_alias,
+    normalize_gateway_aliases_list,
     validate_gateway_alias_format,
     validate_gateway_alias_unique,
+    validate_instance_gateway_aliases,
 )
 from orchestrator.models import InferenceInstance
 from orchestrator.server_config_schema import validate_and_normalize_server_config
@@ -78,4 +81,49 @@ class GatewayAliasTests(TestCase):
             status="RUNNING",
         )
         found = find_instance_by_gateway_alias("lite-llm-name")
+        self.assertEqual(found.pk, instance.pk)
+
+    def test_instance_gateway_aliases_includes_primary_and_extras(self) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="folder-name",
+            port=11403,
+            server_config={
+                "model_id": "primary-alias",
+                "gateway_aliases": ["dev-alias", "prod-alias", "primary-alias"],
+            },
+            status="STOPPED",
+        )
+        self.assertEqual(
+            instance_gateway_aliases(instance),
+            ["primary-alias", "dev-alias", "prod-alias"],
+        )
+
+    def test_normalize_gateway_aliases_list_rejects_invalid_type(self) -> None:
+        with self.assertRaises(ValueError):
+            normalize_gateway_aliases_list({"bad": "type"}, primary_alias="primary")
+
+    def test_validate_instance_gateway_aliases_rejects_cross_instance_collision(self) -> None:
+        InferenceInstance.objects.create(
+            model_name="model-a",
+            port=11404,
+            server_config={"model_id": "taken-alias"},
+            status="STOPPED",
+        )
+        with self.assertRaises(ValueError):
+            validate_instance_gateway_aliases(
+                {"model_id": "new-primary", "gateway_aliases": ["taken-alias"]},
+                "model-b",
+            )
+
+    def test_find_instance_by_gateway_alias_matches_extra_alias(self) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="folder-name",
+            port=11405,
+            server_config={
+                "model_id": "primary-alias",
+                "gateway_aliases": ["legacy-alias"],
+            },
+            status="RUNNING",
+        )
+        found = find_instance_by_gateway_alias("legacy-alias")
         self.assertEqual(found.pk, instance.pk)

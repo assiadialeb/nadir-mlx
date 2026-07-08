@@ -356,6 +356,7 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 | MULTIMODAL (Gemma 4 MTP) | [gateway-runbooks/gemma4-mtp.md](gateway-runbooks/gemma4-mtp.md) |
 | EMBEDDING | [gateway-runbooks/embedding.md](gateway-runbooks/embedding.md) |
 | RERANKER | [gateway-runbooks/reranker.md](gateway-runbooks/reranker.md) |
+| Local RAG (embed + rerank + chat) | [gateway-runbooks/rag.md](gateway-runbooks/rag.md) |
 | IMAGE | [gateway-runbooks/image.md](gateway-runbooks/image.md) |
 | TTS | [gateway-runbooks/tts.md](gateway-runbooks/tts.md) |
 | STT | [gateway-runbooks/stt.md](gateway-runbooks/stt.md) |

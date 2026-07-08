@@ -8,7 +8,7 @@ from orchestrator.gateway.router import (
     GatewayRouteError,
 )
 from orchestrator.gateway.route_cache import clear_gateway_route_cache
-from orchestrator.gateway.selectors import resolve_gateway_target
+from orchestrator.gateway.selectors import list_running_gateway_models, resolve_gateway_target
 from orchestrator.models import InferenceInstance
 
 
@@ -103,3 +103,35 @@ class GatewayRouterTests(TestCase):
         )
         target = resolve_gateway_target("vlm-alias")
         self.assertEqual(target.host, "127.0.0.1")
+
+    def test_resolve_gateway_target_supports_extra_aliases(self) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="Llama-3-8B",
+            port=11406,
+            launch_mode="TEXT",
+            server_config={
+                "model_id": "llama-primary",
+                "gateway_aliases": ["llama-dev", "llama-prod"],
+                "host": "127.0.0.1",
+            },
+            status="RUNNING",
+        )
+        for alias in ("llama-primary", "llama-dev", "llama-prod"):
+            target = resolve_gateway_target(alias)
+            self.assertEqual(target.instance_id, instance.pk)
+            self.assertEqual(target.alias, alias)
+
+    def test_list_running_gateway_models_includes_extra_aliases(self) -> None:
+        InferenceInstance.objects.create(
+            model_name="Llama-3-8B",
+            port=11407,
+            launch_mode="TEXT",
+            server_config={
+                "model_id": "llama-primary",
+                "gateway_aliases": ["llama-dev"],
+            },
+            status="RUNNING",
+        )
+        payload = list_running_gateway_models()
+        model_ids = {entry["id"] for entry in payload["data"]}
+        self.assertEqual(model_ids, {"llama-primary", "llama-dev"})

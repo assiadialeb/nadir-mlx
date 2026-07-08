@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
+from django.test import override_settings
+
 from orchestrator.model_utils import (
     get_model_capabilities,
     is_model_complete,
@@ -38,12 +40,13 @@ class ModelUtilsCapabilityTests(TestCase):
 
     def test_requires_relaxed_weight_loading_when_backup_config_exists(self) -> None:
         import tempfile
-        from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            model_dir = Path(tmp_dir)
-            (model_dir / "config.json.orig").write_text("{}", encoding="utf-8")
-            self.assertTrue(requires_relaxed_weight_loading(model_dir))
+            with override_settings(MODELS_DIR=tmp_dir):
+                model_dir = Path(tmp_dir) / "demo-model"
+                model_dir.mkdir()
+                (model_dir / "config.json.orig").write_text("{}", encoding="utf-8")
+                self.assertTrue(requires_relaxed_weight_loading(model_dir))
 
 
 class ModelUtilsCompletenessTests(TestCase):

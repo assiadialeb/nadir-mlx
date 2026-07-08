@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 from orchestrator.gateway.router import (
     LAUNCH_MODE_API_PATH,
@@ -10,7 +11,7 @@ from orchestrator.gateway.router import (
     GatewayTarget,
 )
 from orchestrator.gateway.route_cache import RouteCacheSnapshot, get_route_snapshot
-from orchestrator.gateway_aliases import instance_gateway_alias
+from orchestrator.gateway_aliases import instance_gateway_alias, instance_gateway_aliases
 from orchestrator.lifecycle_selectors import get_lifecycle_mode
 from orchestrator.models import InferenceInstance
 from orchestrator.security_utils import validate_server_bind_host
@@ -82,34 +83,41 @@ def build_route_snapshot_from_db() -> RouteCacheSnapshot:
     created_at = int(time.time())
 
     for instance in InferenceInstance.objects.all().order_by("-created_at"):
-        alias = instance_gateway_alias(instance)
-        alias_key = alias.casefold()
-        if alias_key not in alias_status:
-            alias_status[alias_key] = instance.status
+        aliases = instance_gateway_aliases(instance)
+        for alias in aliases:
+            alias_key = alias.casefold()
+            if alias_key not in alias_status:
+                alias_status[alias_key] = instance.status
 
-        if instance.status != "RUNNING" or alias_key in running_targets:
+        if instance.status != "RUNNING":
             continue
 
         try:
-            running_targets[alias_key] = _gateway_target_from_instance(instance)
+            base_target = _gateway_target_from_instance(instance)
         except GatewayRouteError:
             continue
 
+        for alias in aliases:
+            alias_key = alias.casefold()
+            if alias_key in running_targets:
+                continue
+            running_targets[alias_key] = replace(base_target, alias=alias)
+
     for instance in InferenceInstance.objects.all().order_by("model_name"):
-        alias = instance_gateway_alias(instance)
-        alias_key = alias.casefold()
-        if alias_key in seen_model_aliases:
-            continue
-        seen_model_aliases.add(alias_key)
-        model_entries.append(
-            {
-                "id": alias,
-                "object": "model",
-                "created": created_at,
-                "owned_by": "nadir",
-                "metadata": _nadir_model_metadata(instance),
-            }
-        )
+        for alias in instance_gateway_aliases(instance):
+            alias_key = alias.casefold()
+            if alias_key in seen_model_aliases:
+                continue
+            seen_model_aliases.add(alias_key)
+            model_entries.append(
+                {
+                    "id": alias,
+                    "object": "model",
+                    "created": created_at,
+                    "owned_by": "nadir",
+                    "metadata": _nadir_model_metadata(instance),
+                }
+            )
 
     return RouteCacheSnapshot(
         built_at=time.monotonic(),

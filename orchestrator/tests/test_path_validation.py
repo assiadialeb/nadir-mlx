@@ -54,3 +54,15 @@ class PathValidationTests(SimpleTestCase):
     def test_resolve_log_file_path_rejects_invalid_port(self) -> None:
         with self.assertRaises(ValueError):
             resolve_log_file_path("Kokoro-82M-6bit", 0)
+
+    def test_coerce_model_path_rejects_escape(self) -> None:
+        from orchestrator.model_utils import coerce_model_path
+
+        with self.assertRaises(ValueError):
+            coerce_model_path("/etc/passwd")
+
+    def test_validated_optional_model_filesystem_ref_accepts_folder_name(self) -> None:
+        from orchestrator.model_utils import validated_optional_model_filesystem_ref
+
+        with self.assertRaises(ValueError):
+            validated_optional_model_filesystem_ref("../secret")

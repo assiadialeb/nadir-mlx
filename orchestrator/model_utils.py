@@ -111,6 +111,30 @@ def resolve_model_dir(folder_name: str) -> Path:
     return resolved
 
 
+def validated_optional_model_filesystem_ref(value: Any) -> str | None:
+    """Resolve adapter/draft paths for CLI use, confined under MODELS_DIR."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if "/" not in raw and "\\" not in raw:
+        return str(resolve_model_dir(validate_model_folder_name(raw)))
+    resolved = Path(raw).expanduser().resolve()
+    return str(assert_path_under_directory(resolved, models_root_path()))
+
+
+def coerce_model_path(model_path: os.PathLike[str] | str) -> Path:
+    """Resolve a model directory and ensure it remains under MODELS_DIR."""
+    raw = str(model_path).strip()
+    if not raw:
+        raise ValueError(INVALID_MODEL_FOLDER_NAME)
+    path = Path(raw)
+    if path.is_absolute() or "/" in raw or "\\" in raw:
+        return assert_path_under_directory(path.expanduser().resolve(), models_root_path())
+    return resolve_model_dir(raw)
+
+
 def resolve_log_file_path(model_name: str, port: int) -> Path:
     """Return a log file path constrained under LOGS_DIR."""
     if port < 1 or port > 65535:
@@ -135,8 +159,9 @@ def get_model_path(folder_name: str) -> Path:
 
 def _read_model_config(model_path: Path) -> dict[str, Any]:
     """Read config.json, preferring the original backup when available."""
-    backup_path = model_path / CONFIG_JSON_ORIG
-    config_path = backup_path if backup_path.is_file() else model_path / CONFIG_JSON
+    safe_path = assert_path_under_directory(model_path.resolve(), models_root_path())
+    backup_path = safe_path / CONFIG_JSON_ORIG
+    config_path = backup_path if backup_path.is_file() else safe_path / CONFIG_JSON
     if not config_path.is_file():
         return {}
     try:
@@ -167,7 +192,7 @@ def _has_npz_weights(path: Path) -> bool:
 
 def is_model_complete(model_path: os.PathLike[str] | str) -> bool:
     """Check whether a model directory contains all required weight files."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     if _looks_like_image_model_folder(path.name):
         return _has_diffusion_weights(path)
 
@@ -202,13 +227,13 @@ def is_model_complete(model_path: os.PathLike[str] | str) -> bool:
 
 def get_model_type(model_path: os.PathLike[str] | str) -> Optional[str]:
     """Read the native model_type from the model config."""
-    config = _read_model_config(Path(model_path))
+    config = _read_model_config(coerce_model_path(model_path))
     return config.get("model_type")
 
 
 def supports_multimodal_mode(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model can be served with mlx_vlm."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     config = _read_model_config(path)
     model_type = config.get("model_type", "")
 
@@ -239,7 +264,7 @@ def _looks_like_image_model_folder(folder_name: str) -> bool:
 
 def is_image_focused_model(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model should be launched as image generation, not chat."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     if not _looks_like_image_model_folder(path.name):
         return False
     return _has_diffusion_weights(path)
@@ -252,7 +277,7 @@ def supports_image_mode(model_path: os.PathLike[str] | str) -> bool:
 
 def is_tts_focused_model(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model should be launched as TTS, not chat."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     if not is_model_complete(path):
         return False
     if TTS_NAME_PATTERN.search(path.name):
@@ -268,7 +293,7 @@ def supports_tts_mode(model_path: os.PathLike[str] | str) -> bool:
 
 def is_stt_focused_model(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model should be launched as STT, not chat."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     if not is_model_complete(path):
         return False
     if STT_NAME_PATTERN.search(path.name):
@@ -283,12 +308,12 @@ def supports_stt_mode(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model can be served with mlx-audio Whisper."""
     from orchestrator.whisper_assets import is_stt_servable
 
-    return is_stt_servable(model_path)
+    return is_stt_servable(str(coerce_model_path(model_path)))
 
 
 def is_rerank_focused_model(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model should be launched as reranker, not chat/embed."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     if not is_model_complete(path):
         return False
 
@@ -307,7 +332,7 @@ def supports_rerank_mode(model_path: os.PathLike[str] | str) -> bool:
 
 def supports_embedding_mode(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model can be served with mlx-embeddings."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     if not is_model_complete(path):
         return False
 
@@ -336,7 +361,7 @@ def supports_embedding_mode(model_path: os.PathLike[str] | str) -> bool:
 
 def is_embedding_focused_model(model_path: os.PathLike[str] | str) -> bool:
     """Return True when the model should be launched as embedding, not chat."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     if not supports_embedding_mode(path):
         return False
 
@@ -396,7 +421,7 @@ def get_model_folder_size_bytes(folder_name: str) -> int:
 
 def prepare_model_for_text_inference(model_path: os.PathLike[str] | str) -> None:
     """Patch configs that mlx_lm cannot load natively (e.g. gemma4_unified)."""
-    path = assert_path_under_directory(Path(model_path), models_root_path())
+    path = coerce_model_path(model_path)
     config_path = path / CONFIG_JSON
     if not config_path.is_file():
         return
@@ -416,7 +441,7 @@ def prepare_model_for_text_inference(model_path: os.PathLike[str] | str) -> None
 
 def prepare_model_for_multimodal_inference(model_path: os.PathLike[str] | str) -> None:
     """Restore the original unified config required by mlx_vlm."""
-    path = assert_path_under_directory(Path(model_path), models_root_path())
+    path = coerce_model_path(model_path)
     backup_path = path / CONFIG_JSON_ORIG
     config_path = path / CONFIG_JSON
     if backup_path.is_file():
@@ -454,7 +479,7 @@ def _requires_relaxed_gemma4_kv_shared_weights(model_path: Path) -> bool:
 
 def requires_relaxed_weight_loading(model_path: os.PathLike[str] | str) -> bool:
     """Return True when mlx_lm / mlx_vlm must ignore extra weight tensors."""
-    path = Path(model_path)
+    path = coerce_model_path(model_path)
     backup_path = path / CONFIG_JSON_ORIG
     if backup_path.is_file():
         return True
@@ -468,7 +493,11 @@ def sync_model_download_status() -> None:
     from .models import ModelDownload
 
     for record in ModelDownload.objects.all():
-        if is_model_complete(record.local_path) and record.status != "COMPLETED":
+        try:
+            local_path = coerce_model_path(record.local_path)
+        except ValueError:
+            continue
+        if is_model_complete(local_path) and record.status != "COMPLETED":
             record.status = "COMPLETED"
             record.error_message = ""
             record.save(update_fields=["status", "error_message"])
@@ -479,7 +508,14 @@ def reconcile_stale_downloads() -> None:
     from .models import ModelDownload
 
     for record in ModelDownload.objects.filter(status="DOWNLOADING"):
-        if is_model_complete(record.local_path):
+        try:
+            local_path = coerce_model_path(record.local_path)
+        except ValueError:
+            record.status = "FAILED"
+            record.error_message = "Invalid local model path."
+            record.save(update_fields=["status", "error_message"])
+            continue
+        if is_model_complete(local_path):
             record.status = "COMPLETED"
             record.error_message = ""
             record.save(update_fields=["status", "error_message"])

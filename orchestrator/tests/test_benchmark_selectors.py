@@ -20,6 +20,7 @@ from orchestrator.benchmark_selectors import (
     detail_render_ready,
     filter_benchmark_runs,
     find_comparison_candidates,
+    find_draft_ab_pairs,
     format_preset_label,
     list_filter_options,
     paginate_benchmark_runs,
@@ -509,3 +510,30 @@ class BenchmarkSelectorsTests(TestCase):
         )
         metrics = resolve_quality_metrics(parent, quality_child)
         self.assertEqual(metrics["ifeval_strict_acc"], 81.0)
+
+    def test_find_draft_ab_pairs_groups_same_instance_different_draft(self) -> None:
+        no_draft = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params={
+                **self.params,
+                "draft_profile": {},
+            },
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        mtp_run = BenchmarkRun.objects.create(
+            target_type="INSTANCE",
+            instance=self.instance,
+            endpoint_url="http://127.0.0.1:11446/v1",
+            params={
+                **self.params,
+                "draft_profile": {"draft_kind": "mtp"},
+            },
+            status="COMPLETED",
+            results=_sample_results(),
+        )
+        pairs = find_draft_ab_pairs(BenchmarkRun.objects.all())
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual({pairs[0][0].id, pairs[0][1].id}, {no_draft.id, mtp_run.id})

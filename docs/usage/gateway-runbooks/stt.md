@@ -120,9 +120,39 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:11380/v1/chat/completi
 
 **Expected:** HTTP **400**.
 
-## Realtime STT
+## Realtime STT (SSE)
 
-OpenAI Realtime / WebSocket STT is **not supported** in v1 (batch multipart only).
+OpenAI Realtime / WebSocket STT is **not supported** in v1. Partial transcripts are available via **Server-Sent Events** on a dedicated route:
+
+```bash
+curl -N http://127.0.0.1:11380/v1/audio/transcriptions/stream \
+  -F "file=@/tmp/nadir-stt-sample.wav" \
+  -F "model=whispers"
+```
+
+**Event contract:**
+
+| Event | Payload |
+|-------|---------|
+| `transcript` | `{"object":"stt.transcript.delta\|completed","text":"…","is_final":false\|true,"task":"transcribe"}` |
+| `done` | `{"object":"stt.transcript.done"}` |
+| `error` | `{"object":"stt.transcript.error","message":"…"}` |
+
+When mlx-audio exposes `generate_streaming`, deltas arrive as chunks are decoded; otherwise the server emits one completed transcript after batch `generate()`.
+
+Gateway and upstream STT share the same multipart fields (`language`, `chunk_duration`, `word_timestamps`, `prompt`, `temperature`). `response_format` is ignored on the stream route (JSON-shaped events only).
+
+Direct upstream:
+
+```bash
+curl -N http://127.0.0.1:11445/v1/audio/transcriptions/stream \
+  -F "file=@/tmp/nadir-stt-sample.wav" \
+  -F "model=whispers"
+```
+
+## Batch-only note
+
+For SRT/VTT/plain text, keep using `POST /v1/audio/transcriptions` (non-stream).
 
 ## Troubleshooting
 

@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 from orchestrator.gateway.router import (
     AUDIO_SPEECH_PATH,
     AUDIO_TRANSCRIPTIONS_PATH,
+    AUDIO_TRANSCRIPTIONS_STREAM_PATH,
     AUDIO_TRANSLATIONS_PATH,
     EMBEDDINGS_PATH,
     IMAGE_EDITS_PATH,
@@ -145,6 +149,92 @@ async def _proxy_multipart_request(
     )
 
 
+async def _proxy_multipart_stream_request(
+    request: Request,
+    upstream_path: str,
+    *,
+    allowed_modes: frozenset[str],
+    endpoint_label: str,
+) -> Response:
+    form = await request.form()
+    model = form.get("model")
+    target = await resolve_target_from_model(str(model) if model is not None else "")
+    validate_target_launch_mode(target, allowed_modes, endpoint_label)
+
+    multipart_data: dict[str, str] = {}
+    multipart_files: dict[str, tuple[str | None, bytes, str | None]] = {}
+    for key, value in form.multi_items():
+        if key == "model":
+            multipart_data["model"] = target.upstream_model
+            continue
+        if _is_upload_file(value):
+            multipart_files[key] = (
+                value.filename,
+                await value.read(),
+                value.content_type,
+            )
+            continue
+        multipart_data[key] = str(value)
+
+    timeout = proxy_timeout_seconds()
+    url = upstream_url_for_path(target, upstream_path)
+    client = httpx.AsyncClient(timeout=httpx_client_timeout())
+    try:
+        async with upstream_concurrency_slot(target):
+            async with asyncio.timeout(timeout):
+                upstream_request = client.build_request(
+                    "POST",
+                    url,
+                    data=multipart_data,
+                    files=multipart_files or None,
+                )
+                response = await client.send(upstream_request, stream=True)
+    except UpstreamQueueTimeoutError as exc:
+        await client.aclose()
+        return gateway_error(503, "upstream_queue_timeout", exc.message)
+    except (TimeoutError, httpx.TimeoutException):
+        await client.aclose()
+        return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
+    except httpx.HTTPError:
+        await client.aclose()
+        return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
+
+    if response.status_code >= 400:
+        error_body = await response.aread()
+        await response.aclose()
+        await client.aclose()
+        content_type = response.headers.get("content-type", CONTENT_TYPE_JSON)
+        if CONTENT_TYPE_JSON in content_type:
+            try:
+                payload = json.loads(error_body)
+            except json.JSONDecodeError:
+                payload = {"error": {"message": error_body.decode(), "type": "upstream_error"}}
+            return JSONResponse(status_code=response.status_code, content=payload)
+        return Response(
+            content=error_body,
+            status_code=response.status_code,
+            media_type=content_type,
+        )
+
+    media_type = response.headers.get("content-type", "text/event-stream")
+    passthrough = passthrough_response_headers(response.headers)
+
+    async def iter_upstream() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        iter_upstream(),
+        status_code=response.status_code,
+        media_type=media_type,
+        headers=passthrough,
+    )
+
+
 async def proxy_image_edits(request: Request) -> Response:
     return await _proxy_multipart_request(
         request,
@@ -182,6 +272,15 @@ async def proxy_audio_transcriptions(request: Request) -> Response:
         AUDIO_TRANSCRIPTIONS_PATH,
         allowed_modes=STT_MODES,
         endpoint_label="speech-to-text",
+    )
+
+
+async def proxy_audio_transcriptions_stream(request: Request) -> Response:
+    return await _proxy_multipart_stream_request(
+        request,
+        AUDIO_TRANSCRIPTIONS_STREAM_PATH,
+        allowed_modes=STT_MODES,
+        endpoint_label="speech-to-text streaming",
     )
 
 

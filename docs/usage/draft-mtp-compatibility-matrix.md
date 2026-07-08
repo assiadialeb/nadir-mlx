@@ -55,7 +55,24 @@ Reference for speculative decoding options in Nadir MLX by **modality** and **mo
 | `draft_model` | Local folder or HF id for draft model (same process) |
 | `num_draft_tokens` | Tokens per speculative step |
 
-No `draft_kind` on TEXT until mlx-lm ships MTP server support (tracked MLX-67).
+No `draft_kind` on TEXT until mlx-lm ships MTP server support (tracked **MLX-67**).
+
+### MLX-67 preview flag
+
+When testing mlx-lm nightlies that expose `--draft-kind`, set:
+
+```bash
+export NADIR_TEXT_MTP_PREVIEW=1
+```
+
+This extends the TEXT advanced whitelist with `draft_kind` and `draft_block_size`, and maps them to mlx-lm CLI flags. **Do not enable in production** until mlx-lm MTP is officially released.
+
+| TEXT field (preview) | CLI flag | Notes |
+|----------------------|----------|-------|
+| `draft_kind` | `--draft-kind` | e.g. `mtp` when mlx-lm supports it |
+| `draft_block_size` | `--draft-block-size` | Paired with MTP drafts |
+| `draft_model` | `--draft-model` | Always available (classic speculative) |
+| `num_draft_tokens` | `--num-draft-tokens` | Always available |
 
 ## Validation layers
 

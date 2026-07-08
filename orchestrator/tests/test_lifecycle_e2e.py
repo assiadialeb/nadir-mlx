@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+from django.conf import settings
 from django.test import TransactionTestCase
 from fastapi.testclient import TestClient
 
@@ -124,7 +126,7 @@ class LifecycleE2ETests(TransactionTestCase):
         _mock_probe: MagicMock,
         mock_client_cls: MagicMock,
     ) -> None:
-        mock_resolve_dir.return_value = "/tmp/lifecycle-model"
+        mock_resolve_dir.return_value = Path(settings.MODELS_DIR) / "lifecycle-model"
         process = MagicMock()
         process.pid = 7100
         process.poll.return_value = None

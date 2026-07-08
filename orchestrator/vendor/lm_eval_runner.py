@@ -9,6 +9,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from orchestrator.security_utils import (
+    build_validated_http_url,
+    validated_launch_port,
+    validated_subprocess_model_reference,
+    validate_outbound_http_host,
+)
+
 # MMLU requires loglikelihood scoring; incompatible with local-chat-completions.
 INDUSTRY_LITE_TASKS = "ifeval,gsm8k"
 INDUSTRY_LITE_DEPENDENCIES = ("langdetect", "immutabledict")
@@ -50,9 +57,12 @@ def build_lm_eval_command(
     if config is None:
         raise ValueError(f"Unknown quality preset: {preset}")
 
-    base_url = f"http://{host}:{port}/v1/chat/completions"
+    safe_host = validate_outbound_http_host(host)
+    safe_port = validated_launch_port(port)
+    safe_model = validated_subprocess_model_reference(model)
+    base_url = build_validated_http_url(safe_host, safe_port, "/v1/chat/completions")
     model_args = (
-        f"model={model},base_url={base_url},"
+        f"model={safe_model},base_url={base_url},"
         f"num_concurrent={config['num_concurrent']},temperature={config['temperature']}"
     )
     output_dir.mkdir(parents=True, exist_ok=True)

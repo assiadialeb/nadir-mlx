@@ -7,7 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from django.conf import settings
+from orchestrator.model_utils import resolve_model_dir, validate_model_folder_name
+from orchestrator.security_utils import assert_path_under_directory, models_root_path
 
 _QUANTIZED_DRAFT_NAME_RE = re.compile(r"(qat|[-_]4bit|[-_]8bit)", re.IGNORECASE)
 
@@ -23,18 +24,24 @@ _MTP_ORDERED_ASSISTANT_ERROR = (
 def resolve_draft_model_directory(draft_model: str) -> Path | None:
     """Resolve a local draft model directory from advanced.draft_model."""
     value = draft_model.strip()
-    if not value or "/" in value and not value.startswith("/"):
+    if not value:
+        return None
+    if "/" not in value and "\\" not in value:
+        try:
+            folder = resolve_model_dir(validate_model_folder_name(value))
+        except ValueError:
+            return None
+        return folder if folder.is_dir() else None
+
+    if value.count("/") == 1 and not value.startswith(("/", "\\")):
         return None
 
-    candidate = Path(value)
-    if candidate.is_dir():
-        return candidate.resolve()
-
-    models_root = Path(settings.MODELS_DIR).resolve()
-    folder = (models_root / value).resolve()
-    if folder.is_relative_to(models_root) and folder.is_dir():
-        return folder
-    return None
+    try:
+        candidate = Path(value).expanduser().resolve()
+        folder = assert_path_under_directory(candidate, models_root_path())
+    except ValueError:
+        return None
+    return folder if folder.is_dir() else None
 
 
 def _read_model_config(model_dir: Path) -> dict[str, Any] | None:
