@@ -8,7 +8,7 @@
 
 accelerate==1.14.0
 aiohappyeyeballs==2.6.2
-aiohttp==3.14.1
+aiohttp==3.14.3
 aiosignal==1.4.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
@@ -21,7 +21,7 @@ charset-normalizer==3.4.7
 click==8.4.1
 datasets==5.0.0
 dill==0.4.1
-Django==5.2.15
+Django==6.0.7
 whitenoise==6.11.0
 psycopg[binary]==3.3.3
 einops==0.8.2
