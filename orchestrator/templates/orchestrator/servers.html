@@ -406,9 +406,8 @@ function openEditInstanceModal(button) {
     document.getElementById('edit_launch_mode').value = mode;
     document.getElementById('edit_port').value = button.dataset.port;
     renderConfigFieldsInto('edit-config-fields', mode, button.dataset.modelName, config, 'edit');
-    const advanced = config.advanced || {};
     document.getElementById('edit_config_advanced').value =
-        Object.keys(advanced).length ? JSON.stringify(advanced, null, 2) : '';
+        advancedJsonForTextarea(config.advanced || {});
     document.getElementById('edit-instance-modal').classList.remove('hidden');
 }
 
@@ -621,6 +620,43 @@ function formatGatewayAliasesFieldValue(value) {
     return String(value);
 }
 
+function readEnableThinkingFromConfig(mode, config) {
+    const advanced = config.advanced || {};
+    if (mode === 'TEXT') {
+        const templateArgs = advanced.chat_template_args || {};
+        return Boolean(templateArgs.enable_thinking);
+    }
+    if (mode === 'MULTIMODAL') {
+        return Boolean(advanced.enable_thinking);
+    }
+    return false;
+}
+
+function advancedJsonForTextarea(advanced) {
+    const copy = JSON.parse(JSON.stringify(advanced || {}));
+    delete copy.enable_thinking;
+    if (copy.chat_template_args && typeof copy.chat_template_args === 'object') {
+        const templateArgs = { ...copy.chat_template_args };
+        delete templateArgs.enable_thinking;
+        if (Object.keys(templateArgs).length === 0) {
+            delete copy.chat_template_args;
+        } else {
+            copy.chat_template_args = templateArgs;
+        }
+    }
+    return Object.keys(copy).length ? JSON.stringify(copy, null, 2) : '';
+}
+
+function readConfigFieldValue(field, mode, existingConfig) {
+    if (field.name === 'enable_thinking') {
+        return readEnableThinkingFromConfig(mode, existingConfig);
+    }
+    if (field.section === 'ops') {
+        return (existingConfig.ops || {})[field.name];
+    }
+    return existingConfig[field.name];
+}
+
 function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfig = {}, idPrefix = 'config') {
     const container = document.getElementById(containerId);
     const fields = configFieldsByMode[mode] || [];
@@ -649,10 +685,7 @@ function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfi
         label.htmlFor = `${idPrefix}_${field.name}`;
         wrapper.appendChild(label);
 
-        const ops = existingConfig.ops || {};
-        const existingValue = field.section === 'ops'
-            ? ops[field.name]
-            : existingConfig[field.name];
+        const existingValue = readConfigFieldValue(field, mode, existingConfig);
 
         let input;
         if (field.widget === 'select') {

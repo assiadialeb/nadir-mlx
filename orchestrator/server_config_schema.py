@@ -132,6 +132,16 @@ MODE_FIELDS: tuple[ConfigFieldSpec, ...] = (
         help_text="Required for some custom tokenizers or architectures.",
     ),
     ConfigFieldSpec(
+        name="enable_thinking",
+        label="Enable thinking",
+        widget="checkbox",
+        modes=("TEXT", "MULTIMODAL"),
+        default=False,
+        help_text=(
+            "Expose internal reasoning (disable for report-style clients such as Spectra)."
+        ),
+    ),
+    ConfigFieldSpec(
         name="disable_batching",
         label="Disable batching",
         widget="checkbox",
@@ -468,6 +478,38 @@ def _default_bind_host() -> str:
     return str(getattr(settings, "MLX_DEFAULT_SERVER_HOST", "127.0.0.1"))
 
 
+def _merge_enable_thinking_into_advanced(
+    launch_mode: str,
+    advanced: dict[str, Any],
+    enabled: bool,
+) -> dict[str, Any]:
+    """Map the UI checkbox to the advanced keys expected by mlx-lm / mlx-vlm."""
+    merged = dict(advanced)
+    if launch_mode == "MULTIMODAL":
+        merged["enable_thinking"] = enabled
+        return merged
+    if launch_mode == "TEXT":
+        template_args = dict(merged.get("chat_template_args") or {})
+        template_args["enable_thinking"] = enabled
+        merged["chat_template_args"] = template_args
+    return merged
+
+
+def read_enable_thinking_from_server_config(
+    launch_mode: str,
+    server_config: dict[str, Any] | None,
+) -> bool:
+    """Return the effective enable_thinking flag from stored server_config."""
+    advanced = (server_config or {}).get("advanced") or {}
+    if launch_mode == "MULTIMODAL":
+        return bool(advanced.get("enable_thinking"))
+    if launch_mode == "TEXT":
+        template_args = advanced.get("chat_template_args")
+        if isinstance(template_args, dict):
+            return bool(template_args.get("enable_thinking"))
+    return False
+
+
 def get_fields_for_mode(launch_mode: str) -> list[ConfigFieldSpec]:
     return [
         field
@@ -608,12 +650,13 @@ def validate_and_normalize_server_config(
 ) -> dict[str, Any]:
     """Merge defaults, validate fields, and return a storable server_config dict."""
     raw = dict(raw_config or {})
-    advanced_raw = raw.pop("advanced", {})
+    advanced_raw = raw.pop("advanced", None)
+    enable_thinking = raw.pop("enable_thinking", None)
     existing_ops = raw.pop("ops", None)
     normalized = build_default_server_config(launch_mode, model_name)
 
     for field in get_config_fields_for_mode(launch_mode):
-        if field.name == "gateway_aliases":
+        if field.name in ("gateway_aliases", "enable_thinking"):
             continue
         if field.name not in raw:
             continue
@@ -634,7 +677,15 @@ def validate_and_normalize_server_config(
         primary_alias=str(normalized["model_id"]),
     )
 
-    normalized["advanced"] = _validate_advanced(launch_mode, advanced_raw)
+    advanced_payload: dict[str, Any] = dict(advanced_raw) if isinstance(advanced_raw, dict) else {}
+    if enable_thinking is not None:
+        advanced_payload = _merge_enable_thinking_into_advanced(
+            launch_mode,
+            advanced_payload,
+            bool(enable_thinking),
+        )
+
+    normalized["advanced"] = _validate_advanced(launch_mode, advanced_payload)
     validate_mtp_draft_advanced(launch_mode, normalized["advanced"])
     return normalized
 

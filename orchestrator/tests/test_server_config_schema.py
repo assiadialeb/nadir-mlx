@@ -127,6 +127,44 @@ class ServerConfigSchemaTests(TestCase):
         )
         self.assertEqual(config["gateway_aliases"], [])
 
+    def test_parse_enable_thinking_checkbox_multimodal(self) -> None:
+        enabled = parse_server_config_from_post(
+            {"config_enable_thinking": "on"},
+            "MULTIMODAL",
+            "gemma-4-e4b",
+        )
+        self.assertTrue(enabled["advanced"]["enable_thinking"])
+
+        disabled = parse_server_config_from_post({}, "MULTIMODAL", "gemma-4-e4b")
+        self.assertFalse(disabled["advanced"]["enable_thinking"])
+
+    def test_parse_enable_thinking_checkbox_text(self) -> None:
+        enabled = parse_server_config_from_post(
+            {"config_enable_thinking": "on"},
+            "TEXT",
+            "Qwen-model",
+        )
+        self.assertTrue(
+            enabled["advanced"]["chat_template_args"]["enable_thinking"],
+        )
+
+        disabled = parse_server_config_from_post({}, "TEXT", "Qwen-model")
+        self.assertFalse(
+            disabled["advanced"]["chat_template_args"]["enable_thinking"],
+        )
+
+    def test_parse_enable_thinking_checkbox_overrides_advanced_json(self) -> None:
+        config = parse_server_config_from_post(
+            {
+                "config_enable_thinking": "on",
+                "config_advanced": '{"enable_thinking": false, "draft_kind": "mtp"}',
+            },
+            "MULTIMODAL",
+            "gemma-4-e4b",
+        )
+        self.assertTrue(config["advanced"]["enable_thinking"])
+        self.assertEqual(config["advanced"]["draft_kind"], "mtp")
+
     def test_validate_image_quantize_override_advanced(self) -> None:
         config = validate_and_normalize_server_config(
             "IMAGE",
