@@ -80,6 +80,7 @@ These are **not** part of `advanced`; use the main form.
 |-------|------|-------------|
 | `max_tokens` | int (1–131072) | Server default when the client omits `max_tokens`. |
 | `trust_remote_code` | bool | Pass `--trust-remote-code` to mlx-lm / mlx-vlm (custom tokenizers / architectures). |
+| `enable_thinking` | bool (checkbox) | Default thinking mode. **MULTIMODAL:** stored as `advanced.enable_thinking`. **TEXT:** stored as `advanced.chat_template_args.enable_thinking`. Default: off. Disable for report-style clients (e.g. Spectra). |
 
 ### MULTIMODAL only
 
