@@ -49,9 +49,11 @@ SQLite is used when no PostgreSQL host is configured.
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | Alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
 | `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll during wake |
+| `NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS` | `15` | Mid-request `last_used_at` refresh during long JSON calls and SSE (incl. prefill) |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Stop idle `on_demand` instances |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | Idle watcher interval |
 | `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` instances before a load when memory is tight |
+| `NADIR_LRU_EVICTION_GRACE_SECONDS` | `60` | Min idle age before LRU eviction; floored to `2 ×` activity heartbeat |
 | `NADIR_MEMORY_RESERVE_GB` | `4` | Keep this much free memory (GiB) when evaluating LRU eviction |
 | `NADIR_GATEWAY_PUBLIC_BASE_URL` | `http://127.0.0.1:11380` | Base URL for generated image links |
 | `NADIR_GATEWAY_API_KEY` | — | Required when binding outside loopback; `Authorization: Bearer` or `X-API-Key` |

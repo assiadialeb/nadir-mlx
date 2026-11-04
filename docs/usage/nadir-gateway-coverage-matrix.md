@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: November 2026 — Ollama bootstrap + legacy embeddings (MLX-119).
+Last updated: November 2026 — gateway security hardening + activity heartbeat / LRU grace.
 
 ## Cross-cutting (all modes)
 
@@ -16,8 +16,11 @@ Last updated: November 2026 — Ollama bootstrap + legacy embeddings (MLX-119).
 | `GET /v1/models/{id}` | ✅ |
 | In-memory alias cache (avoid DB on every hit) | ✅ (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
 | Wake / idle stop for instances | ✅ [runbook](instance-lifecycle.md) |
+| Activity heartbeat + LRU eviction grace | ✅ mid-request `last_used_at` (~15s); grace ≥ `2 ×` heartbeat |
 | API key auth on gateway | ✅ optional on loopback; required for non-loopback binds via `NADIR_GATEWAY_API_KEY` |
 | Trusted Host / Origin guard | ✅ `TrustedHostMiddleware` + reject unknown `Origin`; JSON `Content-Type` required (or absent) |
+| Body size limit | ✅ `NADIR_GATEWAY_MAX_BODY_MB` (default 50) |
+| Inference worker key forward | ✅ `NADIR_INFERENCE_API_KEY` injected upstream (Nadir workers); mlx-lm/vlm loopback-only |
 | `X-Request-Id` on responses | ✅ |
 | CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` (no credentials; `*` collapsed safely) |
 | Shared upstream httpx client | ✅ |
@@ -79,6 +82,7 @@ Last updated: November 2026 — Ollama bootstrap + legacy embeddings (MLX-119).
 | `POST /v1/images/generations` | ✅ |
 | `b64_json` | ✅ |
 | `response_format: url` | ✅ (local gateway URL, no CDN) |
+| `GET /v1/images/files/{id}` | ✅ public (unguessable UUID; for `<img src>` without API key) |
 | **Streaming** | ❌ |
 | edits / variations / inpainting | ⚠️ routes exist; upstream returns **501** Not Implemented |
 | Long generation timeout | ⚠️ `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` (default 300s) |

@@ -13,6 +13,8 @@ Operator guide for Ollama-like **sleep / wake** behaviour on Nadir MLX.
 | **on_demand** | Instance may be **stopped** when idle; gateway **wakes** it on first request |
 | **Idle offload** | Background watcher stops `on_demand` instances after `idle_minutes` without traffic |
 | **LRU eviction** | Before starting a model, stop least-recently-used `on_demand` instances if free memory is below the pending footprint (+ reserve) |
+| **Eviction grace** | Instances touched within the grace window are not evictable (default 60s, at least `2 ×` activity heartbeat) |
+| **Activity heartbeat** | Gateway refreshes `last_used_at` ~every 15s during long JSON calls and SSE streams (including prefill waits) |
 | **Startup reconcile** | On app boot, `always_on` instances left `STOPPED`/`FAILED` (e.g. after host reboot) are restarted |
 | **Cold start** | Time to load weights into unified memory after wake |
 
@@ -38,11 +40,16 @@ Recommendations:
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Global switch for idle watcher |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | How often idle candidates are evaluated |
 | `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` instances under memory pressure before load |
+| `NADIR_LRU_EVICTION_GRACE_SECONDS` | `60` | Min idle age before LRU eviction; floored to `2 ×` heartbeat |
+| `NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS` | `15` | Refresh `last_used_at` during long requests / streams |
 | `NADIR_MEMORY_RESERVE_GB` | `4` | Free-memory headroom (GiB) kept when deciding to evict |
 | `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED` | `true` | Restore `always_on` instances after process/host restart |
 
 !!! note "always_on is never LRU-evicted"
     Only `lifecycle_mode=on_demand` instances are candidates. Primary chat models should stay `always_on`.
+
+!!! tip "Long generations stay protected"
+    `last_used_at` is updated at request start, on a mid-request heartbeat (JSON background task and SSE, including mlx-lm prefill before the first token), and at request/stream end. That keeps active instances outside the eviction grace and idle-offload windows without a multi-minute lockout after every call. Heartbeat failures are best-effort (logged, never abort inference).
 
 ## Host / process restart
 
@@ -105,7 +112,7 @@ Clients only need the **gateway alias** in `model` and `api_base` `http://<host>
 | Immediate 503 on stopped alias | `lifecycle_mode` still `always_on` |
 | Timeout on first request | Increase client timeout and `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` |
 | Instance never sleeps | Traffic still hitting instance port directly (bypass gateway) |
-| Instance sleeps during long stream | Bug — report; `last_used_at` should update at stream start |
+| Instance sleeps / is LRU-evicted during long stream or prefill | Confirm activity heartbeat is enabled; set `NADIR_LRU_EVICTION_GRACE_SECONDS` ≥ `2 ×` `NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS` |
 | `always_on` still down after reboot | Confirm `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED`; check logs for `Startup reconcile` |
 
 ## Related

@@ -29,6 +29,8 @@ For `url`, files are stored under `data/generated_images/` and exposed at:
 
 `GET http://127.0.0.1:11380/v1/images/files/{id}`
 
+That path is **intentionally public** (unguessable UUID) so `<img src="…">` works without sending an API key. Prefer loopback or a private network; rotate / TTL via `IMAGE_OUTPUT_TTL_SECONDS`.
+
 Configure the public base if clients reach the gateway via another host:
 
 ```bash
