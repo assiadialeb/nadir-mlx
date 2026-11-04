@@ -206,9 +206,16 @@ def touch_instance_last_used_at(instance_id: int) -> None:
 
 
 def instance_activity_at(instance: InferenceInstance) -> datetime:
-    """Return the timestamp used to evaluate idle offload eligibility."""
+    """Return the timestamp used for idle offload / LRU activity ordering.
+
+    Prefer ``last_used_at``. For a RUNNING instance without that stamp, use
+    ``now`` so we never treat ``created_at`` as multi-day idle after a fresh
+    start. ``stopped_at`` / ``created_at`` remain fallbacks for stopped rows.
+    """
     if instance.last_used_at is not None:
         return instance.last_used_at
+    if instance.status == "RUNNING":
+        return timezone.now()
     if instance.stopped_at is not None:
         return instance.stopped_at
     return instance.created_at

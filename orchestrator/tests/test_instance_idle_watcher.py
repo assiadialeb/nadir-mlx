@@ -72,6 +72,29 @@ class IdleOffloadAttemptTests(TestCase):
         mock_stop.assert_not_called()
 
     @patch("orchestrator.instance_idle_watcher.stop_instance")
+    def test_skips_running_without_last_used_at(self, mock_stop: MagicMock) -> None:
+        """Fresh starts must not be killed via created_at idle fallback."""
+        InferenceInstance.objects.create(
+            model_name="fresh-start-model",
+            port=11436,
+            launch_mode="TEXT",
+            server_config={
+                "model_id": "fresh-chat",
+                "ops": {
+                    "lifecycle_mode": LIFECYCLE_MODE_ON_DEMAND,
+                    "idle_minutes": 5,
+                },
+            },
+            status="RUNNING",
+            last_used_at=None,
+            created_at=timezone.now() - timedelta(days=30),
+        )
+        _attempt_idle_offload(
+            InferenceInstance.objects.get(model_name="fresh-start-model"),
+        )
+        mock_stop.assert_not_called()
+
+    @patch("orchestrator.instance_idle_watcher.stop_instance")
     def test_skips_always_on_instance(self, mock_stop: MagicMock) -> None:
         InferenceInstance.objects.create(
             model_name="always-on-model",
