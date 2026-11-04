@@ -97,7 +97,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self._touch_patcher.stop()
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     def test_embeddings_proxies_to_upstream(
         self,
         mock_client_cls: MagicMock,
@@ -122,7 +122,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(upstream_body["input"], "hello")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     def test_embeddings_batch_input_preserved(
         self,
         mock_client_cls: MagicMock,
@@ -151,10 +151,12 @@ class GatewayModeProxyTests(SimpleTestCase):
             json={"model": "llama-chat", "input": "hello"},
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+        payload = response.json()["error"]
+        self.assertEqual(payload["type"], "invalid_request_error")
+        self.assertEqual(payload["code"], "unsupported_endpoint")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=IMAGE_TARGET)
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     def test_image_generations_proxies_to_upstream(
         self,
         mock_client_cls: MagicMock,
@@ -182,7 +184,9 @@ class GatewayModeProxyTests(SimpleTestCase):
             json={"model": "llama-chat", "prompt": "a cat"},
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+        payload = response.json()["error"]
+        self.assertEqual(payload["type"], "invalid_request_error")
+        self.assertEqual(payload["code"], "unsupported_endpoint")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=IMAGE_TARGET)
     def test_rerank_rejects_image_instance(self, _mock_resolve: MagicMock) -> None:
@@ -195,10 +199,12 @@ class GatewayModeProxyTests(SimpleTestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+        payload = response.json()["error"]
+        self.assertEqual(payload["type"], "invalid_request_error")
+        self.assertEqual(payload["code"], "unsupported_endpoint")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready")
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     def test_rerank_proxies_to_upstream(
         self,
         mock_client_cls: MagicMock,
@@ -247,7 +253,9 @@ class GatewayModeProxyTests(SimpleTestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+        payload = response.json()["error"]
+        self.assertEqual(payload["type"], "invalid_request_error")
+        self.assertEqual(payload["code"], "unsupported_endpoint")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     def test_rerank_rejects_embedding_instance(self, _mock_resolve: MagicMock) -> None:
@@ -260,10 +268,12 @@ class GatewayModeProxyTests(SimpleTestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+        payload = response.json()["error"]
+        self.assertEqual(payload["type"], "invalid_request_error")
+        self.assertEqual(payload["code"], "unsupported_endpoint")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready")
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     def test_audio_speech_streams_binary_payload(
         self,
         mock_client_cls: MagicMock,
@@ -302,7 +312,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(upstream_body["response_format"], "opus")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready")
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     def test_audio_speech_returns_binary_payload(
         self,
         mock_client_cls: MagicMock,
@@ -344,10 +354,12 @@ class GatewayModeProxyTests(SimpleTestCase):
             json={"model": "whispers", "input": "Hello"},
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+        payload = response.json()["error"]
+        self.assertEqual(payload["type"], "invalid_request_error")
+        self.assertEqual(payload["code"], "unsupported_endpoint")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready")
-    @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.mode_proxy.get_http_client")
     def test_audio_translations_forwards_multipart_file(
         self,
         mock_client_cls: MagicMock,
@@ -374,7 +386,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         )
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready")
-    @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.mode_proxy.get_http_client")
     def test_audio_transcriptions_forwards_multipart_file(
         self,
         mock_client_cls: MagicMock,
@@ -402,7 +414,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(call_kwargs["data"]["model"], "whispers")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready")
-    @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.mode_proxy.get_http_client")
     def test_audio_transcriptions_stream_relays_sse(
         self,
         mock_client_cls: MagicMock,
@@ -440,7 +452,7 @@ class GatewayModeProxyTests(SimpleTestCase):
         )
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready")
-    @patch("orchestrator.gateway.services.mode_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.mode_proxy.get_http_client")
     def test_audio_transcriptions_stream_returns_upstream_error_json(
         self,
         mock_client_cls: MagicMock,
@@ -471,7 +483,9 @@ class GatewayModeProxyTests(SimpleTestCase):
             data={"model": "kokoro"},
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["type"], "unsupported_endpoint")
+        payload = response.json()["error"]
+        self.assertEqual(payload["type"], "invalid_request_error")
+        self.assertEqual(payload["code"], "unsupported_endpoint")
 
     @patch("orchestrator.gateway.routes.models.list_running_gateway_models")
     def test_list_models_endpoint_returns_openai_format(

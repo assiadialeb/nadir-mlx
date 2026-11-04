@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: June 2026 — wake on demand and idle offload implemented.
+Last updated: November 2026 — OpenAI compatibility P0 (alias restore, stream errors, error envelope).
 
 ## Cross-cutting (all modes)
 
@@ -13,9 +13,13 @@ Last updated: June 2026 — wake on demand and idle offload implemented.
 |-------|--------|
 | Alias → RUNNING instance routing | ✅ |
 | Aggregated `GET /v1/models` | ✅ |
+| `GET /v1/models/{id}` | ✅ |
 | In-memory alias cache (avoid DB on every hit) | ✅ (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
 | Wake / idle stop for instances | ✅ [runbook](instance-lifecycle.md) |
-| API key auth on gateway | ❌ (enforce at reverse proxy or client if needed) |
+| API key auth on gateway | ✅ optional via `NADIR_GATEWAY_API_KEY` |
+| `X-Request-Id` on responses | ✅ |
+| CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
+| Shared upstream httpx client | ✅ |
 | Multi-worker uvicorn | ❌ single process by default |
 
 ## TEXT
@@ -71,7 +75,7 @@ Last updated: June 2026 — wake on demand and idle offload implemented.
 | `b64_json` | ✅ |
 | `response_format: url` | ✅ (local gateway URL, no CDN) |
 | **Streaming** | ❌ |
-| edits / variations / inpainting | ❌ v1 (501 Not Implemented) |
+| edits / variations / inpainting | ⚠️ routes exist; upstream returns **501** Not Implemented |
 | Long generation timeout | ⚠️ `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` (default 300s) |
 
 ## TTS (Kokoro)

@@ -56,7 +56,7 @@ def _mock_buffered_client(mock_client_cls: MagicMock, response: MagicMock) -> As
 @pytest.mark.django_db(transaction=True)
 @patch("orchestrator.lifecycle_services.touch_instance_last_used_at")
 @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
-@patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+@patch("orchestrator.gateway.services.http_proxy.get_http_client")
 def test_chat_completion_response_matches_openapi_contract(
     mock_client_cls: MagicMock,
     _mock_ready: MagicMock,
@@ -135,7 +135,8 @@ def test_chat_completion_unavailable_model_returns_openai_error_shape(
 
     error = response.json()["error"]
     assert error["code"] == "model_unavailable"
-    assert error["type"] == "model_unavailable"
+    assert error["type"] == "server_error"
+    assert error["code"] == "model_unavailable"
 
 
 @pytest.mark.contract

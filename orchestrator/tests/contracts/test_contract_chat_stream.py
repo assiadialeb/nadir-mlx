@@ -37,7 +37,7 @@ def _mock_streaming_client(mock_client_cls: MagicMock, response: MagicMock) -> A
 @pytest.mark.django_db(transaction=True)
 @patch("orchestrator.lifecycle_services.touch_instance_last_used_at")
 @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
-@patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+@patch("orchestrator.gateway.services.http_proxy.get_http_client")
 def test_chat_completion_stream_chunks_match_openapi_contract(
     mock_client_cls: MagicMock,
     _mock_ready: MagicMock,
