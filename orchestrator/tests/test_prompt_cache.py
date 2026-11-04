@@ -27,8 +27,7 @@ class PromptCacheDefaultsTests(SimpleTestCase):
         self.assertEqual(mid["prompt_cache_size"], 24)
         large = default_prompt_cache_settings(total_bytes=96 * 1024**3)
         self.assertEqual(large["prompt_cache_size"], 32)
-        self.assertGreaterEqual(large["prompt_cache_bytes"], 512 * 1024**2)
-        self.assertLessEqual(large["prompt_cache_bytes"], 8 * 1024**3)
+        self.assertNotIn("prompt_cache_bytes", large)
 
     def test_resolve_cli_flags_prefer_explicit_advanced(self) -> None:
         flags = resolve_prompt_cache_cli_flags(
@@ -36,6 +35,14 @@ class PromptCacheDefaultsTests(SimpleTestCase):
         )
         self.assertEqual(flags["prompt-cache-size"], 7)
         self.assertEqual(flags["prompt-cache-bytes"], 2_000_000)
+
+    def test_resolve_cli_flags_omits_bytes_by_default(self) -> None:
+        flags = resolve_prompt_cache_cli_flags({"prompt_cache_size": 12})
+        self.assertEqual(flags["prompt-cache-size"], 12)
+        self.assertNotIn("prompt-cache-bytes", flags)
+        flags_default = resolve_prompt_cache_cli_flags({})
+        self.assertIn("prompt-cache-size", flags_default)
+        self.assertNotIn("prompt-cache-bytes", flags_default)
 
     @patch(
         "orchestrator.prompt_cache.host_total_bytes",
@@ -47,7 +54,7 @@ class PromptCacheDefaultsTests(SimpleTestCase):
     ) -> None:
         config = build_default_server_config("TEXT")
         self.assertEqual(config["advanced"]["prompt_cache_size"], 24)
-        self.assertIn("prompt_cache_bytes", config["advanced"])
+        self.assertNotIn("prompt_cache_bytes", config["advanced"])
 
     def test_validate_accepts_prompt_cache_knobs(self) -> None:
         config = validate_and_normalize_server_config(

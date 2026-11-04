@@ -104,8 +104,32 @@ def test_assert_serve_ports_free_raises_when_busy() -> None:
     )
     with patch("orchestrator.serve_supervisor._port_in_use", return_value=True):
         with patch("orchestrator.serve_supervisor._listener_pids", return_value=[999]):
-            with pytest.raises(SystemExit, match="already in use"):
-                assert_serve_ports_free(spec)
+            with patch(
+                "orchestrator.serve_supervisor._process_command",
+                return_value="python manage.py runserver",
+            ):
+                with pytest.raises(SystemExit, match="already in use"):
+                    assert_serve_ports_free(spec)
+
+
+def test_port_in_use_allows_bind_with_reuseaddr_after_busy_connect() -> None:
+    """TIME_WAIT must not look like a live listener (servers use SO_REUSEADDR)."""
+    from orchestrator.serve_supervisor import _port_in_use
+
+    import socket as socket_mod
+
+    server = socket_mod.socket(socket_mod.AF_INET, socket_mod.SOCK_STREAM)
+    server.setsockopt(socket_mod.SOL_SOCKET, socket_mod.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.listen(1)
+    client = socket_mod.socket(socket_mod.AF_INET, socket_mod.SOCK_STREAM)
+    client.connect(("127.0.0.1", port))
+    server.accept()
+    client.close()
+    server.close()
+    # Port may be in TIME_WAIT; our check should still report free.
+    assert _port_in_use("127.0.0.1", port) is False
 
 
 def test_reclaim_stale_serve_ports_signals_manage_py_listeners() -> None:
@@ -133,7 +157,7 @@ def test_reclaim_stale_serve_ports_signals_manage_py_listeners() -> None:
     with patch("orchestrator.serve_supervisor._port_in_use", side_effect=port_in_use):
         with patch("orchestrator.serve_supervisor._listener_pids", return_value=[4242]):
             with patch(
-                "orchestrator.serve_supervisor._is_nadir_serve_listener",
+                "orchestrator.serve_supervisor._is_reclaimable_nadir_orphan",
                 return_value=True,
             ):
                 with patch("orchestrator.serve_supervisor.os.kill", side_effect=kill_pid) as mock_kill:
@@ -141,6 +165,27 @@ def test_reclaim_stale_serve_ports_signals_manage_py_listeners() -> None:
     assert reclaimed == [4242]
     assert mock_kill.called
     assert 8000 not in busy_ports
+
+
+def test_is_reclaimable_requires_this_manage_py_and_dead_parent(tmp_path: Path) -> None:
+    from orchestrator.serve_supervisor import _is_reclaimable_nadir_orphan
+
+    manage = tmp_path / "manage.py"
+    manage.write_text("# stub\n", encoding="utf-8")
+    command = f"python {manage.resolve()} runserver 127.0.0.1:8000 --noreload"
+    with patch(
+        "orchestrator.serve_supervisor._process_command",
+        return_value=command.lower(),
+    ):
+        with patch("orchestrator.serve_supervisor._process_ppid", return_value=1):
+            assert _is_reclaimable_nadir_orphan(99, tmp_path) is True
+        with patch("orchestrator.serve_supervisor._process_ppid", return_value=4242):
+            with patch("orchestrator.serve_supervisor._pid_is_alive", return_value=True):
+                assert _is_reclaimable_nadir_orphan(99, tmp_path) is False
+    other = f"python /other/project/manage.py runserver 127.0.0.1:8000"
+    with patch("orchestrator.serve_supervisor._process_command", return_value=other):
+        with patch("orchestrator.serve_supervisor._process_ppid", return_value=1):
+            assert _is_reclaimable_nadir_orphan(99, tmp_path) is False
 
 
 def test_wait_for_exit_returns_none_when_stop_requested() -> None:

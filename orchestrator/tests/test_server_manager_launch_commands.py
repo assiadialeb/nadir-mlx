@@ -34,7 +34,7 @@ class ServerManagerLaunchCommandTests(SimpleTestCase):
         self.assertIn("--temp", command)
         self.assertIn("--chat-template-args", command)
         self.assertIn("--prompt-cache-size", command)
-        self.assertIn("--prompt-cache-bytes", command)
+        self.assertNotIn("--prompt-cache-bytes", command)
 
     @patch("orchestrator.server_manager._get_python_bin", return_value="python")
     def test_build_launch_command_text_honors_explicit_prompt_cache(

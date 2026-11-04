@@ -305,7 +305,13 @@
                         <td class="py-2 pr-3">{% if row.visible_ttft_ms != None %}{{ row.visible_ttft_ms|floatformat:0 }} ms{% else %}—{% endif %}</td>
                         <td class="py-2 pr-3">{% if row.prefill_ms != None %}{{ row.prefill_ms|floatformat:0 }} ms{% else %}—{% endif %}</td>
                         <td class="py-2 pr-3">{% if row.queue_wait_ms != None %}{{ row.queue_wait_ms|floatformat:0 }} ms{% else %}—{% endif %}</td>
-                        <td class="py-2 pr-3">{% if row.wake_ms != None %}{{ row.wake_ms|floatformat:0 }} ms{% if row.cold_start %}*{% endif %}{% else %}—{% endif %}</td>
+                        <td class="py-2 pr-3">
+                            {% if row.wake_ms != None %}
+                            <span class="{% if row.cold_start %}text-amber-700 font-medium{% endif %}">
+                                {{ row.wake_ms|floatformat:0 }} ms{% if row.cold_start %} cold{% endif %}
+                            </span>
+                            {% else %}—{% endif %}
+                        </td>
                         <td class="py-2 pr-3">{% if row.generation_tokens_per_s != None %}{{ row.generation_tokens_per_s|floatformat:1 }}{% else %}—{% endif %}</td>
                         <td class="py-2 pr-3">{% if row.cached_prompt_tokens != None %}{{ row.cached_prompt_tokens }}{% if row.prompt_tokens != None %}/{{ row.prompt_tokens }}{% endif %}{% else %}—{% endif %}</td>
                     </tr>
@@ -313,7 +319,7 @@
                 </tbody>
             </table>
         </div>
-        <p class="mt-2 text-xs text-slate-500">* cold start (wake from stopped/failed/loading). Cache = cached_prompt_tokens / prompt_tokens from mlx-lm.</p>
+        <p class="mt-2 text-xs text-slate-500">Wake marked <span class="text-amber-700 font-medium">cold</span> includes load + optional post-load warmup. Cache = cached_prompt_tokens / prompt_tokens from mlx-lm.</p>
         {% else %}
         <p class="text-sm text-slate-500">No gateway requests recorded yet.</p>
         {% endif %}

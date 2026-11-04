@@ -710,9 +710,16 @@ def start_instance(
             instance.save(update_fields=["status"])
             raise RuntimeError(f"Server failed to start: {failure}")
 
+        # Seed activity so idle offload does not treat created_at / old stopped_at
+        # as "idle for days" and stop a freshly started on_demand instance.
         instance.status = "RUNNING"
-        instance.save(update_fields=["status"])
+        instance.stopped_at = None
+        instance.last_used_at = timezone.now()
+        instance.save(update_fields=["status", "stopped_at", "last_used_at"])
         clear_gateway_route_cache()
+        from orchestrator.instance_warmup import maybe_run_load_warmup
+
+        maybe_run_load_warmup(instance)
         return instance
     except Exception:
         if instance.status != "FAILED":
@@ -862,6 +869,9 @@ def stop_instance(instance: InferenceInstance) -> None:
         instance.status = "STOPPED"
         instance.stopped_at = timezone.now()
         instance.save(update_fields=["status", "pid", "stopped_at", "server_config"])
+        from orchestrator.instance_warmup import mark_instance_needs_warmup
+
+        mark_instance_needs_warmup(instance.pk)
     except Exception:
         _set_manual_stop_in_progress(instance, active=False)
         raise

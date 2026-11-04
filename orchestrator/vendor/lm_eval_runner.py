@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+from orchestrator.gateway_client_auth import gateway_api_key
 from orchestrator.security_utils import (
     build_validated_http_url,
     validated_launch_port,
@@ -157,12 +159,18 @@ def run_lm_eval(
         }
 
     command = build_lm_eval_command(host, port, model, output_dir, preset=preset)
+    # lm_eval local-chat-completions sends Authorization: Bearer $OPENAI_API_KEY.
+    env = os.environ.copy()
+    gateway_key = gateway_api_key()
+    if gateway_key:
+        env["OPENAI_API_KEY"] = gateway_key
     result = subprocess.run(
         command,
         capture_output=True,
         text=True,
         encoding="utf-8",
         timeout=timeout_seconds,
+        env=env,
     )
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "lm_eval failed").strip()

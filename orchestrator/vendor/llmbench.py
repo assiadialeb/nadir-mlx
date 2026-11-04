@@ -34,6 +34,21 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Optional
 
+def _gateway_auth_headers() -> dict[str, str]:
+    """Attach Nadir gateway API key when configured (OpenAI Bearer)."""
+    try:
+        from orchestrator.gateway_client_auth import gateway_auth_headers
+
+        return gateway_auth_headers()
+    except ImportError:
+        key = (
+            os.environ.get("NADIR_GATEWAY_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or ""
+        ).strip()
+        return {"Authorization": f"Bearer {key}"} if key else {}
+
+
 try:
     import httpx
 except ImportError:
@@ -304,7 +319,7 @@ async def run_concurrent(
     提示詞循環使用（i % len(prompts)），確保測試多樣性。
     """
     semaphore = asyncio.Semaphore(concurrency)  # 限制最大並發數
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=_gateway_auth_headers()) as client:
         async def bounded(prompt):
             async with semaphore:
                 return await single_request(
@@ -330,7 +345,11 @@ def get_model(base_url: str, override: Optional[str]) -> str:
     if override:
         return override
     try:
-        resp = httpx.get(f"{base_url}/v1/models", timeout=10)
+        resp = httpx.get(
+            f"{base_url}/v1/models",
+            headers=_gateway_auth_headers(),
+            timeout=10,
+        )
         models = resp.json()["data"]
         if models:
             return models[0]["id"]

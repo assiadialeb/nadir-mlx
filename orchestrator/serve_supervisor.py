@@ -74,7 +74,11 @@ def required_bind_services(spec: ServeSpec) -> list[BoundService]:
 
 
 def _port_in_use(host: str, port: int) -> bool:
-    """Return True when ``host:port`` cannot be bound."""
+    """Return True when a real listener blocks ``host:port``.
+
+    Uses ``SO_REUSEADDR`` like Django/uvicorn so a leftover TIME_WAIT socket
+    after Ctrl+C is not reported as ``already in use``.
+    """
     family = socket.AF_INET6 if ":" in host and not host.startswith(":") else socket.AF_INET
     bind_host = host
     if host in {"0.0.0.0", "::"}:
@@ -82,6 +86,7 @@ def _port_in_use(host: str, port: int) -> bool:
         family = socket.AF_INET if bind_host == "127.0.0.1" else socket.AF_INET6
     with socket.socket(family, socket.SOCK_STREAM) as sock:
         try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((bind_host, port))
             return False
         except OSError:
@@ -116,10 +121,19 @@ def assert_serve_ports_free(spec: ServeSpec) -> None:
         if not _port_in_use(service.host, service.port):
             continue
         pids = _listener_pids(service.port)
-        pid_hint = f" (pid {pids[0]})" if pids else ""
+        if pids:
+            details = ", ".join(
+                f"{pid} ({_process_command(pid)[:80] or 'unknown'})" for pid in pids[:3]
+            )
+            pid_hint = f" — listener(s): {details}"
+            kill_hint = f" Try: kill {' '.join(str(pid) for pid in pids)}"
+        else:
+            pid_hint = ""
+            kill_hint = ""
         raise SystemExit(
             f"Port {service.port} ({service.label}) is already in use{pid_hint}. "
             "Nadir seems already running — stop the existing process or change the port."
+            f"{kill_hint}"
         )
 
 
@@ -237,8 +251,8 @@ def _terminate_process_group(process: subprocess.Popen[bytes], *, grace_seconds:
         pass
 
 
-def _is_nadir_serve_listener(pid: int) -> bool:
-    """Return True when ``pid`` looks like a supervised manage.py child."""
+def _process_command(pid: int) -> str:
+    """Best-effort process command line (lowercased)."""
     try:
         result = subprocess.run(
             ["ps", "-p", str(pid), "-o", "command="],
@@ -248,13 +262,61 @@ def _is_nadir_serve_listener(pid: int) -> bool:
             timeout=2,
         )
     except subprocess.TimeoutExpired:
+        return ""
+    except OSError:
+        return ""
+    return (result.stdout or "").strip().lower()
+
+
+def _process_ppid(pid: int) -> int | None:
+    """Return parent PID for ``pid``, or None when unknown."""
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "ppid="],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    except OSError:
+        return None
+    raw = (result.stdout or "").strip()
+    if not raw.isdigit():
+        return None
+    return int(raw)
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
         return False
+    try:
+        os.kill(pid, 0)
+        return True
     except OSError:
         return False
-    command = (result.stdout or "").strip().lower()
-    if "manage.py" not in command:
+
+
+def _is_reclaimable_nadir_orphan(pid: int, project_root: Path) -> bool:
+    """True only for orphaned listeners of *this* project's manage.py.
+
+    Refuses to signal other Django apps (or a healthy second ``serve``) that
+    happen to share port 8000 / 11380.
+    """
+    command = _process_command(pid)
+    if not command:
         return False
-    return any(token in command for token in ("runserver", "run_gateway", "run_mcp"))
+    manage_path = str((project_root / "manage.py").resolve()).lower()
+    if manage_path not in command:
+        return False
+    if not any(token in command for token in ("runserver", "run_gateway", "run_mcp")):
+        return False
+    ppid = _process_ppid(pid)
+    # After Ctrl+C of the supervisor, children are typically reparented to 1.
+    if ppid in (None, 0, 1):
+        return True
+    return not _pid_is_alive(ppid)
 
 
 def _wait_until_port_free(host: str, port: int, *, timeout_seconds: float = 2.0) -> bool:
@@ -267,18 +329,19 @@ def _wait_until_port_free(host: str, port: int, *, timeout_seconds: float = 2.0)
     return not _port_in_use(host, port)
 
 
-def _signal_nadir_listeners(
+def _signal_nadir_orphans(
     port: int,
     sig: signal.Signals,
     *,
+    project_root: Path,
     reclaimed: list[int],
     skip_reclaimed: bool,
 ) -> None:
-    """Signal Nadir serve listeners on ``port`` and track reclaimed PIDs."""
+    """Signal reclaimable Nadir orphans on ``port`` and track reclaimed PIDs."""
     for pid in _listener_pids(port):
         if skip_reclaimed and pid in reclaimed:
             continue
-        if not _is_nadir_serve_listener(pid):
+        if not _is_reclaimable_nadir_orphan(pid, project_root):
             continue
         if not _safe_signal_pid(pid, sig):
             continue
@@ -286,19 +349,27 @@ def _signal_nadir_listeners(
             reclaimed.append(pid)
 
 
-def _reclaim_port_listeners(host: str, port: int, *, reclaimed: list[int]) -> None:
-    """SIGTERM then SIGKILL Nadir listeners still holding ``port``."""
-    _signal_nadir_listeners(
+def _reclaim_port_listeners(
+    host: str,
+    port: int,
+    *,
+    project_root: Path,
+    reclaimed: list[int],
+) -> None:
+    """SIGTERM then SIGKILL orphaned Nadir listeners still holding ``port``."""
+    _signal_nadir_orphans(
         port,
         signal.SIGTERM,
+        project_root=project_root,
         reclaimed=reclaimed,
         skip_reclaimed=True,
     )
     if _wait_until_port_free(host, port):
         return
-    _signal_nadir_listeners(
+    _signal_nadir_orphans(
         port,
         signal.SIGKILL,
+        project_root=project_root,
         reclaimed=reclaimed,
         skip_reclaimed=False,
     )
@@ -310,7 +381,12 @@ def reclaim_stale_serve_ports(spec: ServeSpec) -> list[int]:
     for service in required_bind_services(spec):
         if not _port_in_use(service.host, service.port):
             continue
-        _reclaim_port_listeners(service.host, service.port, reclaimed=reclaimed)
+        _reclaim_port_listeners(
+            service.host,
+            service.port,
+            project_root=spec.project_root,
+            reclaimed=reclaimed,
+        )
     return reclaimed
 
 

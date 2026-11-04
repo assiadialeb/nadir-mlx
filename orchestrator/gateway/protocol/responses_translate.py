@@ -8,7 +8,6 @@ import uuid
 from typing import Any
 
 from orchestrator.gateway.protocol.stable_json import (
-    canonicalize_json_value,
     stable_json_dumps,
     stable_tool_arguments,
     stabilize_chat_tools,
@@ -145,8 +144,6 @@ def _is_function_tool(tool: dict[str, Any]) -> bool:
 def _responses_tool_to_chat(tool: dict[str, Any]) -> dict[str, Any]:
     if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
         fn = dict(tool["function"])
-        if isinstance(fn.get("parameters"), dict):
-            fn["parameters"] = canonicalize_json_value(fn["parameters"])
         out = dict(tool)
         out["function"] = fn
         return out
@@ -157,7 +154,7 @@ def _responses_tool_to_chat(tool: dict[str, Any]) -> dict[str, Any]:
         "function": {
             "name": name,
             "description": tool.get("description") or "",
-            "parameters": canonicalize_json_value(parameters),
+            "parameters": parameters,
         },
     }
 

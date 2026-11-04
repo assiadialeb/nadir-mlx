@@ -29,6 +29,7 @@ def _instance(
     lifecycle: str,
     last_used_at,
     status: str = "RUNNING",
+    pinned: bool = False,
 ) -> MagicMock:
     row = MagicMock()
     row.pk = pk
@@ -36,7 +37,13 @@ def _instance(
     row.port = 11400 + pk
     row.status = status
     row.last_used_at = last_used_at
-    row.server_config = {"ops": {"lifecycle_mode": lifecycle, "idle_minutes": 30}}
+    row.server_config = {
+        "ops": {
+            "lifecycle_mode": lifecycle,
+            "idle_minutes": 30,
+            "pinned": pinned,
+        }
+    }
     return row
 
 
@@ -61,6 +68,24 @@ class InstanceEvictionTests(SimpleTestCase):
 
         ordered = list_lru_evictable_instances()
         self.assertEqual([row.model_name for row in ordered], ["old-model", "new-model"])
+
+    @patch("orchestrator.instance_eviction.is_wake_in_progress", return_value=False)
+    @patch("orchestrator.instance_eviction.instance_gateway_alias", side_effect=lambda i: i.model_name)
+    @patch("orchestrator.instance_eviction.InferenceInstance.objects.filter")
+    def test_list_lru_skips_pinned_on_demand(
+        self,
+        mock_filter: MagicMock,
+        _mock_alias: MagicMock,
+        _mock_wake: MagicMock,
+    ) -> None:
+        idle = timezone.now() - timedelta(hours=2)
+        rows = [
+            _instance(pk=1, model_name="pinned-od", lifecycle="on_demand", last_used_at=idle, pinned=True),
+            _instance(pk=2, model_name="evictable", lifecycle="on_demand", last_used_at=idle),
+        ]
+        mock_filter.return_value.order_by.return_value = rows
+        ordered = list_lru_evictable_instances()
+        self.assertEqual([row.model_name for row in ordered], ["evictable"])
 
     @patch("orchestrator.instance_eviction.is_wake_in_progress", side_effect=[True, False])
     @patch("orchestrator.instance_eviction.instance_gateway_alias", side_effect=lambda i: i.model_name)

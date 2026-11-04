@@ -12,7 +12,13 @@ from orchestrator.gateway.router import (
 )
 from orchestrator.gateway.route_cache import RouteCacheSnapshot, get_route_snapshot
 from orchestrator.gateway_aliases import instance_gateway_alias, instance_gateway_aliases
-from orchestrator.lifecycle_selectors import get_lifecycle_mode
+from orchestrator.lifecycle_selectors import (
+    get_idle_minutes,
+    get_lifecycle_mode,
+    is_pinned_lifecycle,
+    speculative_wake_enabled,
+    warmup_on_load_enabled,
+)
 from orchestrator.models import InferenceInstance
 from orchestrator.security_utils import validate_server_bind_host
 
@@ -72,6 +78,10 @@ def _nadir_model_metadata(instance: InferenceInstance) -> dict[str, object]:
         "nadir": {
             "lifecycle_mode": get_lifecycle_mode(instance.server_config),
             "status": instance.status.lower(),
+            "idle_minutes": get_idle_minutes(instance.server_config),
+            "pinned": is_pinned_lifecycle(instance.server_config),
+            "warmup_on_load": warmup_on_load_enabled(instance.server_config),
+            "speculative_wake": speculative_wake_enabled(instance.server_config),
         },
     }
 
@@ -212,6 +222,9 @@ def get_gateway_model(model_id: str) -> dict[str, object]:
             continue
         entry_id = entry.get("id")
         if isinstance(entry_id, str) and entry_id.casefold() == wanted:
+            from orchestrator.lifecycle_services import maybe_speculative_wake
+
+            maybe_speculative_wake(cleaned)
             return entry
     raise GatewayRouteError(
         status_code=404,

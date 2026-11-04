@@ -166,6 +166,11 @@ def _writer_loop() -> None:
             if isinstance(item, tuple) and item and item[0] is _FLUSH_SENTINEL:
                 item[1].set()
                 continue
+            # Long-lived daemon thread: refresh Django DB connections after
+            # Postgres restarts so inserts do not fail until gateway restart.
+            from django.db import close_old_connections
+
+            close_old_connections()
             record_gateway_request_timing(item)  # type: ignore[arg-type]
         except Exception:
             logger.warning("Failed to persist gateway request timing", exc_info=True)

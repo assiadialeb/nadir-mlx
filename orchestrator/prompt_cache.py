@@ -10,9 +10,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_SIZE = 10
-_MIN_CACHE_BYTES = 512 * 1024**2
-_MAX_CACHE_BYTES = 8 * 1024**3
-_CACHE_BYTES_FRACTION = 0.02
 
 
 def host_total_bytes() -> int | None:
@@ -25,43 +22,40 @@ def host_total_bytes() -> int | None:
 def default_prompt_cache_settings(
     total_bytes: int | None = None,
 ) -> dict[str, int]:
-    """Return RAM-aware ``prompt_cache_size`` and ``prompt_cache_bytes`` defaults.
+    """Return RAM-aware ``prompt_cache_size`` defaults (no byte cap).
 
-    mlx-lm defaults to ``--prompt-cache-size 10`` with no byte cap. On Apple
-    Silicon, a small fraction of unified memory is reserved for the LRU of
-    distinct prefix KV caches so multi-turn agents keep hitting shared
-    system+tools prefixes without unbounded growth.
+    mlx-lm defaults to ``--prompt-cache-size 10`` with **no** ``--prompt-cache-bytes``
+    ceiling (effectively unlimited). Nadir only sets the entry count by default so
+    a single large agent prefix is not immediately LRU-evicted. Operators may still
+    set ``prompt_cache_bytes`` explicitly in Advanced JSON when they want a hard cap.
     """
     total = total_bytes if total_bytes is not None else host_total_bytes()
     size = _DEFAULT_CACHE_SIZE
-    if total is None or total <= 0:
-        return {
-            "prompt_cache_size": size,
-            "prompt_cache_bytes": _MIN_CACHE_BYTES,
-        }
-    gib = total / (1024**3)
-    if gib >= 64:
-        size = 32
-    elif gib >= 36:
-        size = 24
-    elif gib >= 24:
-        size = 16
-    bytes_budget = int(total * _CACHE_BYTES_FRACTION)
-    bytes_budget = max(_MIN_CACHE_BYTES, min(_MAX_CACHE_BYTES, bytes_budget))
-    return {"prompt_cache_size": size, "prompt_cache_bytes": bytes_budget}
+    if total is not None and total > 0:
+        gib = total / (1024**3)
+        if gib >= 64:
+            size = 32
+        elif gib >= 36:
+            size = 24
+        elif gib >= 24:
+            size = 16
+    return {"prompt_cache_size": size}
 
 
 def resolve_prompt_cache_cli_flags(advanced: dict[str, Any] | None) -> dict[str, Any]:
-    """Merge explicit advanced knobs with RAM-aware defaults for TEXT launch."""
+    """Merge explicit advanced knobs with RAM-aware size defaults for TEXT launch.
+
+    ``--prompt-cache-bytes`` is emitted only when the operator set
+    ``prompt_cache_bytes`` explicitly — never from a RAM-fraction default.
+    """
     advanced = advanced or {}
     defaults = default_prompt_cache_settings()
     size = advanced.get("prompt_cache_size", defaults["prompt_cache_size"])
-    cache_bytes = advanced.get("prompt_cache_bytes", defaults["prompt_cache_bytes"])
     flags: dict[str, Any] = {}
     if size is not None:
         flags["prompt-cache-size"] = int(size)
-    if cache_bytes is not None:
-        flags["prompt-cache-bytes"] = int(cache_bytes)
+    if "prompt_cache_bytes" in advanced and advanced["prompt_cache_bytes"] is not None:
+        flags["prompt-cache-bytes"] = int(advanced["prompt_cache_bytes"])
     return flags
 
 

@@ -30,6 +30,13 @@ class StartupReconcilePolicyTests(TestCase):
         )
         self.assertFalse(_should_restore_on_startup(instance))
 
+    def test_should_not_restore_manual(self) -> None:
+        instance = InferenceInstance(
+            status="STOPPED",
+            server_config={"ops": {"lifecycle_mode": "manual"}},
+        )
+        self.assertFalse(_should_restore_on_startup(instance))
+
     def test_should_not_restore_running(self) -> None:
         instance = InferenceInstance(
             status="RUNNING",

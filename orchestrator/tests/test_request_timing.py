@@ -82,6 +82,8 @@ class RequestTimingCollectorTests(SimpleTestCase):
 class RequestTimingPersistenceTests(TestCase):
     @override_settings(NADIR_GATEWAY_TELEMETRY_RETAIN=2)
     def test_record_prunes_to_retain_window(self) -> None:
+        from orchestrator.gateway_telemetry_services import prune_gateway_timing_rows
+
         with patch.dict("os.environ", {"NADIR_GATEWAY_TELEMETRY_RETAIN": "2"}):
             for index in range(4):
                 collector = RequestTimingCollector(
@@ -93,9 +95,30 @@ class RequestTimingPersistenceTests(TestCase):
                     {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}
                 )
                 record_gateway_request_timing(collector.snapshot())
+            # Inserts prune every N rows; force retain window for this assertion.
+            prune_gateway_timing_rows()
         self.assertEqual(GatewayRequestMetric.objects.count(), 2)
         recent = list_recent_gateway_timings(limit=10)
         self.assertEqual(len(recent), 2)
+
+    @override_settings(NADIR_GATEWAY_TELEMETRY_RETAIN=2)
+    def test_record_prunes_automatically_every_n_inserts(self) -> None:
+        import orchestrator.gateway_telemetry_services as telemetry
+
+        with patch.object(telemetry, "_PRUNE_EVERY_N", 2):
+            with patch.object(telemetry, "_inserts_since_prune", 0):
+                with patch.dict("os.environ", {"NADIR_GATEWAY_TELEMETRY_RETAIN": "2"}):
+                    for index in range(4):
+                        collector = RequestTimingCollector(
+                            endpoint="/v1/chat/completions",
+                            stream=False,
+                            alias=f"auto{index}",
+                        )
+                        collector.mark_json_complete(
+                            {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+                        )
+                        record_gateway_request_timing(collector.snapshot())
+        self.assertEqual(GatewayRequestMetric.objects.count(), 2)
 
 
 class RequestTimingContextTests(SimpleTestCase):

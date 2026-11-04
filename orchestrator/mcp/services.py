@@ -92,10 +92,9 @@ def gateway_base_url() -> str:
 def gateway_health_sync() -> dict[str, Any]:
     """Probe gateway /health (and optionally /v1/models)."""
     base = gateway_base_url()
-    headers: dict[str, str] = {}
-    api_key = (os.environ.get("NADIR_GATEWAY_API_KEY") or "").strip()
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    from orchestrator.gateway_client_auth import gateway_auth_headers
+
+    headers = gateway_auth_headers()
     try:
         with httpx.Client(timeout=5.0) as client:
             health = client.get(f"{base}/health", headers=headers)

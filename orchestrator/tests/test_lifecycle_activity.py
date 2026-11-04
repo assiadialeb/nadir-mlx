@@ -49,12 +49,26 @@ class TouchInstanceLastUsedAtTests(TestCase):
         )
         self.assertEqual(instance_activity_at(instance), stopped_at)
 
-    def test_instance_activity_at_falls_back_to_created_at(self) -> None:
+    def test_instance_activity_at_running_without_last_used_uses_now(self) -> None:
         instance = InferenceInstance.objects.create(
             model_name="created-model",
             port=11423,
             launch_mode="TEXT",
             server_config={"host": "127.0.0.1"},
             status="RUNNING",
+        )
+        before = timezone.now()
+        activity = instance_activity_at(instance)
+        after = timezone.now()
+        self.assertGreaterEqual(activity, before)
+        self.assertLessEqual(activity, after)
+
+    def test_instance_activity_at_stopped_falls_back_to_created_at(self) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="never-started-model",
+            port=11424,
+            launch_mode="TEXT",
+            server_config={"host": "127.0.0.1"},
+            status="STOPPED",
         )
         self.assertEqual(instance_activity_at(instance), instance.created_at)

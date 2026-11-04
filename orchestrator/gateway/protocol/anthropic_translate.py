@@ -11,7 +11,6 @@ from orchestrator.gateway.protocol.chat_sse import (  # noqa: F401 — re-export
     chat_sse_finish_reason,
 )
 from orchestrator.gateway.protocol.stable_json import (
-    canonicalize_json_value,
     stable_json_dumps,
     stabilize_chat_tools,
 )
@@ -255,7 +254,7 @@ def _anthropic_tool_to_openai(tool: dict[str, Any]) -> dict[str, Any]:
         "function": {
             "name": tool.get("name"),
             "description": tool.get("description") or "",
-            "parameters": canonicalize_json_value(parameters),
+            "parameters": parameters,
         },
     }
 

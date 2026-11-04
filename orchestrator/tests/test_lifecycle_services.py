@@ -53,12 +53,14 @@ class EnsureInstanceReadyTests(TestCase):
         self.assertEqual(target.instance_id, instance.pk)
         self.assertEqual(target.alias, "ready-chat")
 
+    @patch("orchestrator.lifecycle_services.maybe_run_load_warmup", return_value=12.0)
     @patch("orchestrator.lifecycle_services.start_instance")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
     def test_on_demand_stopped_wakes_instance(
         self,
         _mock_probe: MagicMock,
         mock_start: MagicMock,
+        mock_warmup: MagicMock,
     ) -> None:
         instance = InferenceInstance.objects.create(
             model_name="sleeping-model",
@@ -88,6 +90,7 @@ class EnsureInstanceReadyTests(TestCase):
             "TEXT",
             instance.server_config,
         )
+        mock_warmup.assert_called_once()
 
     @patch("orchestrator.lifecycle_services.start_instance")
     def test_always_on_stopped_does_not_wake(self, mock_start: MagicMock) -> None:
@@ -102,6 +105,27 @@ class EnsureInstanceReadyTests(TestCase):
             ensure_instance_ready("offline-chat")
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertEqual(ctx.exception.code, "model_unavailable")
+        mock_start.assert_not_called()
+
+    @patch("orchestrator.lifecycle_services.start_instance")
+    def test_manual_stopped_does_not_wake(self, mock_start: MagicMock) -> None:
+        from orchestrator.lifecycle_selectors import LIFECYCLE_MODE_MANUAL
+
+        InferenceInstance.objects.create(
+            model_name="manual-model",
+            port=11415,
+            launch_mode="TEXT",
+            server_config={
+                "model_id": "manual-chat",
+                "host": "127.0.0.1",
+                "ops": {"lifecycle_mode": LIFECYCLE_MODE_MANUAL},
+            },
+            status="STOPPED",
+        )
+        with self.assertRaises(GatewayRouteError) as ctx:
+            ensure_instance_ready("manual-chat")
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("manual", ctx.exception.message.lower())
         mock_start.assert_not_called()
 
     @patch("orchestrator.lifecycle_services.time.sleep")

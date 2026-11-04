@@ -55,6 +55,10 @@ def _should_skip_idle_offload(instance: InferenceInstance) -> bool:
         return True
     if instance.status != "RUNNING":
         return True
+    # Never offload a RUNNING instance that has no gateway/start activity stamp.
+    # Falling back to created_at would immediately kill freshly started models.
+    if instance.last_used_at is None:
+        return True
     if is_manual_stop_in_progress(instance):
         return True
     alias = instance_gateway_alias(instance)

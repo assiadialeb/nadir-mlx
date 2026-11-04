@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from orchestrator.gateway.route_cache import clear_gateway_route_cache
 from orchestrator.gateway_aliases import instance_gateway_alias
-from orchestrator.lifecycle_selectors import is_on_demand_lifecycle
+from orchestrator.lifecycle_selectors import is_on_demand_lifecycle, is_pinned_lifecycle
 from orchestrator.lifecycle_services import instance_activity_at, is_wake_in_progress
 from orchestrator.memory_pressure import (
     estimate_instance_footprint_bytes,
@@ -65,6 +65,8 @@ def list_lru_evictable_instances(*, exclude_id: int | None = None) -> list[Infer
         if instance.pk in _reserved_victim_ids:
             continue
         if not is_on_demand_lifecycle(instance.server_config):
+            continue
+        if is_pinned_lifecycle(instance.server_config):
             continue
         alias = instance_gateway_alias(instance)
         if is_wake_in_progress(alias):
