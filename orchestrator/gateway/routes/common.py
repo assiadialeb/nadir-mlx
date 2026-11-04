@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from orchestrator.gateway.errors import openai_error_envelope
 from orchestrator.gateway.router import GatewayRouteError
 
 
@@ -20,21 +21,17 @@ async def parse_json_body(request: Request) -> dict[str, Any] | JSONResponse:
     except Exception:
         return JSONResponse(
             status_code=400,
-            content={
-                "error": {
-                    "message": "Request body must be valid JSON.",
-                    "type": "invalid_request",
-                }
-            },
+            content=openai_error_envelope(
+                "Request body must be valid JSON.",
+                "invalid_request",
+            ),
         )
     if not isinstance(body, dict):
         return JSONResponse(
             status_code=400,
-            content={
-                "error": {
-                    "message": "Request body must be a JSON object.",
-                    "type": "invalid_request",
-                }
-            },
+            content=openai_error_envelope(
+                "Request body must be a JSON object.",
+                "invalid_request",
+            ),
         )
     return body
