@@ -38,6 +38,7 @@ from orchestrator.gateway.services.http_proxy import (
     upstream_url_for_path,
     validate_target_launch_mode,
 )
+from orchestrator.gateway.thinking_control import kwargs_from_anthropic
 
 
 async def proxy_anthropic_messages(body: dict[str, Any], headers: Any) -> Response:
@@ -52,6 +53,7 @@ async def proxy_anthropic_messages(body: dict[str, Any], headers: Any) -> Respon
         chat_body,
         target.upstream_model,
         force_include_usage=True,
+        chat_template_kwargs=kwargs_from_anthropic(body),
     )
 
     if chat_body.get("stream"):
