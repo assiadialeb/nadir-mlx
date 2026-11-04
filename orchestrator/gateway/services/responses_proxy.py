@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from orchestrator.gateway.chat_extensions import prepare_chat_upstream_body
+from orchestrator.gateway.protocol.chat_sse import ToolCallAccumulator, parse_chat_sse_line
 from orchestrator.gateway.protocol.responses_translate import (
     build_response_stream_events,
     chat_completion_to_response,
@@ -70,6 +71,10 @@ async def _translate_chat_sse_to_responses(
         response_id="",
     )
     meta["response_id"] = f"resp_{meta['message_id'][4:]}"
+    meta["tools"] = ToolCallAccumulator()
+    meta["tool_item_ids"] = {}
+    meta["tool_output_indexes"] = {}
+    meta["next_output_index"] = int(meta["output_index"]) + 1
     for event in _stream_open_events(meta, client_model_alias):
         yield event
 
@@ -108,7 +113,7 @@ def _drain_sse_buffer(
 
 
 def _stream_open_events(meta: dict[str, Any], client_model_alias: str) -> list[bytes]:
-    events = [
+    return [
         _sse_event(
             "response.created",
             {
@@ -151,12 +156,12 @@ def _stream_open_events(meta: dict[str, Any], client_model_alias: str) -> list[b
             },
         ),
     ]
-    return events
 
 
 def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[bytes]:
     usage = meta.get("usage") if isinstance(meta.get("usage"), dict) else {}
-    return [
+    tools: ToolCallAccumulator = meta["tools"]
+    events = [
         _sse_event(
             "response.output_text.done",
             {
@@ -194,6 +199,19 @@ def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[
                 },
             },
         ),
+    ]
+    events.extend(_close_tool_call_events(meta))
+    output_items = [
+        {
+            "id": meta["message_id"],
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": meta.get("text", "")}],
+        }
+    ]
+    output_items.extend(_function_call_output_items(meta, tools))
+    events.append(
         _sse_event(
             "response.completed",
             {
@@ -205,15 +223,7 @@ def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[
                     "created_at": meta["created_at"],
                     "status": "completed",
                     "model": client_model_alias,
-                    "output": [
-                        {
-                            "id": meta["message_id"],
-                            "type": "message",
-                            "role": "assistant",
-                            "status": "completed",
-                            "content": [{"type": "output_text", "text": meta.get("text", "")}],
-                        }
-                    ],
+                    "output": output_items,
                     "usage": {
                         "input_tokens": usage.get("prompt_tokens", 0),
                         "output_tokens": usage.get("completion_tokens", 0),
@@ -221,8 +231,82 @@ def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[
                     },
                 },
             },
-        ),
-    ]
+        )
+    )
+    return events
+
+
+def _close_tool_call_events(meta: dict[str, Any]) -> list[bytes]:
+    tools: ToolCallAccumulator = meta["tools"]
+    events: list[bytes] = []
+    for call in tools.completed_calls():
+        openai_index = _index_for_completed_call(meta, call)
+        item_id = meta["tool_item_ids"].get(openai_index) or call["id"]
+        output_index = meta["tool_output_indexes"].get(
+            openai_index,
+            meta["next_output_index"],
+        )
+        arguments = call["function"]["arguments"]
+        events.append(
+            _sse_event(
+                "response.function_call_arguments.done",
+                {
+                    "type": "response.function_call_arguments.done",
+                    "sequence_number": next_sequence(meta),
+                    "item_id": item_id,
+                    "output_index": output_index,
+                    "arguments": arguments,
+                },
+            )
+        )
+        events.append(
+            _sse_event(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "sequence_number": next_sequence(meta),
+                    "output_index": output_index,
+                    "item": {
+                        "id": item_id,
+                        "type": "function_call",
+                        "call_id": call["id"],
+                        "name": call["function"]["name"],
+                        "arguments": arguments,
+                        "status": "completed",
+                    },
+                },
+            )
+        )
+    return events
+
+
+def _function_call_output_items(
+    meta: dict[str, Any],
+    tools: ToolCallAccumulator,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for call in tools.completed_calls():
+        openai_index = _index_for_completed_call(meta, call)
+        item_id = meta["tool_item_ids"].get(openai_index) or call["id"]
+        items.append(
+            {
+                "id": item_id,
+                "type": "function_call",
+                "call_id": call["id"],
+                "name": call["function"]["name"],
+                "arguments": call["function"]["arguments"],
+                "status": "completed",
+            }
+        )
+    return items
+
+
+def _index_for_completed_call(meta: dict[str, Any], call: dict[str, Any]) -> int:
+    call_id = call["id"]
+    for index, stored_id in meta.get("tool_call_ids", {}).items():
+        if stored_id == call_id:
+            return int(index)
+    return 0
 
 
 def _failed_event(meta: dict[str, Any], client_model_alias: str) -> bytes:
@@ -248,46 +332,88 @@ def _failed_event(meta: dict[str, Any], client_model_alias: str) -> bytes:
 
 
 def _map_chat_sse_line(line: bytes, meta: dict[str, Any]) -> list[bytes]:
-    if not line.startswith(b"data:"):
+    parsed = parse_chat_sse_line(line)
+    if parsed is None or parsed.done:
         return []
-    raw = line[5:].strip()
-    if not raw or raw == b"[DONE]":
-        return []
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, dict):
-        return []
-    if isinstance(payload.get("error"), dict):
+    if parsed.error is not None:
         meta["failed"] = True
-        meta["error_message"] = str(payload["error"].get("message") or "Upstream stream error")
+        meta["error_message"] = str(parsed.error.get("message") or "Upstream stream error")
         return []
-    if isinstance(payload.get("usage"), dict):
-        meta["usage"] = payload["usage"]
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return []
-    delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
-    if not isinstance(delta, dict):
-        return []
-    text = delta.get("content")
-    if not isinstance(text, str) or text == "":
-        return []
-    meta["text"] = str(meta.get("text", "")) + text
-    return [
-        _sse_event(
-            "response.output_text.delta",
-            {
-                "type": "response.output_text.delta",
-                "sequence_number": next_sequence(meta),
-                "item_id": meta["message_id"],
-                "output_index": meta["output_index"],
-                "content_index": 0,
-                "delta": text,
-            },
+    if parsed.usage is not None:
+        meta["usage"] = parsed.usage
+
+    events: list[bytes] = []
+    if parsed.text:
+        meta["text"] = str(meta.get("text", "")) + parsed.text
+        events.append(
+            _sse_event(
+                "response.output_text.delta",
+                {
+                    "type": "response.output_text.delta",
+                    "sequence_number": next_sequence(meta),
+                    "item_id": meta["message_id"],
+                    "output_index": meta["output_index"],
+                    "content_index": 0,
+                    "delta": parsed.text,
+                },
+            )
         )
-    ]
+    if parsed.tool_call_deltas:
+        events.extend(_map_tool_call_deltas(parsed.tool_call_deltas, meta))
+    return events
+
+
+def _map_tool_call_deltas(
+    deltas: list[dict[str, Any]],
+    meta: dict[str, Any],
+) -> list[bytes]:
+    tools: ToolCallAccumulator = meta["tools"]
+    events: list[bytes] = []
+    meta.setdefault("tool_call_ids", {})
+    for call, fragment in tools.ingest(deltas):
+        item_id = meta["tool_item_ids"].get(call.index)
+        if item_id is None:
+            if not call.name:
+                continue
+            item_id = f"fc_{call.id or call.index}"
+            output_index = int(meta["next_output_index"])
+            meta["next_output_index"] = output_index + 1
+            meta["tool_item_ids"][call.index] = item_id
+            meta["tool_output_indexes"][call.index] = output_index
+            meta["tool_call_ids"][call.index] = call.id or f"call_{call.index}"
+            events.append(
+                _sse_event(
+                    "response.output_item.added",
+                    {
+                        "type": "response.output_item.added",
+                        "sequence_number": next_sequence(meta),
+                        "output_index": output_index,
+                        "item": {
+                            "id": item_id,
+                            "type": "function_call",
+                            "call_id": call.id or f"call_{call.index}",
+                            "name": call.name,
+                            "arguments": "",
+                            "status": "in_progress",
+                        },
+                    },
+                )
+            )
+        if fragment:
+            output_index = meta["tool_output_indexes"][call.index]
+            events.append(
+                _sse_event(
+                    "response.function_call_arguments.delta",
+                    {
+                        "type": "response.function_call_arguments.delta",
+                        "sequence_number": next_sequence(meta),
+                        "item_id": item_id,
+                        "output_index": output_index,
+                        "delta": fragment,
+                    },
+                )
+            )
+    return events
 
 
 def _sse_event(event_name: str, payload: dict[str, Any]) -> bytes:

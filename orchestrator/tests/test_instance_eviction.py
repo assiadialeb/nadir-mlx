@@ -71,15 +71,35 @@ class InstanceEvictionTests(SimpleTestCase):
         _mock_alias: MagicMock,
         _mock_wake: MagicMock,
     ) -> None:
-        now = timezone.now()
+        idle = timezone.now() - timedelta(hours=1)
         rows = [
-            _instance(pk=1, model_name="excluded", lifecycle="on_demand", last_used_at=now),
-            _instance(pk=2, model_name="waking", lifecycle="on_demand", last_used_at=now),
-            _instance(pk=3, model_name="ready", lifecycle="on_demand", last_used_at=now),
+            _instance(pk=1, model_name="excluded", lifecycle="on_demand", last_used_at=idle),
+            _instance(pk=2, model_name="waking", lifecycle="on_demand", last_used_at=idle),
+            _instance(pk=3, model_name="ready", lifecycle="on_demand", last_used_at=idle),
         ]
         mock_filter.return_value.order_by.return_value = rows
         ordered = list_lru_evictable_instances(exclude_id=1)
         self.assertEqual([row.model_name for row in ordered], ["ready"])
+
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_GRACE_SECONDS": "120"}, clear=False)
+    @patch("orchestrator.instance_eviction.is_wake_in_progress", return_value=False)
+    @patch("orchestrator.instance_eviction.instance_gateway_alias", side_effect=lambda i: i.model_name)
+    @patch("orchestrator.instance_eviction.InferenceInstance.objects.filter")
+    def test_list_lru_skips_instances_within_grace(
+        self,
+        mock_filter: MagicMock,
+        _mock_alias: MagicMock,
+        _mock_wake: MagicMock,
+    ) -> None:
+        recent = timezone.now() - timedelta(seconds=30)
+        idle = timezone.now() - timedelta(hours=2)
+        rows = [
+            _instance(pk=1, model_name="hot", lifecycle="on_demand", last_used_at=recent),
+            _instance(pk=2, model_name="cold", lifecycle="on_demand", last_used_at=idle),
+        ]
+        mock_filter.return_value.order_by.return_value = rows
+        ordered = list_lru_evictable_instances()
+        self.assertEqual([row.model_name for row in ordered], ["cold"])
 
     @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
     @patch("orchestrator.server_manager.stop_instance")

@@ -129,6 +129,31 @@ class AnthropicTranslateTests(SimpleTestCase):
         self.assertEqual(tool_msg["tool_call_id"], "toolu_1")
         self.assertEqual(tool_msg["content"], "sunny")
 
+    def test_tool_result_with_followup_text_keeps_user_message(self) -> None:
+        chat = anthropic_request_to_chat(
+            {
+                "model": "demo",
+                "max_tokens": 8,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_1",
+                                "content": "sunny",
+                            },
+                            {"type": "text", "text": "Thanks, now summarize."},
+                        ],
+                    }
+                ],
+            }
+        )
+        self.assertEqual(chat["messages"][0]["role"], "tool")
+        self.assertEqual(chat["messages"][0]["content"], "sunny")
+        self.assertEqual(chat["messages"][1]["role"], "user")
+        self.assertEqual(chat["messages"][1]["content"], "Thanks, now summarize.")
+
     def test_tool_choice_named_tool(self) -> None:
         chat = anthropic_request_to_chat(
             {

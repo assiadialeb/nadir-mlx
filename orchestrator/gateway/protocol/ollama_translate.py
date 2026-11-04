@@ -10,7 +10,7 @@ from orchestrator.gateway.router import GatewayRouteError
 _FINISH_TO_DONE_REASON = {
     "stop": "stop",
     "length": "length",
-    "tool_calls": "stop",
+    "tool_calls": "tool_calls",
 }
 
 
@@ -40,7 +40,7 @@ def ollama_chat_to_openai(body: dict[str, Any]) -> dict[str, Any]:
     chat: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "stream": bool(body.get("stream", False)),
+        "stream": bool(body.get("stream", True)),
     }
     _apply_ollama_options(chat, body.get("options"))
     _apply_ollama_format(chat, body.get("format"))
@@ -73,7 +73,7 @@ def ollama_generate_to_openai(body: dict[str, Any]) -> dict[str, Any]:
     chat: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "stream": bool(body.get("stream", False)),
+        "stream": bool(body.get("stream", True)),
     }
     _apply_ollama_options(chat, body.get("options"))
     _apply_ollama_format(chat, body.get("format"))
@@ -200,6 +200,10 @@ def ollama_chat_stream_chunk(
     content: str,
     done: bool,
     done_reason: str | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    prompt_eval_count: int | None = None,
+    eval_count: int | None = None,
+    error: str | None = None,
 ) -> bytes:
     """Encode one Ollama ``/api/chat`` NDJSON stream line."""
     payload: dict[str, Any] = {
@@ -207,8 +211,16 @@ def ollama_chat_stream_chunk(
         "message": {"role": "assistant", "content": content},
         "done": done,
     }
+    if tool_calls:
+        payload["message"]["tool_calls"] = tool_calls
     if done and done_reason is not None:
         payload["done_reason"] = done_reason
+    if prompt_eval_count is not None:
+        payload["prompt_eval_count"] = prompt_eval_count
+    if eval_count is not None:
+        payload["eval_count"] = eval_count
+    if error:
+        payload["error"] = error
     return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
 
 
@@ -218,6 +230,10 @@ def ollama_generate_stream_chunk(
     content: str,
     done: bool,
     done_reason: str | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    prompt_eval_count: int | None = None,
+    eval_count: int | None = None,
+    error: str | None = None,
 ) -> bytes:
     """Encode one Ollama ``/api/generate`` NDJSON stream line."""
     payload: dict[str, Any] = {
@@ -227,35 +243,20 @@ def ollama_generate_stream_chunk(
     }
     if done and done_reason is not None:
         payload["done_reason"] = done_reason
+    if prompt_eval_count is not None:
+        payload["prompt_eval_count"] = prompt_eval_count
+    if eval_count is not None:
+        payload["eval_count"] = eval_count
+    if error:
+        payload["error"] = error
     return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
 
 
 def chat_sse_delta_text(line: bytes) -> str | None:
     """Extract assistant text delta from one OpenAI chat SSE ``data:`` line."""
-    if not line.startswith(b"data:"):
-        return None
-    raw = line[5:].strip()
-    if not raw or raw == b"[DONE]":
-        return None
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return None
-    first = choices[0]
-    if not isinstance(first, dict):
-        return None
-    delta = first.get("delta")
-    if not isinstance(delta, dict):
-        return None
-    text = delta.get("content")
-    if not isinstance(text, str) or text == "":
-        return None
-    return text
+    from orchestrator.gateway.protocol.chat_sse import chat_sse_delta_text as _impl
+
+    return _impl(line)
 
 
 def _require_model(body: dict[str, Any]) -> str:
@@ -340,6 +341,8 @@ def _extract_chat_fields(
 
 
 def _extract_tool_calls(chat_payload: dict[str, Any]) -> list[Any] | None:
+    from orchestrator.gateway.protocol.chat_sse import tool_calls_as_ollama
+
     choices = chat_payload.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         return None
@@ -347,7 +350,10 @@ def _extract_tool_calls(chat_payload: dict[str, Any]) -> list[Any] | None:
     if not isinstance(message, dict):
         return None
     tool_calls = message.get("tool_calls")
-    return tool_calls if isinstance(tool_calls, list) and tool_calls else None
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return None
+    converted = tool_calls_as_ollama([c for c in tool_calls if isinstance(c, dict)])
+    return converted or None
 
 
 def _models_from_list_payload(models_payload: dict[str, Any]) -> list[dict[str, Any]]:

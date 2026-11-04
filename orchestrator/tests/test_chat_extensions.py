@@ -24,6 +24,13 @@ class ChatExtensionTests(SimpleTestCase):
         self.assertEqual(body["model"], "alias")
         self.assertEqual(len(upstream["tools"]), 1)
 
+    def test_prepare_chat_upstream_body_adds_include_usage_for_stream(self) -> None:
+        upstream = prepare_chat_upstream_body(
+            {"model": "alias", "stream": True, "messages": []},
+            "default_model",
+        )
+        self.assertEqual(upstream["stream_options"], {"include_usage": True})
+
     def test_has_tool_definitions_detects_non_empty_tools(self) -> None:
         self.assertFalse(has_tool_definitions({}))
         self.assertFalse(has_tool_definitions({"tools": []}))

@@ -13,6 +13,12 @@ def prepare_chat_upstream_body(body: dict[str, Any], upstream_model: str) -> dic
     """Clone the client payload and rewrite only the model field for mlx-lm / mlx-vlm."""
     upstream = deepcopy(body)
     upstream["model"] = upstream_model
+    if upstream.get("stream"):
+        options = upstream.get("stream_options")
+        if not isinstance(options, dict):
+            options = {}
+        options = {**options, "include_usage": True}
+        upstream["stream_options"] = options
     return upstream
 
 

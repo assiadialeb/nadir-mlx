@@ -6,6 +6,10 @@ import json
 import uuid
 from typing import Any
 
+from orchestrator.gateway.protocol.chat_sse import (  # noqa: F401 — re-export
+    chat_sse_delta_text,
+    chat_sse_finish_reason,
+)
 from orchestrator.gateway.router import GatewayRouteError
 
 
@@ -262,20 +266,42 @@ def _anthropic_message_to_chat(item: Any) -> dict[str, Any] | list[dict[str, Any
 
     tool_results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
     if tool_results:
-        return [
-            {
-                "role": "tool",
-                "tool_call_id": str(block.get("tool_use_id") or ""),
-                "content": _tool_result_content(block.get("content")),
-            }
-            for block in tool_results
-        ]
+        return _tool_results_and_followup(role, content, tool_results)
 
     tool_uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
     if tool_uses:
         return _assistant_tool_use_message(content, tool_uses)
 
     return _role_content_with_optional_thinking(role, content)
+
+
+def _tool_results_and_followup(
+    role: str,
+    content: list[Any],
+    tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Map tool_result blocks, then keep any trailing text/image as a user message."""
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "tool",
+            "tool_call_id": str(block.get("tool_use_id") or ""),
+            "content": _tool_result_content(block.get("content")),
+        }
+        for block in tool_results
+    ]
+    followup = [
+        block
+        for block in content
+        if not (isinstance(block, dict) and block.get("type") == "tool_result")
+    ]
+    if not followup:
+        return messages
+    followup_message = _role_content_with_optional_thinking(role, followup)
+    if followup_message.get("content") not in (None, ""):
+        messages.append(followup_message)
+    elif followup_message.get("reasoning_content"):
+        messages.append(followup_message)
+    return messages
 
 
 def _assistant_tool_use_message(
@@ -437,42 +463,78 @@ def anthropic_stream_message_start(
     )
 
 
-def anthropic_stream_content_block_start() -> bytes:
+def anthropic_stream_content_block_start(*, index: int = 0) -> bytes:
     return anthropic_sse_event(
         "content_block_start",
         {
             "type": "content_block_start",
-            "index": 0,
+            "index": index,
             "content_block": {"type": "text", "text": ""},
         },
     )
 
 
-def anthropic_stream_text_delta(text: str) -> bytes:
+def anthropic_stream_tool_use_block_start(
+    *,
+    index: int,
+    tool_id: str,
+    name: str,
+) -> bytes:
+    return anthropic_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {
+                "type": "tool_use",
+                "id": tool_id,
+                "name": name,
+                "input": {},
+            },
+        },
+    )
+
+
+def anthropic_stream_text_delta(text: str, *, index: int = 0) -> bytes:
     return anthropic_sse_event(
         "content_block_delta",
         {
             "type": "content_block_delta",
-            "index": 0,
+            "index": index,
             "delta": {"type": "text_delta", "text": text},
         },
     )
 
 
-def anthropic_stream_content_block_stop() -> bytes:
+def anthropic_stream_input_json_delta(partial_json: str, *, index: int) -> bytes:
     return anthropic_sse_event(
-        "content_block_stop",
-        {"type": "content_block_stop", "index": 0},
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "input_json_delta", "partial_json": partial_json},
+        },
     )
 
 
-def anthropic_stream_message_delta(stop_reason: str) -> bytes:
+def anthropic_stream_content_block_stop(*, index: int = 0) -> bytes:
+    return anthropic_sse_event(
+        "content_block_stop",
+        {"type": "content_block_stop", "index": index},
+    )
+
+
+def anthropic_stream_message_delta(
+    stop_reason: str,
+    *,
+    output_tokens: int = 0,
+) -> bytes:
     return anthropic_sse_event(
         "message_delta",
         {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-            "usage": {"output_tokens": 0},
+            "usage": {"output_tokens": output_tokens},
         },
     )
 
@@ -481,52 +543,14 @@ def anthropic_stream_message_stop() -> bytes:
     return anthropic_sse_event("message_stop", {"type": "message_stop"})
 
 
-def chat_sse_delta_text(line: bytes) -> str | None:
-    """Extract assistant text delta from one OpenAI chat SSE ``data:`` line."""
-    if not line.startswith(b"data:"):
-        return None
-    raw = line[5:].strip()
-    if not raw or raw == b"[DONE]":
-        return None
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return None
-    first = choices[0]
-    if not isinstance(first, dict):
-        return None
-    delta = first.get("delta")
-    if not isinstance(delta, dict):
-        return None
-    text = delta.get("content")
-    if not isinstance(text, str) or text == "":
-        return None
-    return text
-
-
-def chat_sse_finish_reason(line: bytes) -> str | None:
-    """Return OpenAI ``finish_reason`` from a chat SSE line when present."""
-    if not line.startswith(b"data:"):
-        return None
-    raw = line[5:].strip()
-    if not raw or raw == b"[DONE]":
-        return None
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        return None
-    finish = choices[0].get("finish_reason")
-    return finish if isinstance(finish, str) and finish else None
+def anthropic_stream_error(message: str) -> bytes:
+    return anthropic_sse_event(
+        "error",
+        {
+            "type": "error",
+            "error": {"type": "api_error", "message": message},
+        },
+    )
 
 
 def openai_finish_to_anthropic_stop(finish_reason: str | None) -> str:
