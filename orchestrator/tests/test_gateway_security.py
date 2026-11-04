@@ -37,11 +37,13 @@ class GatewaySecurityMiddlewareTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_text_plain_body_returns_415(self) -> None:
-        response = self.client.post(
-            "/v1/chat/completions",
-            content=b'{"model":"demo","messages":[{"role":"user","content":"hi"}]}',
-            headers={"content-type": "text/plain"},
-        )
+        with patch.dict(os.environ, {"NADIR_GATEWAY_API_KEY": ""}, clear=False):
+            client = TestClient(create_app())
+            response = client.post(
+                "/v1/chat/completions",
+                content=b'{"model":"demo","messages":[{"role":"user","content":"hi"}]}',
+                headers={"content-type": "text/plain"},
+            )
         self.assertEqual(response.status_code, 415)
 
     def test_allowed_origin_passes_guard(self) -> None:

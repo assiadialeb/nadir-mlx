@@ -109,6 +109,17 @@ Out of scope for MVP:
 | Recommended next ticket when unblocked | `feat(gateway): purpose=batch files + chat batches MVP` (~1 sprint slice) |
 | Interim workaround | Shell/cron against gateway; optional LiteLLM for team auth |
 
+## Implementation notes (when unblocked)
+
+Design constraints to bake into the first MVP ticket (review follow-up):
+
+1. **Upload size** — gateway `MaxBodySizeMiddleware` (50 MiB Content-Length) is too small for OpenAI’s ~200 MiB batch files; use a dedicated streaming multipart path for `POST /v1/files` that writes to disk without buffering the whole body.
+2. **Content-Type** — `/v1/batches` stays JSON; `/v1/files` is `multipart/form-data` and must not go through `parse_json_body` (Origin guard still applies for browsers).
+3. **Durable worker** — ORM status machine + JSONL output/error files; resume via startup reconcile; not an in-process asyncio-only queue.
+4. **Interactive fairness** — share concurrency slots with lower priority; optional `NADIR_BATCH_WINDOW=22:00-07:00`.
+5. **Wake / eviction** — group JSONL lines by model; wake one model at a time; rely on activity heartbeats so LRU does not thrash.
+6. **Throughput** — batch fan-out should align with mlx-lm decode concurrency once that knobs surface is exposed (performance track).
+
 ## References
 
 - OpenAI Batch API (JSONL `custom_id`, `/v1/chat/completions`)

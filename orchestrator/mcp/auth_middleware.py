@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import hmac
 import json
 import os
 from typing import Any
 
+from orchestrator.security_utils import api_keys_match, is_loopback_bind_host
+
 
 def configured_mcp_api_key() -> str:
-    """Return the expected MCP API key (empty means auth disabled on loopback only)."""
+    """Return the expected MCP API key (falls back to the gateway key)."""
     return (
         os.environ.get("NADIR_MCP_API_KEY")
         or os.environ.get("NADIR_GATEWAY_API_KEY")
@@ -29,13 +30,31 @@ def extract_api_key_from_headers(headers: list[tuple[bytes, bytes]]) -> str | No
     return api_key or None
 
 
-def api_key_is_valid(provided: str | None, expected: str) -> bool:
-    """Constant-time compare when a key is configured."""
-    if not expected:
-        return True
-    if not provided:
-        return False
-    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
+def bind_host_from_scope(scope: dict[str, Any]) -> str:
+    """Return the ASGI server bind host from the connection scope."""
+    server = scope.get("server")
+    if isinstance(server, (list, tuple)) and server:
+        return str(server[0] or "")
+    return ""
+
+
+def api_key_is_valid(
+    provided: str | None,
+    expected: str,
+    *,
+    bind_host: str = "127.0.0.1",
+) -> bool:
+    """Validate the MCP API key.
+
+    - When a key is configured: constant-time compare.
+    - When no key is configured: allow only if the server bind is loopback
+      (same rule as ``run_mcp``). Non-loopback binds without a key are rejected.
+    """
+    if expected:
+        if not provided:
+            return False
+        return api_keys_match(provided, expected)
+    return is_loopback_bind_host(bind_host)
 
 
 class NadirMcpAuthMiddleware:
@@ -51,10 +70,14 @@ class NadirMcpAuthMiddleware:
 
         expected = configured_mcp_api_key()
         provided = extract_api_key_from_headers(scope.get("headers") or [])
-        if not api_key_is_valid(provided, expected):
-            body = json.dumps(
-                {"error": "Unauthorized: valid Nadir MCP API key required."}
-            ).encode("utf-8")
+        bind_host = bind_host_from_scope(scope)
+        if not api_key_is_valid(provided, expected, bind_host=bind_host):
+            message = (
+                "Unauthorized: valid Nadir MCP API key required."
+                if expected
+                else "Unauthorized: NADIR_MCP_API_KEY required for non-loopback MCP binds."
+            )
+            body = json.dumps({"error": message}).encode("utf-8")
             await send(
                 {
                     "type": "http.response.start",
