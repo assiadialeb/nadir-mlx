@@ -18,7 +18,7 @@ Last updated: November 2026 — Ollama bootstrap + legacy embeddings (MLX-119).
 | Wake / idle stop for instances | ✅ [runbook](instance-lifecycle.md) |
 | API key auth on gateway | ✅ optional via `NADIR_GATEWAY_API_KEY` |
 | `X-Request-Id` on responses | ✅ |
-| CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
+| CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` (no credentials; `*` collapsed safely) |
 | Shared upstream httpx client | ✅ |
 | `POST /v1/responses` (stateless façade) | ✅ tools/`tool_choice`, stream lifecycle events; no `previous_response_id` / store |
 | `POST /v1/messages` (Anthropic) | ✅ JSON + SSE stream; tools / `tool_use`; thinking from `reasoning`; Anthropic error envelope |
