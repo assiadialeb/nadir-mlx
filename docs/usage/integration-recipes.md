@@ -186,6 +186,12 @@ Keep `NADIR_GATEWAY_HOST=127.0.0.1` and only expose LiteLLM on the LAN (with its
 
 ---
 
+## Overnight bulk jobs (interim)
+
+Nadir does **not** yet expose OpenAI `/v1/files` + `/v1/batches`. Until a dedicated MVP lands ([ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md)), run bulk work with shell/`xargs`/cron against `http://127.0.0.1:11380/v1`, or put LiteLLM in front for team keys — keep JSONL on the Mac.
+
+---
+
 ## Cursor / Claude — Nadir MCP (instance control)
 
 Agents can list/start/stop local instances via the **Streamable HTTP MCP** server:
