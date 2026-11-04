@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -76,7 +77,29 @@ class GatewayOllamaProxyTests(SimpleTestCase):
         self.assertEqual(response.json()["message"]["content"], "Hello")
         self.assertTrue(response.json()["done"])
 
-    def test_chat_stream_returns_501(self) -> None:
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_chat_stream_translates_ndjson(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        async def chunk_stream():
+            yield (
+                b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n'
+                b"data: [DONE]\n\n"
+            )
+
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.aiter_bytes = chunk_stream
+        upstream.aclose = AsyncMock()
+
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
         response = self.client.post(
             "/api/chat",
             json={
@@ -85,8 +108,13 @@ class GatewayOllamaProxyTests(SimpleTestCase):
                 "messages": [{"role": "user", "content": "Hi"}],
             },
         )
-        self.assertEqual(response.status_code, 501)
-        self.assertEqual(response.json()["error"]["code"], "not_implemented")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/x-ndjson", response.headers.get("content-type", ""))
+        lines = [json.loads(line) for line in response.content.splitlines() if line]
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertEqual(lines[0]["message"]["content"], "Hi")
+        self.assertFalse(lines[0]["done"])
+        self.assertTrue(lines[-1]["done"])
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")

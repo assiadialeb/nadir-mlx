@@ -36,9 +36,22 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(GatewayRouteError)
     async def handle_gateway_route_error(
-        _request: Request,
+        request: Request,
         exc: GatewayRouteError,
     ) -> JSONResponse:
+        if request.url.path.startswith("/v1/messages"):
+            from orchestrator.gateway.protocol.anthropic_translate import (
+                anthropic_error_envelope,
+                anthropic_error_type_for_code,
+            )
+
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=anthropic_error_envelope(
+                    exc.message,
+                    anthropic_error_type_for_code(exc.code),
+                ),
+            )
         return JSONResponse(status_code=exc.status_code, content=exc.to_openai_error())
 
     @app.exception_handler(RequestValidationError)
