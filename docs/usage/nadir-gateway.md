@@ -267,6 +267,21 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 !!! note "Input formats"
     WAV and MP3 decode in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on the MLX host. Realtime WebSocket STT is not supported in v1.
 
+## Thinking / reasoning control (TTFT)
+
+mlx-lm accepts per-request `chat_template_kwargs` (notably `enable_thinking`). Nadir maps client fields so agents can disable long “thinking” traces that inflate **visible TTFT**:
+
+| Client API | Client field | Upstream `chat_template_kwargs` |
+|------------|--------------|----------------------------------|
+| OpenAI chat `/v1/chat/completions` | `reasoning_effort`: `none` / `minimal` | `enable_thinking: false` |
+| OpenAI chat | `reasoning_effort`: `low` / `medium` / `high` | `enable_thinking: true` + `thinking_budget` |
+| Responses `/v1/responses` | `reasoning.effort` or `reasoning_effort` | same mapping |
+| Anthropic `/v1/messages` | `thinking` absent or `type: disabled` | `enable_thinking: false` |
+| Anthropic | `thinking.type: enabled` (+ optional `budget_tokens`) | `enable_thinking: true` (+ budget) |
+| Ollama `/api/chat` | `think: false` / `true` | `enable_thinking: false` / `true` (only when set) |
+
+Clients may still send `chat_template_kwargs` directly; façade mappings override colliding keys.
+
 ## Security
 
 The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding protections are always on.

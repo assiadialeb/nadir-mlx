@@ -14,13 +14,21 @@ def prepare_chat_upstream_body(
     upstream_model: str,
     *,
     force_include_usage: bool = False,
+    chat_template_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Clone the client payload and rewrite only the model field for mlx-lm / mlx-vlm.
 
     ``force_include_usage`` is for protocol façades that need token counts.
     Native ``/v1/chat/completions`` must leave the client's ``stream_options`` alone
-    so mlx-lm does not emit a usage-only ``choices: []`` chunk to unaware clients.
+    so mlx-lm does not emit a usage-only ``choices: []`` chunk to unaware clients
+    unless gateway telemetry forces usage.
+
+    ``chat_template_kwargs`` merges into the upstream body for mlx-lm
+    (e.g. ``enable_thinking``). Explicit client ``chat_template_kwargs`` are kept
+    and overridden by this mapping when keys collide.
     """
+    from orchestrator.gateway.thinking_control import merge_chat_template_kwargs
+
     upstream = deepcopy(body)
     upstream["model"] = upstream_model
     if force_include_usage and upstream.get("stream"):
@@ -29,6 +37,10 @@ def prepare_chat_upstream_body(
             options = {}
         options = {**options, "include_usage": True}
         upstream["stream_options"] = options
+    # Drop client-only control fields that mlx-lm does not understand as top-level.
+    upstream.pop("reasoning_effort", None)
+    if chat_template_kwargs:
+        upstream = merge_chat_template_kwargs(upstream, chat_template_kwargs)
     return upstream
 
 

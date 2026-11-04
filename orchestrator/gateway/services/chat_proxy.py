@@ -17,6 +17,7 @@ from orchestrator.gateway.services.http_proxy import (
     upstream_url_for_path,
     validate_target_launch_mode,
 )
+from orchestrator.gateway.thinking_control import kwargs_from_openai_chat
 
 CHAT_LAUNCH_MODES = frozenset({"TEXT", "MULTIMODAL"})
 TEXT_ONLY_LAUNCH_MODES = frozenset({"TEXT"})
@@ -47,6 +48,7 @@ async def proxy_chat_completions(body: dict[str, Any], headers: Any) -> Response
             body,
             target.upstream_model,
             force_include_usage=_force_usage_for_telemetry(),
+            chat_template_kwargs=kwargs_from_openai_chat(body),
         )
         request_headers = forward_request_headers(headers)
         url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
@@ -72,6 +74,7 @@ async def proxy_text_completions(body: dict[str, Any], headers: Any) -> Response
             body,
             target.upstream_model,
             force_include_usage=_force_usage_for_telemetry(),
+            chat_template_kwargs=kwargs_from_openai_chat(body),
         )
         request_headers = forward_request_headers(headers)
         url = upstream_url_for_path(target, COMPLETIONS_PATH)

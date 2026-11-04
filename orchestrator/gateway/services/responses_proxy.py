@@ -38,10 +38,13 @@ async def proxy_responses_create(body: dict[str, Any], headers: Any) -> Response
     validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "responses")
     request_headers = forward_request_headers(headers)
     url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
+    from orchestrator.gateway.thinking_control import kwargs_from_responses
+
     upstream_body = prepare_chat_upstream_body(
         chat_body,
         target.upstream_model,
         force_include_usage=True,
+        chat_template_kwargs=kwargs_from_responses(body),
     )
 
     if chat_body.get("stream"):
