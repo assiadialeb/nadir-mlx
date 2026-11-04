@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header
 
 from orchestrator.env_utils import env_str
+from orchestrator.gateway.router import GatewayRouteError
 from orchestrator.security_utils import extract_bearer_token
 
 
@@ -19,7 +20,8 @@ def verify_gateway_api_key(
 
     token = extract_bearer_token(authorization) or (x_api_key or "").strip()
     if token != expected:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key.",
+        raise GatewayRouteError(
+            status_code=401,
+            code="invalid_api_key",
+            message="Invalid API key.",
         )

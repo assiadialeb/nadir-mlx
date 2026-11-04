@@ -52,6 +52,8 @@ SQLite is used when no PostgreSQL host is configured.
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Stop idle `on_demand` instances |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | Idle watcher interval |
 | `NADIR_GATEWAY_PUBLIC_BASE_URL` | `http://127.0.0.1:11380` | Base URL for generated image links |
+| `NADIR_GATEWAY_API_KEY` | — | Optional gateway API key (`Authorization: Bearer` or `X-API-Key`) |
+| `NADIR_GATEWAY_CORS_ORIGINS` | — | Comma-separated browser origins; empty disables CORS |
 
 Per-instance overrides (lifecycle, idle minutes, concurrency) are set in **server config** in the UI. See [Server config reference](usage/server-config-reference.md).
 

@@ -46,15 +46,16 @@ class GatewayRouteError(Exception):
     status_code: int
     code: str
     message: str
+    param: str | None = None
 
     def to_openai_error(self) -> dict[str, object]:
-        return {
-            "error": {
-                "message": self.message,
-                "type": self.code,
-                "code": self.code,
-            }
-        }
+        from orchestrator.gateway.errors import openai_error_envelope
+
+        return openai_error_envelope(
+            self.message,
+            self.code,
+            param=self.param,
+        )
 
 
 @dataclass(frozen=True)

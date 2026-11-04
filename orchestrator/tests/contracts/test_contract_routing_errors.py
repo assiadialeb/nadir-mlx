@@ -51,7 +51,8 @@ def test_embeddings_on_text_alias_returns_unsupported_endpoint_contract(
         response=response,
     )
     error = body["error"]
-    assert error["type"] == "unsupported_endpoint"
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "unsupported_endpoint"
     assert error["code"] == "unsupported_endpoint"
 
 
@@ -79,5 +80,6 @@ def test_rerank_on_image_alias_returns_unsupported_endpoint_contract(
         response=response,
     )
     error = body["error"]
-    assert error["type"] == "unsupported_endpoint"
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "unsupported_endpoint"
     assert error["code"] == "unsupported_endpoint"

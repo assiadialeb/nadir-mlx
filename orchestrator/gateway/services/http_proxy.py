@@ -14,6 +14,11 @@ from starlette.responses import Response
 
 from orchestrator.env_utils import env_float
 
+from orchestrator.gateway.http_client import get_http_client
+from orchestrator.gateway.response_normalize import (
+    normalize_client_chat_payload,
+    restore_response_model,
+)
 from orchestrator.gateway.router import GatewayRouteError, GatewayTarget
 from orchestrator.gateway.upstream_concurrency import (
     MSG_QUEUE_TIMEOUT,
@@ -87,6 +92,39 @@ def prepare_upstream_body(body: dict[str, Any], target: GatewayTarget) -> dict[s
     return upstream
 
 
+def rewrite_sse_line_model(line: bytes, client_model_alias: str) -> bytes:
+    """Normalize JSON inside a single SSE ``data:`` line for OpenAI clients."""
+    if not line.startswith(b"data:"):
+        return line
+    raw = line[5:].strip()
+    if not raw or raw == b"[DONE]":
+        return line
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return line
+    restored = normalize_client_chat_payload(payload, client_model_alias)
+    if restored is payload:
+        return line
+    encoded = json.dumps(restored, separators=(",", ":")).encode()
+    return b"data: " + encoded
+
+
+async def iter_sse_with_restored_model(
+    chunks: AsyncIterator[bytes],
+    client_model_alias: str,
+) -> AsyncIterator[bytes]:
+    """Transform an upstream SSE byte stream so ``model`` matches the gateway alias."""
+    buffer = b""
+    async for chunk in chunks:
+        buffer += chunk
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            yield rewrite_sse_line_model(line, client_model_alias) + b"\n"
+    if buffer:
+        yield rewrite_sse_line_model(buffer, client_model_alias)
+
+
 def upstream_url_for_path(target: GatewayTarget, path: str) -> str:
     return f"{target.base_url}{path}"
 
@@ -130,9 +168,11 @@ async def resolve_target_from_body(body: dict[str, Any]) -> GatewayTarget:
 
 
 def gateway_error(status_code: int, code: str, message: str) -> JSONResponse:
+    from orchestrator.gateway.errors import openai_error_envelope
+
     return JSONResponse(
         status_code=status_code,
-        content={"error": {"message": message, "type": code, "code": code}},
+        content=openai_error_envelope(message, code),
     )
 
 
@@ -167,22 +207,19 @@ async def _proxy_binary_post_impl(
     body: dict[str, Any],
     headers: dict[str, str],
 ) -> Response:
-    client = httpx.AsyncClient(timeout=httpx_client_timeout())
+    client = get_http_client()
     try:
         async with asyncio.timeout(proxy_timeout_seconds()):
             request = client.build_request("POST", url, json=body, headers=headers)
             response = await client.send(request, stream=True)
     except (TimeoutError, httpx.TimeoutException):
-        await client.aclose()
         return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
     except httpx.HTTPError:
-        await client.aclose()
         return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
 
     if response.status_code >= 400:
         error_body = await response.aread()
         await response.aclose()
-        await client.aclose()
         content_type = response.headers.get("content-type", "")
         if CONTENT_TYPE_JSON in content_type:
             try:
@@ -204,7 +241,6 @@ async def _proxy_binary_post_impl(
                 yield chunk
         finally:
             await response.aclose()
-            await client.aclose()
 
     return StreamingResponse(
         iter_chunks(),
@@ -222,7 +258,7 @@ async def proxy_json_post(
 ) -> Response:
     try:
         async with upstream_concurrency_slot(target):
-            return await _proxy_json_post_impl(url, body, headers)
+            return await _proxy_json_post_impl(url, body, headers, target.alias)
     except UpstreamQueueTimeoutError as exc:
         return gateway_error(503, "upstream_queue_timeout", exc.message)
 
@@ -231,11 +267,12 @@ async def _proxy_json_post_impl(
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],
+    client_model_alias: str,
 ) -> Response:
+    client = get_http_client()
     try:
         async with asyncio.timeout(proxy_timeout_seconds()):
-            async with httpx.AsyncClient(timeout=httpx_client_timeout()) as client:
-                response = await client.post(url, json=body, headers=headers)
+            response = await client.post(url, json=body, headers=headers)
     except (TimeoutError, httpx.TimeoutException):
         return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
     except httpx.HTTPError:
@@ -248,7 +285,7 @@ async def _proxy_json_post_impl(
     if CONTENT_TYPE_JSON in content_type:
         return JSONResponse(
             status_code=response.status_code,
-            content=response.json(),
+            content=normalize_client_chat_payload(response.json(), client_model_alias),
             headers=passthrough_response_headers(response.headers),
         )
     return Response(
@@ -259,52 +296,111 @@ async def _proxy_json_post_impl(
     )
 
 
-async def stream_upstream_chunks(
+async def read_upstream_stream_error(response: httpx.Response) -> Response:
+    """Consume a failed streamed upstream response and return a JSON/HTTP error."""
+    error_body = await response.aread()
+    await response.aclose()
+    content_type = response.headers.get("content-type", "")
+    if CONTENT_TYPE_JSON in content_type:
+        try:
+            payload = json.loads(error_body)
+        except json.JSONDecodeError:
+            payload = {
+                "error": {
+                    "message": error_body.decode(errors="replace"),
+                    "type": "upstream_error",
+                    "code": "upstream_error",
+                }
+            }
+        return JSONResponse(status_code=response.status_code, content=payload)
+    return JSONResponse(
+        status_code=response.status_code,
+        content={
+            "error": {
+                "message": error_body.decode(errors="replace"),
+                "type": "upstream_error",
+                "code": "upstream_error",
+            }
+        },
+    )
+
+
+async def proxy_sse_post(
     target: GatewayTarget,
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],
-) -> AsyncIterator[bytes]:
-    try:
-        async with upstream_concurrency_slot(target):
-            async for chunk in _stream_upstream_chunks_impl(url, body, headers):
+) -> Response:
+    """Open upstream SSE before responding; propagate non-2xx as real HTTP errors."""
+    state: dict[str, Any] = {}
+    early_error = await _open_upstream_sse_session(target, url, body, headers, state)
+    if early_error is not None:
+        return early_error
+
+    async def iter_chunks() -> AsyncIterator[bytes]:
+        response: httpx.Response = state["response"]
+        try:
+            async for chunk in iter_sse_with_restored_model(
+                response.aiter_bytes(),
+                target.alias,
+            ):
                 yield chunk
-    except UpstreamQueueTimeoutError:
-        yield _encode_sse_error(MSG_QUEUE_TIMEOUT)
+        except (httpx.HTTPError, TimeoutError):
+            yield _encode_sse_error(MSG_BAD_GATEWAY)
+        finally:
+            await _close_upstream_sse_session(state)
+
+    return StreamingResponse(
+        iter_chunks(),
+        status_code=200,
+        media_type="text/event-stream",
+    )
 
 
-async def _stream_upstream_chunks_impl(
+async def _open_upstream_sse_session(
+    target: GatewayTarget,
     url: str,
     body: dict[str, Any],
     headers: dict[str, str],
-) -> AsyncIterator[bytes]:
-    client = httpx.AsyncClient(timeout=httpx_client_timeout())
+    state: dict[str, Any],
+) -> Response | None:
+    """Acquire queue slot and open upstream stream. Return error Response or None."""
+    slot = upstream_concurrency_slot(target)
+    try:
+        await slot.__aenter__()
+    except UpstreamQueueTimeoutError as exc:
+        return gateway_error(503, "upstream_queue_timeout", exc.message)
+    state["slot"] = slot
+
+    client = get_http_client()
     try:
         async with asyncio.timeout(proxy_timeout_seconds()):
             request = client.build_request("POST", url, json=body, headers=headers)
             response = await client.send(request, stream=True)
     except (TimeoutError, httpx.TimeoutException):
-        await client.aclose()
-        yield _encode_sse_error(MSG_UPSTREAM_TIMEOUT)
-        return
+        await _close_upstream_sse_session(state)
+        return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
     except httpx.HTTPError:
-        await client.aclose()
-        yield _encode_sse_error(MSG_BAD_GATEWAY)
-        return
+        await _close_upstream_sse_session(state)
+        return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
 
-    if response.status_code >= 400:
-        error_body = await response.aread()
-        await response.aclose()
-        await client.aclose()
-        yield error_body
-        return
+    state["response"] = response
+    if response.status_code < 400:
+        return None
 
-    try:
-        async for chunk in response.aiter_bytes():
-            yield chunk
-    finally:
+    error_response = await read_upstream_stream_error(response)
+    state.pop("response", None)
+    await _close_upstream_sse_session(state)
+    return error_response
+
+
+async def _close_upstream_sse_session(state: dict[str, Any]) -> None:
+    response = state.pop("response", None)
+    if response is not None:
         await response.aclose()
-        await client.aclose()
+    slot = state.pop("slot", None)
+    if slot is not None:
+        await slot.__aexit__(None, None, None)
 
 
 def _encode_sse_error(message: str) -> bytes:

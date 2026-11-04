@@ -46,7 +46,7 @@ class LifecycleE2ETests(TransactionTestCase):
         clear_gateway_route_cache()
         self.gateway = TestClient(create_app())
 
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
     @patch("orchestrator.lifecycle_services.start_instance")
     def test_on_demand_register_wake_infer_stop_delete(
@@ -101,7 +101,7 @@ class LifecycleE2ETests(TransactionTestCase):
         delete_instance(instance)
         self.assertFalse(InferenceInstance.objects.filter(pk=instance_id).exists())
 
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
     @patch("orchestrator.server_manager._detect_log_failure", return_value=None)
     @patch("orchestrator.server_manager.time.sleep")
@@ -161,7 +161,7 @@ class LifecycleE2ETests(TransactionTestCase):
 
         self.assertFalse(InferenceInstance.objects.filter(pk=instance.pk).exists())
 
-    @patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
     @patch("orchestrator.lifecycle_services.start_instance")
     def test_on_demand_wake_stop_and_wake_again(

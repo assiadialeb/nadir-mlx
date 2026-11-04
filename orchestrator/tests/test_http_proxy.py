@@ -22,7 +22,8 @@ from orchestrator.gateway.services.http_proxy import (
     read_upstream_error,
     resolve_target_from_body,
     resolve_target_from_model,
-    stream_upstream_chunks,
+    proxy_sse_post,
+    rewrite_sse_line_model,
     upstream_url_for_path,
     validate_target_launch_mode,
 )
@@ -45,6 +46,7 @@ class HttpProxyHelperTests(IsolatedAsyncioTestCase):
         response = gateway_error(503, "model_unavailable", "Model is not running.")
         payload = json.loads(response.body)
         self.assertEqual(payload["error"]["code"], "model_unavailable")
+        self.assertEqual(payload["error"]["type"], "server_error")
         self.assertEqual(response.status_code, 503)
 
     def test_read_upstream_error_parses_json_body(self) -> None:
@@ -72,13 +74,16 @@ class HttpProxyHelperTests(IsolatedAsyncioTestCase):
 
 class HttpProxyJsonPostTests(IsolatedAsyncioTestCase):
     async def test_proxy_json_post_returns_upstream_json(self) -> None:
-        mock_response = httpx.Response(200, json={"choices": []})
+        mock_response = httpx.Response(
+            200,
+            json={"choices": [], "model": "default_model"},
+        )
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         with patch(
-            "orchestrator.gateway.services.http_proxy.httpx.AsyncClient",
+            "orchestrator.gateway.services.http_proxy.get_http_client",
             return_value=mock_client,
         ):
             response = await proxy_json_post(
@@ -89,6 +94,7 @@ class HttpProxyJsonPostTests(IsolatedAsyncioTestCase):
             )
         payload = json.loads(response.body)
         self.assertEqual(payload["choices"], [])
+        self.assertEqual(payload["model"], "demo")
 
     async def test_proxy_json_post_maps_timeout_to_gateway_error(self) -> None:
         mock_client = AsyncMock()
@@ -96,7 +102,7 @@ class HttpProxyJsonPostTests(IsolatedAsyncioTestCase):
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         with patch(
-            "orchestrator.gateway.services.http_proxy.httpx.AsyncClient",
+            "orchestrator.gateway.services.http_proxy.get_http_client",
             return_value=mock_client,
         ):
             response = await proxy_json_post(
@@ -142,6 +148,14 @@ class HttpProxyUtilityTests(TestCase):
         body = prepare_upstream_body({"model": "alias"}, TARGET)
         self.assertEqual(body["model"], "default_model")
 
+    def test_rewrite_sse_line_model_restores_alias(self) -> None:
+        line = b'data: {"model":"default_model","choices":[]}'
+        rewritten = rewrite_sse_line_model(line, "demo")
+        self.assertEqual(json.loads(rewritten[5:])["model"], "demo")
+
+    def test_rewrite_sse_line_model_keeps_done_marker(self) -> None:
+        self.assertEqual(rewrite_sse_line_model(b"data: [DONE]", "demo"), b"data: [DONE]")
+
     def test_upstream_url_for_path_joins_base(self) -> None:
         url = upstream_url_for_path(TARGET, "/v1/chat/completions")
         self.assertTrue(url.endswith("/v1/chat/completions"))
@@ -178,7 +192,7 @@ class HttpProxyBinaryPostTests(IsolatedAsyncioTestCase):
         mock_client.aclose = AsyncMock()
 
         with patch(
-            "orchestrator.gateway.services.http_proxy.httpx.AsyncClient",
+            "orchestrator.gateway.services.http_proxy.get_http_client",
             return_value=mock_client,
         ):
             response = await proxy_binary_post(
@@ -190,9 +204,9 @@ class HttpProxyBinaryPostTests(IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.media_type, "audio/wav")
 
-    async def test_stream_upstream_chunks_yields_bytes(self) -> None:
+    async def test_proxy_sse_post_restores_model_in_chunks(self) -> None:
         async def _byte_stream():
-            yield b"data: {}\n\n"
+            yield b'data: {"model":"default_model"}\n\n'
 
         mock_response = AsyncMock()
         mock_response.status_code = 200
@@ -205,18 +219,48 @@ class HttpProxyBinaryPostTests(IsolatedAsyncioTestCase):
         mock_client.aclose = AsyncMock()
 
         with patch(
-            "orchestrator.gateway.services.http_proxy.httpx.AsyncClient",
+            "orchestrator.gateway.services.http_proxy.get_http_client",
             return_value=mock_client,
         ):
-            chunks = []
-            async for chunk in stream_upstream_chunks(
+            response = await proxy_sse_post(
                 TARGET,
                 "http://127.0.0.1:11400/v1/chat/completions",
                 {"model": "default_model"},
                 {},
-            ):
-                chunks.append(chunk)
-        self.assertEqual(chunks, [b"data: {}\n\n"])
+            )
+            chunks = [chunk async for chunk in response.body_iterator]
+        joined = b"".join(chunks)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'"model":"demo"', joined)
+        self.assertNotIn(b"default_model", joined)
+
+    async def test_proxy_sse_post_propagates_upstream_http_error(self) -> None:
+        mock_response = AsyncMock()
+        mock_response.status_code = 400
+        mock_response.headers = httpx.Headers({"content-type": "application/json"})
+        mock_response.aread = AsyncMock(
+            return_value=b'{"error":{"message":"bad request","type":"invalid_request_error"}}'
+        )
+        mock_response.aclose = AsyncMock()
+
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=mock_response)
+        mock_client.aclose = AsyncMock()
+
+        with patch(
+            "orchestrator.gateway.services.http_proxy.get_http_client",
+            return_value=mock_client,
+        ):
+            response = await proxy_sse_post(
+                TARGET,
+                "http://127.0.0.1:11400/v1/chat/completions",
+                {"model": "default_model", "stream": True},
+                {},
+            )
+        self.assertEqual(response.status_code, 400)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"]["message"], "bad request")
 
 
 class HttpProxyResolveTargetTests(IsolatedAsyncioTestCase):

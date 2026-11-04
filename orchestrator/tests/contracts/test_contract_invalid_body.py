@@ -43,7 +43,8 @@ def test_chat_completion_malformed_json_returns_invalid_request_contract(
         status_code=400,
         response=response,
     )
-    assert body["error"]["type"] == "invalid_request"
+    assert body["error"]["type"] == "invalid_request_error"
+    assert body["error"]["code"] == "invalid_request"
 
 
 @pytest.mark.contract
@@ -63,7 +64,8 @@ def test_chat_completion_non_object_json_returns_invalid_request_contract(
         status_code=400,
         response=response,
     )
-    assert body["error"]["type"] == "invalid_request"
+    assert body["error"]["type"] == "invalid_request_error"
+    assert body["error"]["code"] == "invalid_request"
 
 
 @pytest.mark.contract
@@ -83,8 +85,9 @@ def test_chat_completion_missing_model_returns_invalid_model_contract(
         response=response,
     )
     error = body["error"]
-    assert error["type"] == "invalid_model"
+    assert error["type"] == "invalid_request_error"
     assert error["code"] == "invalid_model"
+    assert error["param"] == "model"
 
 
 @pytest.mark.contract
@@ -104,17 +107,18 @@ def test_chat_completion_empty_model_returns_invalid_model_contract(
         response=response,
     )
     error = body["error"]
-    assert error["type"] == "invalid_model"
+    assert error["type"] == "invalid_request_error"
     assert error["code"] == "invalid_model"
+    assert error["param"] == "model"
 
 
 @pytest.mark.contract
 @pytest.mark.django_db(transaction=True)
 @patch("orchestrator.lifecycle_services.touch_instance_last_used_at")
 @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
-@patch("orchestrator.gateway.services.http_proxy.httpx.AsyncClient")
+@patch("orchestrator.gateway.services.http_proxy.get_http_client")
 def test_chat_completion_missing_messages_upstream_400_matches_contract(
-    mock_client_cls: MagicMock,
+    mock_get_client: MagicMock,
     _mock_ready: MagicMock,
     _mock_touch: MagicMock,
     gateway_client: Any,
@@ -141,9 +145,7 @@ def test_chat_completion_missing_messages_upstream_400_matches_contract(
     upstream.headers = httpx.Headers({"content-type": "application/json"})
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(return_value=upstream)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client_cls.return_value = mock_client
+    mock_get_client.return_value = mock_client
 
     response = gateway_client.post(
         "/v1/chat/completions",

@@ -241,6 +241,8 @@ NADIR_GATEWAY_PUBLIC_BASE_URL = os.environ.get(
     "NADIR_GATEWAY_PUBLIC_BASE_URL",
     f"http://{NADIR_GATEWAY_HOST}:{NADIR_GATEWAY_PORT}",
 )
+# Comma-separated browser origins; empty disables CORS middleware (local-first default).
+NADIR_GATEWAY_CORS_ORIGINS = os.environ.get("NADIR_GATEWAY_CORS_ORIGINS", "")
 
 # Benchmark custom endpoints (anti-SSRF): disabled in production unless explicitly enabled.
 NADIR_BENCHMARK_ENDPOINT_ENABLED = _env_bool(

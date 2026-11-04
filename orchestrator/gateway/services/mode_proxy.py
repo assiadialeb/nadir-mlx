@@ -7,11 +7,13 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.responses import Response, StreamingResponse
 
+from orchestrator.gateway.http_client import get_http_client
 from orchestrator.gateway.router import (
     AUDIO_SPEECH_PATH,
     AUDIO_TRANSCRIPTIONS_PATH,
@@ -34,7 +36,6 @@ from orchestrator.gateway.services.http_proxy import (
     prepare_upstream_body,
     proxy_binary_post,
     proxy_json_post,
-    httpx_client_timeout,
     proxy_timeout_seconds,
     read_upstream_error,
     resolve_target_from_body,
@@ -46,7 +47,6 @@ from orchestrator.gateway.upstream_concurrency import (
     UpstreamQueueTimeoutError,
     upstream_concurrency_slot,
 )
-import httpx
 
 EMBEDDING_MODES = frozenset({"EMBEDDING"})
 RERANKER_MODES = frozenset({"RERANKER"})
@@ -88,13 +88,9 @@ def _gateway_transport_error(exc: Exception) -> Response:
     return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
 
 
-async def _upstream_stream_error_response(
-    response: httpx.Response,
-    client: httpx.AsyncClient,
-) -> Response:
+async def _upstream_stream_error_response(response: httpx.Response) -> Response:
     error_body = await response.aread()
     await response.aclose()
-    await client.aclose()
     content_type = response.headers.get("content-type", CONTENT_TYPE_JSON)
     if CONTENT_TYPE_JSON in content_type:
         try:
@@ -157,15 +153,15 @@ async def _proxy_multipart_request(
     multipart_data, multipart_files = await _parse_multipart_payload(form, target)
     timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, upstream_path)
+    client = get_http_client()
     try:
         async with upstream_concurrency_slot(target):
             async with asyncio.timeout(timeout):
-                async with httpx.AsyncClient(timeout=httpx_client_timeout()) as client:
-                    response = await client.post(
-                        url,
-                        data=multipart_data,
-                        files=multipart_files or None,
-                    )
+                response = await client.post(
+                    url,
+                    data=multipart_data,
+                    files=multipart_files or None,
+                )
     except UpstreamQueueTimeoutError as exc:
         return gateway_error(503, "upstream_queue_timeout", exc.message)
     except (TimeoutError, httpx.TimeoutException):
@@ -201,7 +197,7 @@ async def _proxy_multipart_stream_request(
 
     timeout = proxy_timeout_seconds()
     url = upstream_url_for_path(target, upstream_path)
-    client = httpx.AsyncClient(timeout=httpx_client_timeout())
+    client = get_http_client()
     try:
         async with upstream_concurrency_slot(target):
             async with asyncio.timeout(timeout):
@@ -213,11 +209,10 @@ async def _proxy_multipart_stream_request(
                 )
                 response = await client.send(upstream_request, stream=True)
     except (UpstreamQueueTimeoutError, TimeoutError, httpx.TimeoutException, httpx.HTTPError) as exc:
-        await client.aclose()
         return _gateway_transport_error(exc)
 
     if response.status_code >= 400:
-        return await _upstream_stream_error_response(response, client)
+        return await _upstream_stream_error_response(response)
 
     media_type = response.headers.get("content-type", "text/event-stream")
     passthrough = passthrough_response_headers(response.headers)
@@ -228,7 +223,6 @@ async def _proxy_multipart_stream_request(
                 yield chunk
         finally:
             await response.aclose()
-            await client.aclose()
 
     return StreamingResponse(
         iter_upstream(),

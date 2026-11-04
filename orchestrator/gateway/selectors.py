@@ -192,3 +192,27 @@ def list_running_gateway_models() -> dict[str, object]:
     """Build an OpenAI-compatible model list from registered gateway aliases."""
     snapshot = get_route_snapshot()
     return snapshot.models_payload
+
+
+def get_gateway_model(model_id: str) -> dict[str, object]:
+    """Return one OpenAI-compatible model object by gateway alias."""
+    cleaned = (model_id or "").strip()
+    if not cleaned:
+        raise GatewayRouteError(
+            status_code=400,
+            code="invalid_model",
+            message="The model id is required.",
+        )
+    snapshot = get_route_snapshot()
+    wanted = cleaned.casefold()
+    for entry in snapshot.models_payload.get("data", []):
+        if not isinstance(entry, dict):
+            continue
+        entry_id = entry.get("id")
+        if isinstance(entry_id, str) and entry_id.casefold() == wanted:
+            return entry
+    raise GatewayRouteError(
+        status_code=404,
+        code="model_not_found",
+        message=f"No inference instance is registered for alias '{cleaned}'.",
+    )
