@@ -253,7 +253,11 @@ def reset_request_timing(collector: RequestTimingCollector | None) -> None:
         return
     token: Token | None = getattr(collector, "_token", None)
     if token is not None:
-        _active_collector.reset(token)
+        try:
+            _active_collector.reset(token)
+        except ValueError:
+            # SSE finalizes in a different Context than start_request_timing.
+            _active_collector.set(None)
     collector.finalize()
 
 

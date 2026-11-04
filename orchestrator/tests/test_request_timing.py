@@ -110,3 +110,25 @@ class RequestTimingContextTests(TestCase):
             collector.mark_json_complete({"usage": {"prompt_tokens": 3}})
             reset_request_timing(collector)
             mock_record.assert_called_once()
+
+    @override_settings(NADIR_GATEWAY_TELEMETRY_ENABLED=True)
+    def test_reset_survives_foreign_contextvar_token(self) -> None:
+        """SSE may finalize in a different Context than start (Starlette stream)."""
+        import contextvars
+
+        with patch(
+            "orchestrator.gateway_telemetry_services.record_gateway_request_timing"
+        ) as mock_record:
+            collector = start_request_timing(
+                endpoint="/v1/chat/completions", stream=True
+            )
+            assert collector is not None
+
+            def _finalize_elsewhere() -> None:
+                reset_request_timing(collector)
+
+            contextvars.copy_context().run(_finalize_elsewhere)
+            mock_record.assert_called_once()
+            # Idempotent: second finalize is a no-op.
+            reset_request_timing(collector)
+            mock_record.assert_called_once()
