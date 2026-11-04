@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 from django.test import SimpleTestCase
 from django.utils import timezone
@@ -12,6 +13,12 @@ from orchestrator.instance_eviction import (
     ensure_headroom_for_load,
     evict_one_lru_instance,
     list_lru_evictable_instances,
+)
+from orchestrator.memory_pressure import (
+    estimate_instance_footprint_bytes,
+    host_available_bytes,
+    lru_eviction_enabled,
+    memory_reserve_bytes,
 )
 
 
@@ -55,6 +62,25 @@ class InstanceEvictionTests(SimpleTestCase):
         ordered = list_lru_evictable_instances()
         self.assertEqual([row.model_name for row in ordered], ["old-model", "new-model"])
 
+    @patch("orchestrator.instance_eviction.is_wake_in_progress", side_effect=[True, False])
+    @patch("orchestrator.instance_eviction.instance_gateway_alias", side_effect=lambda i: i.model_name)
+    @patch("orchestrator.instance_eviction.InferenceInstance.objects.filter")
+    def test_list_lru_skips_exclude_id_and_wake_in_progress(
+        self,
+        mock_filter: MagicMock,
+        _mock_alias: MagicMock,
+        _mock_wake: MagicMock,
+    ) -> None:
+        now = timezone.now()
+        rows = [
+            _instance(pk=1, model_name="excluded", lifecycle="on_demand", last_used_at=now),
+            _instance(pk=2, model_name="waking", lifecycle="on_demand", last_used_at=now),
+            _instance(pk=3, model_name="ready", lifecycle="on_demand", last_used_at=now),
+        ]
+        mock_filter.return_value.order_by.return_value = rows
+        ordered = list_lru_evictable_instances(exclude_id=1)
+        self.assertEqual([row.model_name for row in ordered], ["ready"])
+
     @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
     @patch("orchestrator.server_manager.stop_instance")
     @patch("orchestrator.instance_eviction.clear_gateway_route_cache")
@@ -76,6 +102,47 @@ class InstanceEvictionTests(SimpleTestCase):
         stopped = evict_one_lru_instance()
         self.assertIs(stopped, victim)
         mock_stop.assert_called_once_with(victim)
+
+    @patch(
+        "orchestrator.server_manager.is_manual_stop_in_progress",
+        side_effect=[True, False, False],
+    )
+    @patch("orchestrator.server_manager.stop_instance", side_effect=[RuntimeError("boom"), None])
+    @patch("orchestrator.instance_eviction.clear_gateway_route_cache")
+    @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
+    def test_evict_one_skips_manual_stop_and_failed_stop(
+        self,
+        mock_list: MagicMock,
+        mock_cache: MagicMock,
+        mock_stop: MagicMock,
+        _mock_manual: MagicMock,
+    ) -> None:
+        manual = _instance(pk=1, model_name="manual", lifecycle="on_demand", last_used_at=timezone.now())
+        failing = _instance(pk=2, model_name="fail", lifecycle="on_demand", last_used_at=timezone.now())
+        ok = _instance(pk=3, model_name="ok", lifecycle="on_demand", last_used_at=timezone.now())
+        mock_list.return_value = [manual, failing, ok]
+
+        stopped = evict_one_lru_instance()
+        self.assertIs(stopped, ok)
+        self.assertEqual(mock_stop.call_count, 2)
+        mock_cache.assert_called_once()
+
+    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.server_manager.stop_instance", side_effect=RuntimeError("all failed"))
+    @patch("orchestrator.instance_eviction.clear_gateway_route_cache")
+    @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
+    def test_evict_one_returns_none_when_all_fail(
+        self,
+        mock_list: MagicMock,
+        mock_cache: MagicMock,
+        _mock_stop: MagicMock,
+        _mock_manual: MagicMock,
+    ) -> None:
+        mock_list.return_value = [
+            _instance(pk=1, model_name="a", lifecycle="on_demand", last_used_at=timezone.now())
+        ]
+        self.assertIsNone(evict_one_lru_instance())
+        mock_cache.assert_not_called()
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
     @patch("orchestrator.instance_eviction.host_available_bytes", return_value=100)
@@ -104,6 +171,74 @@ class InstanceEvictionTests(SimpleTestCase):
         self.assertEqual(stopped, 2)
         self.assertEqual(mock_evict.call_count, 2)
 
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
+    @patch("orchestrator.instance_eviction.host_available_bytes", return_value=None)
+    @patch(
+        "orchestrator.instance_eviction.estimate_instance_footprint_bytes",
+        return_value=500,
+    )
+    def test_ensure_headroom_skips_when_available_unknown(
+        self,
+        _mock_need: MagicMock,
+        _mock_available: MagicMock,
+    ) -> None:
+        pending = _instance(
+            pk=11,
+            model_name="pending",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+            status="LOADING",
+        )
+        self.assertEqual(ensure_headroom_for_load(pending), 0)
+
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
+    @patch("orchestrator.instance_eviction.host_available_bytes")
+    @patch(
+        "orchestrator.instance_eviction.estimate_instance_footprint_bytes",
+        return_value=500,
+    )
+    @patch("orchestrator.instance_eviction.evict_one_lru_instance", return_value=None)
+    def test_ensure_headroom_stops_when_no_victim(
+        self,
+        mock_evict: MagicMock,
+        _mock_need: MagicMock,
+        mock_available: MagicMock,
+    ) -> None:
+        pending = _instance(
+            pk=12,
+            model_name="pending",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+            status="LOADING",
+        )
+        mock_available.return_value = 10
+        self.assertEqual(ensure_headroom_for_load(pending), 0)
+        mock_evict.assert_called_once_with(exclude_id=12)
+
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
+    @patch("orchestrator.instance_eviction.host_available_bytes")
+    @patch(
+        "orchestrator.instance_eviction.estimate_instance_footprint_bytes",
+        return_value=500,
+    )
+    @patch("orchestrator.instance_eviction.evict_one_lru_instance")
+    def test_ensure_headroom_breaks_when_available_becomes_unknown(
+        self,
+        mock_evict: MagicMock,
+        _mock_need: MagicMock,
+        mock_available: MagicMock,
+    ) -> None:
+        pending = _instance(
+            pk=13,
+            model_name="pending",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+            status="LOADING",
+        )
+        mock_evict.return_value = MagicMock(model_name="victim")
+        mock_available.side_effect = [10, None]
+        self.assertEqual(ensure_headroom_for_load(pending), 1)
+
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "false"}, clear=False)
     def test_ensure_headroom_noop_when_disabled(self) -> None:
         pending = _instance(
@@ -118,11 +253,103 @@ class InstanceEvictionTests(SimpleTestCase):
 
 class MemoryPressureHelperTests(SimpleTestCase):
     def test_estimate_footprint_uses_disk_factor(self) -> None:
-        from orchestrator.memory_pressure import estimate_instance_footprint_bytes
-
         with patch(
             "orchestrator.memory_pressure.get_model_folder_size_bytes",
             return_value=10 * 1024**3,
         ):
             footprint = estimate_instance_footprint_bytes("big-model")
         self.assertGreaterEqual(footprint, int(10 * 1024**3 * 1.15))
+
+    def test_estimate_footprint_defaults_on_error_or_empty(self) -> None:
+        with patch(
+            "orchestrator.memory_pressure.get_model_folder_size_bytes",
+            side_effect=OSError("missing"),
+        ):
+            self.assertEqual(estimate_instance_footprint_bytes("gone"), 2 * 1024**3)
+        with patch(
+            "orchestrator.memory_pressure.get_model_folder_size_bytes",
+            return_value=0,
+        ):
+            self.assertEqual(estimate_instance_footprint_bytes("tiny"), 2 * 1024**3)
+
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "yes"}, clear=False)
+    def test_lru_eviction_enabled_from_env(self) -> None:
+        self.assertTrue(lru_eviction_enabled())
+
+    @patch.dict("os.environ", {"NADIR_MEMORY_RESERVE_GB": "2.5"}, clear=False)
+    def test_memory_reserve_from_env(self) -> None:
+        self.assertEqual(memory_reserve_bytes(), int(2.5 * 1024**3))
+
+    @patch.dict("os.environ", {"NADIR_MEMORY_RESERVE_GB": "not-a-number"}, clear=False)
+    def test_memory_reserve_falls_back_on_invalid_env(self) -> None:
+        with patch("orchestrator.memory_pressure.settings") as mock_settings:
+            mock_settings.NADIR_MEMORY_RESERVE_GB = 4.0
+            self.assertEqual(memory_reserve_bytes(), int(4.0 * 1024**3))
+
+    @patch("orchestrator.memory_pressure.platform.system", return_value="Darwin")
+    @patch("orchestrator.memory_pressure.memory_reserve_bytes", return_value=0)
+    @patch("orchestrator.memory_pressure.subprocess.check_output")
+    def test_darwin_available_bytes(
+        self,
+        mock_check_output: MagicMock,
+        _mock_reserve: MagicMock,
+        _mock_system: MagicMock,
+    ) -> None:
+        mock_check_output.side_effect = [
+            "4096\n",
+            (
+                "Pages free:            100.\n"
+                "Pages inactive:         50.\n"
+                "Pages speculative:      25.\n"
+                "Pages wired down:     9999.\n"
+            ),
+        ]
+        available = host_available_bytes()
+        self.assertEqual(available, (100 + 50 + 25) * 4096)
+
+    @patch("orchestrator.memory_pressure.platform.system", return_value="Darwin")
+    @patch(
+        "orchestrator.memory_pressure.subprocess.check_output",
+        side_effect=subprocess.CalledProcessError(1, "vm_stat"),
+    )
+    def test_darwin_available_bytes_returns_none_on_error(
+        self,
+        _mock_check_output: MagicMock,
+        _mock_system: MagicMock,
+    ) -> None:
+        self.assertIsNone(host_available_bytes())
+
+    @patch("orchestrator.memory_pressure.platform.system", return_value="Darwin")
+    @patch("orchestrator.memory_pressure.memory_reserve_bytes", return_value=0)
+    @patch("orchestrator.memory_pressure.subprocess.check_output")
+    def test_darwin_available_bytes_none_when_no_free_pages(
+        self,
+        mock_check_output: MagicMock,
+        _mock_reserve: MagicMock,
+        _mock_system: MagicMock,
+    ) -> None:
+        mock_check_output.side_effect = ["4096\n", "Pages wired down: 10.\n"]
+        self.assertIsNone(host_available_bytes())
+
+    @patch("orchestrator.memory_pressure.platform.system", return_value="Linux")
+    @patch("orchestrator.memory_pressure.memory_reserve_bytes", return_value=1024)
+    def test_linux_available_bytes(self, _mock_reserve: MagicMock, _mock_system: MagicMock) -> None:
+        meminfo = "MemTotal:       8000000 kB\nMemAvailable:   2000 kB\n"
+        with patch("builtins.open", mock_open(read_data=meminfo)):
+            available = host_available_bytes()
+        self.assertEqual(available, 2000 * 1024 - 1024)
+
+    @patch("orchestrator.memory_pressure.platform.system", return_value="Linux")
+    def test_linux_available_bytes_oserror(self, _mock_system: MagicMock) -> None:
+        with patch("builtins.open", side_effect=OSError("no /proc")):
+            self.assertIsNone(host_available_bytes())
+
+    @patch("orchestrator.memory_pressure.platform.system", return_value="Linux")
+    @patch("orchestrator.memory_pressure.memory_reserve_bytes", return_value=0)
+    def test_linux_available_bytes_missing_keys(
+        self,
+        _mock_reserve: MagicMock,
+        _mock_system: MagicMock,
+    ) -> None:
+        with patch("builtins.open", mock_open(read_data="MemTotal: 1000 kB\n")):
+            self.assertIsNone(host_available_bytes())
