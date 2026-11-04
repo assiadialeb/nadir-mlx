@@ -42,35 +42,8 @@ def chat_completion_to_anthropic(
     client_model_alias: str,
 ) -> dict[str, Any]:
     """Translate chat.completion JSON into Anthropic Messages response."""
-    content: list[dict[str, Any]] = []
-    stop_reason = "end_turn"
-    choices = chat_payload.get("choices")
-    message: dict[str, Any] = {}
-    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-        raw_message = choices[0].get("message")
-        if isinstance(raw_message, dict):
-            message = raw_message
-        finish = choices[0].get("finish_reason")
-        stop_reason = _finish_to_stop_reason(finish, message)
-
-    thinking = message.get("reasoning_content") or message.get("reasoning")
-    if isinstance(thinking, str) and thinking:
-        content.append({"type": "thinking", "thinking": thinking})
-
-    text = message.get("content")
-    if isinstance(text, str) and text:
-        content.append({"type": "text", "text": text})
-
-    tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list):
-        for call in tool_calls:
-            block = _tool_call_to_tool_use(call)
-            if block is not None:
-                content.append(block)
-
-    if not content:
-        content.append({"type": "text", "text": ""})
-
+    message, stop_reason = _first_choice_message_and_stop(chat_payload)
+    content = _assistant_content_blocks(message)
     usage = chat_payload.get("usage") if isinstance(chat_payload.get("usage"), dict) else {}
     return {
         "id": new_anthropic_message_id(),
@@ -90,30 +63,76 @@ def chat_completion_to_anthropic(
 def estimate_anthropic_token_count(body: dict[str, Any]) -> dict[str, Any]:
     """Best-effort token estimate for ``/v1/messages/count_tokens`` (MVP)."""
     model = _require_model(body)
-    messages = body.get("messages") if isinstance(body.get("messages"), list) else []
-    system = body.get("system")
-    blob_parts: list[str] = []
-    if isinstance(system, str):
-        blob_parts.append(system)
-    elif isinstance(system, list):
-        blob_parts.append(_blocks_to_text(system))
-    for item in messages:
-        if not isinstance(item, dict):
-            continue
-        content = item.get("content")
-        if isinstance(content, str):
-            blob_parts.append(content)
-        elif isinstance(content, list):
-            blob_parts.append(_blocks_to_text(content))
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    blob_parts.append(json.dumps(block.get("input") or {}, separators=(",", ":")))
-                if isinstance(block, dict) and block.get("type") == "tool_result":
-                    blob_parts.append(str(block.get("content") or ""))
+    blob_parts = _token_count_blob_parts(body)
     text = "\n".join(blob_parts)
     # Rough heuristic without loading a tokenizer (~4 chars / token).
     input_tokens = max(1, (len(text) + 3) // 4) if text else 0
     return {"input_tokens": input_tokens, "model": model}
+
+
+def _first_choice_message_and_stop(
+    chat_payload: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    message: dict[str, Any] = {}
+    stop_reason = "end_turn"
+    choices = chat_payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return message, stop_reason
+    raw_message = choices[0].get("message")
+    if isinstance(raw_message, dict):
+        message = raw_message
+    stop_reason = _finish_to_stop_reason(choices[0].get("finish_reason"), message)
+    return message, stop_reason
+
+
+def _assistant_content_blocks(message: dict[str, Any]) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = []
+    thinking = message.get("reasoning_content") or message.get("reasoning")
+    if isinstance(thinking, str) and thinking:
+        content.append({"type": "thinking", "thinking": thinking})
+    text = message.get("content")
+    if isinstance(text, str) and text:
+        content.append({"type": "text", "text": text})
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for call in tool_calls:
+            block = _tool_call_to_tool_use(call)
+            if block is not None:
+                content.append(block)
+    if not content:
+        content.append({"type": "text", "text": ""})
+    return content
+
+
+def _token_count_blob_parts(body: dict[str, Any]) -> list[str]:
+    blob_parts: list[str] = []
+    system = body.get("system")
+    if isinstance(system, str):
+        blob_parts.append(system)
+    elif isinstance(system, list):
+        blob_parts.append(_blocks_to_text(system))
+    messages = body.get("messages") if isinstance(body.get("messages"), list) else []
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        blob_parts.extend(_token_parts_from_message_content(item.get("content")))
+    return blob_parts
+
+
+def _token_parts_from_message_content(content: Any) -> list[str]:
+    if isinstance(content, str):
+        return [content]
+    if not isinstance(content, list):
+        return []
+    parts = [_blocks_to_text(content)]
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use":
+            parts.append(json.dumps(block.get("input") or {}, separators=(",", ":")))
+        elif block.get("type") == "tool_result":
+            parts.append(str(block.get("content") or ""))
+    return parts
 
 
 def anthropic_error_envelope(message: str, error_type: str = "invalid_request_error") -> dict[str, Any]:
@@ -253,36 +272,45 @@ def _anthropic_message_to_chat(item: Any) -> dict[str, Any] | list[dict[str, Any
         ]
 
     tool_uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
-    text = _blocks_to_text(content)
-    images = [b for b in content if isinstance(b, dict) and b.get("type") == "image"]
-    thinking = _blocks_to_thinking(content)
     if tool_uses:
-        message: dict[str, Any] = {
-            "role": "assistant",
-            "content": text or None,
-            "tool_calls": [],
-        }
-        if thinking:
-            message["reasoning_content"] = thinking
-        for block in tool_uses:
-            message["tool_calls"].append(
-                {
-                    "id": str(block.get("id") or new_anthropic_message_id()),
-                    "type": "function",
-                    "function": {
-                        "name": str(block.get("name") or ""),
-                        "arguments": json.dumps(block.get("input") or {}, separators=(",", ":")),
-                    },
-                }
-            )
-        return message
+        return _assistant_tool_use_message(content, tool_uses)
 
+    return _role_content_with_optional_thinking(role, content)
+
+
+def _assistant_tool_use_message(
+    content: list[Any],
+    tool_uses: list[dict[str, Any]],
+) -> dict[str, Any]:
+    text = _blocks_to_text(content)
+    thinking = _blocks_to_thinking(content)
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": text or None,
+        "tool_calls": [
+            {
+                "id": str(block.get("id") or new_anthropic_message_id()),
+                "type": "function",
+                "function": {
+                    "name": str(block.get("name") or ""),
+                    "arguments": json.dumps(block.get("input") or {}, separators=(",", ":")),
+                },
+            }
+            for block in tool_uses
+        ],
+    }
+    if thinking:
+        message["reasoning_content"] = thinking
+    return message
+
+
+def _role_content_with_optional_thinking(role: str, content: list[Any]) -> dict[str, Any]:
+    thinking = _blocks_to_thinking(content)
+    images = [b for b in content if isinstance(b, dict) and b.get("type") == "image"]
     if images:
         result: dict[str, Any] = {"role": role, "content": _normalize_content_blocks(content)}
-        if thinking:
-            result["reasoning_content"] = thinking
-        return result
-    result = {"role": role, "content": text}
+    else:
+        result = {"role": role, "content": _blocks_to_text(content)}
     if thinking:
         result["reasoning_content"] = thinking
     return result

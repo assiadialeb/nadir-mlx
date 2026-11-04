@@ -24,12 +24,12 @@ router = APIRouter(dependencies=[Depends(verify_gateway_api_key)])
 
 @router.get("/")
 async def ollama_root():
-    return await proxy_ollama_root()
+    return proxy_ollama_root()
 
 
 @router.get("/api/version")
 async def ollama_version():
-    return await proxy_ollama_version()
+    return proxy_ollama_version()
 
 
 @router.get("/api/tags")
@@ -48,7 +48,7 @@ async def ollama_show(request: Request):
     if isinstance(body, JSONResponse):
         return body
     try:
-        return await proxy_ollama_show(body)
+        return proxy_ollama_show(body)
     except GatewayRouteError as exc:
         return route_error_response(exc)
 

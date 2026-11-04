@@ -76,13 +76,13 @@ async def _translate_chat_sse_to_responses(
     buffer = b""
     async for chunk in chunks:
         buffer += chunk
-        while b"\n" in buffer:
-            line, buffer = buffer.split(b"\n", 1)
-            for event in _map_chat_sse_line(line, meta):
-                yield event
-            if meta.get("failed"):
-                yield _failed_event(meta, client_model_alias)
-                return
+        events, buffer, failed = _drain_sse_buffer(buffer, meta)
+        for event in events:
+            yield event
+        if failed:
+            yield _failed_event(meta, client_model_alias)
+            return
+
     if buffer and not meta.get("failed"):
         for event in _map_chat_sse_line(buffer, meta):
             yield event
@@ -92,6 +92,19 @@ async def _translate_chat_sse_to_responses(
 
     for event in _stream_close_events(meta, client_model_alias):
         yield event
+
+
+def _drain_sse_buffer(
+    buffer: bytes,
+    meta: dict[str, Any],
+) -> tuple[list[bytes], bytes, bool]:
+    events: list[bytes] = []
+    while b"\n" in buffer:
+        line, buffer = buffer.split(b"\n", 1)
+        events.extend(_map_chat_sse_line(line, meta))
+        if meta.get("failed"):
+            return events, buffer, True
+    return events, buffer, False
 
 
 def _stream_open_events(meta: dict[str, Any], client_model_alias: str) -> list[bytes]:
