@@ -98,7 +98,9 @@ def _listener_pids(port: int) -> list[int]:
             check=False,
             timeout=2,
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired:
+        return []
+    except OSError:
         return []
     pids: list[int] = []
     for line in result.stdout.splitlines():
@@ -188,6 +190,15 @@ def start_parent_death_watch_if_needed() -> None:
         threading.Thread(target=_watch, name="nadir-parent-death-watch", daemon=True).start()
 
 
+def _safe_signal_pid(pid: int, sig: signal.Signals) -> bool:
+    """Send ``sig`` to ``pid``; return False when the process is gone or denied."""
+    try:
+        os.kill(pid, sig)
+        return True
+    except OSError:
+        return False
+
+
 def _signal_process_group(process: subprocess.Popen[bytes], sig: signal.Signals) -> None:
     """Deliver ``sig`` to the child's process group (fallback: the child only)."""
     if process.poll() is not None:
@@ -195,17 +206,17 @@ def _signal_process_group(process: subprocess.Popen[bytes], sig: signal.Signals)
     try:
         os.killpg(process.pid, sig)
         return
-    except (ProcessLookupError, PermissionError, OSError):
+    except OSError:
         pass
     try:
         # Negative PID = process group; mirrors killpg when setsid() was used.
         os.kill(-process.pid, sig)
         return
-    except (ProcessLookupError, PermissionError, OSError):
+    except OSError:
         pass
     try:
         process.send_signal(sig)
-    except (ProcessLookupError, PermissionError, OSError):
+    except OSError:
         pass
 
 
@@ -222,7 +233,7 @@ def _terminate_process_group(process: subprocess.Popen[bytes], *, grace_seconds:
     _signal_process_group(process, signal.SIGKILL)
     try:
         process.kill()
-    except (ProcessLookupError, PermissionError, OSError):
+    except OSError:
         pass
 
 
@@ -236,12 +247,61 @@ def _is_nadir_serve_listener(pid: int) -> bool:
             check=False,
             timeout=2,
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired:
+        return False
+    except OSError:
         return False
     command = (result.stdout or "").strip().lower()
     if "manage.py" not in command:
         return False
     return any(token in command for token in ("runserver", "run_gateway", "run_mcp"))
+
+
+def _wait_until_port_free(host: str, port: int, *, timeout_seconds: float = 2.0) -> bool:
+    """Poll until the port is free or ``timeout_seconds`` elapses."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not _port_in_use(host, port):
+            return True
+        time.sleep(0.1)
+    return not _port_in_use(host, port)
+
+
+def _signal_nadir_listeners(
+    port: int,
+    sig: signal.Signals,
+    *,
+    reclaimed: list[int],
+    skip_reclaimed: bool,
+) -> None:
+    """Signal Nadir serve listeners on ``port`` and track reclaimed PIDs."""
+    for pid in _listener_pids(port):
+        if skip_reclaimed and pid in reclaimed:
+            continue
+        if not _is_nadir_serve_listener(pid):
+            continue
+        if not _safe_signal_pid(pid, sig):
+            continue
+        if pid not in reclaimed:
+            reclaimed.append(pid)
+
+
+def _reclaim_port_listeners(host: str, port: int, *, reclaimed: list[int]) -> None:
+    """SIGTERM then SIGKILL Nadir listeners still holding ``port``."""
+    _signal_nadir_listeners(
+        port,
+        signal.SIGTERM,
+        reclaimed=reclaimed,
+        skip_reclaimed=True,
+    )
+    if _wait_until_port_free(host, port):
+        return
+    _signal_nadir_listeners(
+        port,
+        signal.SIGKILL,
+        reclaimed=reclaimed,
+        skip_reclaimed=False,
+    )
 
 
 def reclaim_stale_serve_ports(spec: ServeSpec) -> list[int]:
@@ -250,28 +310,7 @@ def reclaim_stale_serve_ports(spec: ServeSpec) -> list[int]:
     for service in required_bind_services(spec):
         if not _port_in_use(service.host, service.port):
             continue
-        for pid in _listener_pids(service.port):
-            if pid in reclaimed or not _is_nadir_serve_listener(pid):
-                continue
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                continue
-            reclaimed.append(pid)
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and _port_in_use(service.host, service.port):
-            time.sleep(0.1)
-        if not _port_in_use(service.host, service.port):
-            continue
-        for pid in _listener_pids(service.port):
-            if not _is_nadir_serve_listener(pid):
-                continue
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                continue
-            if pid not in reclaimed:
-                reclaimed.append(pid)
+        _reclaim_port_listeners(service.host, service.port, reclaimed=reclaimed)
     return reclaimed
 
 

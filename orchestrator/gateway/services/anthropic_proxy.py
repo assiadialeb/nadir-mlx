@@ -134,6 +134,16 @@ def _openai_error_fields(payload: Any, fallback_message: str) -> tuple[str, str]
     return message, error_type
 
 
+def _drain_chat_sse_line(
+    line: bytes,
+    state: "_AnthropicStreamState",
+) -> list[bytes]:
+    """Translate one chat SSE line; empty list if stream already failed."""
+    if state.failed:
+        return []
+    return _events_for_chat_line(line, state)
+
+
 async def _translate_chat_sse_to_anthropic(
     chunks: AsyncIterator[bytes],
     *,
@@ -152,12 +162,12 @@ async def _translate_chat_sse_to_anthropic(
         buffer += chunk
         while b"\n" in buffer:
             line, buffer = buffer.split(b"\n", 1)
-            for event in _events_for_chat_line(line, state):
+            for event in _drain_chat_sse_line(line, state):
                 yield event
             if state.failed:
                 return
-    if buffer and not state.failed:
-        for event in _events_for_chat_line(buffer, state):
+    if buffer:
+        for event in _drain_chat_sse_line(buffer, state):
             yield event
         if state.failed:
             return

@@ -269,15 +269,11 @@ def ollama_generate_stream_chunk(
     content: str,
     done: bool,
     done_reason: str | None = None,
-    tool_calls: list[dict[str, Any]] | None = None,
     prompt_eval_count: int | None = None,
     eval_count: int | None = None,
     error: str | None = None,
 ) -> bytes:
     """Encode one Ollama ``/api/generate`` NDJSON stream line."""
-    # tool_calls is accepted for signature parity with ollama_chat_stream_chunk
-    # (shared stream helper may pass it); /api/generate has no tool_calls field.
-    del tool_calls
     payload: dict[str, Any] = {
         "model": client_model_alias,
         "response": content,
