@@ -21,7 +21,7 @@ Last updated: November 2026 — Ollama `/api/chat` streaming (MLX-108).
 | CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
 | Shared upstream httpx client | ✅ |
 | `POST /v1/responses` (stateless façade) | ✅ MVP (no `previous_response_id` / store) |
-| `POST /v1/messages` (Anthropic) | ✅ MVP non-stream (stream → 501) |
+| `POST /v1/messages` (Anthropic) | ✅ JSON + SSE stream (chat completions upstream) |
 | Ollama `/api/tags`, `/api/chat`, `/api/embed` | ✅ (`/api/chat` JSON + NDJSON stream) |
 | Multi-worker uvicorn | ❌ single process by default |
 
