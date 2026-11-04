@@ -57,3 +57,28 @@ def list_recent_gateway_timings(*, limit: int = 25, instance_id: int | None = No
     if instance_id is not None:
         queryset = queryset.filter(instance_id=instance_id)
     return list(queryset.order_by("-started_at", "-id")[: max(1, limit)])
+
+
+def prompt_cache_hit_rate(
+    rows: list | None = None,
+    *,
+    limit: int = 25,
+    instance_id: int | None = None,
+) -> float | None:
+    """Return cached_prompt_tokens / prompt_tokens over recent rows, or None."""
+    if rows is None:
+        rows = list_recent_gateway_timings(limit=limit, instance_id=instance_id)
+    prompt_total = 0
+    cached_total = 0
+    for row in rows:
+        prompt = getattr(row, "prompt_tokens", None)
+        cached = getattr(row, "cached_prompt_tokens", None)
+        if not isinstance(prompt, int) or prompt <= 0:
+            continue
+        if not isinstance(cached, int) or cached < 0:
+            continue
+        prompt_total += prompt
+        cached_total += min(cached, prompt)
+    if prompt_total <= 0:
+        return None
+    return cached_total / prompt_total

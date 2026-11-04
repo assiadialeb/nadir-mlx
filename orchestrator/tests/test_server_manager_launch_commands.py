@@ -33,6 +33,31 @@ class ServerManagerLaunchCommandTests(SimpleTestCase):
         self.assertIn("orchestrator.mlx_launcher", command)
         self.assertIn("--temp", command)
         self.assertIn("--chat-template-args", command)
+        self.assertIn("--prompt-cache-size", command)
+        self.assertIn("--prompt-cache-bytes", command)
+
+    @patch("orchestrator.server_manager._get_python_bin", return_value="python")
+    def test_build_launch_command_text_honors_explicit_prompt_cache(
+        self,
+        _mock_python_bin: object,
+    ) -> None:
+        command = _build_launch_command(
+            "/tmp/llama",
+            11400,
+            "TEXT",
+            {
+                "host": "127.0.0.1",
+                "advanced": {
+                    "prompt_cache_size": 5,
+                    "prompt_cache_bytes": 3_000_000,
+                },
+            },
+            "llama-model",
+        )
+        size_index = command.index("--prompt-cache-size")
+        bytes_index = command.index("--prompt-cache-bytes")
+        self.assertEqual(command[size_index + 1], "5")
+        self.assertEqual(command[bytes_index + 1], "3000000")
 
     @patch("orchestrator.server_manager._get_python_bin", return_value="python")
     def test_build_launch_command_multimodal_includes_mtp_flags(

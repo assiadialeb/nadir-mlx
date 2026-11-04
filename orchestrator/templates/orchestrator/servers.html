@@ -273,6 +273,11 @@
         <h2 class="text-lg font-bold text-slate-900 mb-2">Recent gateway latency</h2>
         <p class="text-sm text-slate-600 mb-4">
             Last requests through the OpenAI chat path (queue, wake, TTFT, cache).
+            {% if prompt_cache_hit_rate_pct != None %}
+            <span class="ml-1 font-medium text-slate-800">
+                Prompt-cache hit rate: {{ prompt_cache_hit_rate_pct }}%
+            </span>
+            {% endif %}
         </p>
         {% if recent_gateway_timings %}
         <div class="overflow-x-auto">
@@ -307,7 +312,7 @@
                 </tbody>
             </table>
         </div>
-        <p class="mt-2 text-xs text-slate-500">* cold start (wake from stopped/failed/loading)</p>
+        <p class="mt-2 text-xs text-slate-500">* cold start (wake from stopped/failed/loading). Cache = cached_prompt_tokens / prompt_tokens from mlx-lm.</p>
         {% else %}
         <p class="text-sm text-slate-500">No gateway requests recorded yet.</p>
         {% endif %}

@@ -29,6 +29,8 @@ def prepare_chat_upstream_body(
     """
     from orchestrator.gateway.thinking_control import merge_chat_template_kwargs
 
+    from orchestrator.gateway.protocol.stable_json import stabilize_chat_tools
+
     upstream = deepcopy(body)
     upstream["model"] = upstream_model
     if force_include_usage and upstream.get("stream"):
@@ -39,6 +41,8 @@ def prepare_chat_upstream_body(
         upstream["stream_options"] = options
     # Drop client-only control fields that mlx-lm does not understand as top-level.
     upstream.pop("reasoning_effort", None)
+    if "tools" in upstream:
+        upstream["tools"] = stabilize_chat_tools(upstream.get("tools"))
     if chat_template_kwargs:
         upstream = merge_chat_template_kwargs(upstream, chat_template_kwargs)
     return upstream

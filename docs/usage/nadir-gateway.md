@@ -267,6 +267,20 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 !!! note "Input formats"
     WAV and MP3 decode in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on the MLX host. Realtime WebSocket STT is not supported in v1.
 
+## Prompt cache (prefix KV / TTFT)
+
+mlx-lm keeps an LRU of **prefix KV caches** (`--prompt-cache-size` / `--prompt-cache-bytes`). Agent loops that send the same system prompt + tool definitions every turn reuse that prefix and cut **TTFT**.
+
+| Concern | Guidance |
+|---------|----------|
+| Instance knobs | TEXT Advanced JSON: `prompt_cache_size`, `prompt_cache_bytes` (RAM-aware defaults on new servers). See [server-config-reference](server-config-reference.md). |
+| Tool order | Clients must keep the **tools array order** identical across turns. |
+| Façades | Anthropic / OpenAI / Responses / Ollama canonicalize nested JSON object keys (schemas + tool arguments) so translation does not reshuffle the shared prefix. |
+| Observability | mlx-lm reports `usage.prompt_tokens_details.cached_tokens`. Gateway telemetry (MLX-123) stores it; Servers UI shows per-request Cache and a recent **hit rate**. |
+
+!!! warning "What breaks the cache"
+    Per-turn noise in the shared prefix (timestamps in the system prompt, reordered tools, unstable JSON key order in tool schemas) forces a full prefill. Keep system+tools byte-stable; put turn-specific context only in user/assistant messages.
+
 ## Thinking / reasoning control (TTFT)
 
 mlx-lm accepts per-request `chat_template_kwargs` (notably `enable_thinking`). Nadir maps client fields so agents can disable long “thinking” traces that inflate **visible TTFT**:

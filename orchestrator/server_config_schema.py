@@ -268,6 +268,8 @@ ADVANCED_WHITELIST: dict[str, frozenset[str]] = {
         "top_p",
         "top_k",
         "min_p",
+        "prompt_cache_size",
+        "prompt_cache_bytes",
     }),
     "MULTIMODAL": frozenset({
         "adapter_path",
@@ -379,6 +381,18 @@ ADVANCED_FIELD_SPECS: dict[str, AdvancedFieldSpec] = {
     "chat_template_args": AdvancedFieldSpec(
         value_type="object",
         modes=frozenset({"TEXT"}),
+    ),
+    "prompt_cache_size": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"TEXT"}),
+        min_value=1,
+        max_value=128,
+    ),
+    "prompt_cache_bytes": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"TEXT"}),
+        min_value=1_000_000,
+        max_value=64 * 1024**3,
     ),
 }
 
@@ -569,6 +583,10 @@ def build_default_server_config(
     for field in get_ops_fields_for_mode(launch_mode):
         if field.default is not None:
             config["ops"][field.name] = field.default
+    if launch_mode == "TEXT":
+        from orchestrator.prompt_cache import default_prompt_cache_settings
+
+        config["advanced"].update(default_prompt_cache_settings())
     if model_name:
         config = apply_registry_server_defaults(launch_mode, model_name, config)
     return config

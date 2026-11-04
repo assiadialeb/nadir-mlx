@@ -286,8 +286,13 @@ def servers_view(request):
         enrich_instance_lifecycle_ui(instance)
         instance_configs[str(instance.id)] = instance.server_config or {}
 
-    from orchestrator.gateway_telemetry_services import list_recent_gateway_timings
+    from orchestrator.gateway_telemetry_services import (
+        list_recent_gateway_timings,
+        prompt_cache_hit_rate,
+    )
 
+    recent_timings = list_recent_gateway_timings(limit=25)
+    cache_hit_rate = prompt_cache_hit_rate(recent_timings)
     return render(request, 'orchestrator/servers.html', {
         'instances': instances,
         'server_types': SERVER_TYPES,
@@ -301,7 +306,10 @@ def servers_view(request):
             mtp_assistant_suggestions_for_ui_json(installed_names)
         ),
         'instance_configs': instance_configs,
-        'recent_gateway_timings': list_recent_gateway_timings(limit=25),
+        'recent_gateway_timings': recent_timings,
+        'prompt_cache_hit_rate_pct': (
+            round(cache_hit_rate * 100) if cache_hit_rate is not None else None
+        ),
     })
 
 
