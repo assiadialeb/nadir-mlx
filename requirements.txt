@@ -111,4 +111,4 @@ uvloop==0.22.1
 watchfiles==1.2.0
 websockets==16.0
 xxhash==3.7.0
-yarl==1.24.2
+yarl==1.25.1
