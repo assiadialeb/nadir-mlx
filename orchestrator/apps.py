@@ -13,6 +13,10 @@ class OrchestratorConfig(AppConfig):
 
         from django.conf import settings
 
+        from orchestrator.startup_reconcile import start_startup_reconcile_if_needed
+
+        start_startup_reconcile_if_needed()
+
         if getattr(settings, "INSTANCE_WATCHDOG_ENABLED", True):
             from orchestrator.instance_watchdog import start_watchdog_if_needed
 

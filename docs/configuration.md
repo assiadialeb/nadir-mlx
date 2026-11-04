@@ -33,6 +33,7 @@ SQLite is used when no PostgreSQL host is configured.
 | `MLX_HEALTH_INTERVAL_SECONDS` | `30` | Background health poll interval |
 | `MLX_RESTART_BACKOFF_SECONDS` | `30` | Delay before watchdog restart |
 | `MLX_INSTANCE_WATCHDOG_ENABLED` | `true` | Auto-restart crashed instances |
+| `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED` | `true` | Restore `always_on` instances after process/host restart |
 | `MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS` | `12` | Max wait for port release after stop |
 | `MLX_DISABLE_INSTANCE_WATCHDOG` | — | Set `1` to disable watchdog (tests) |
 

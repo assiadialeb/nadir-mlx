@@ -12,6 +12,7 @@ Operator guide for Ollama-like **sleep / wake** behaviour on Nadir MLX.
 | **always_on** | Instance stays running until manually stopped (default, pre-v0.3 behaviour) |
 | **on_demand** | Instance may be **stopped** when idle; gateway **wakes** it on first request |
 | **Idle offload** | Background watcher stops `on_demand` instances after `idle_minutes` without traffic |
+| **Startup reconcile** | On app boot, `always_on` instances left `STOPPED`/`FAILED` (e.g. after host reboot) are restarted |
 | **Cold start** | Time to load weights into unified memory after wake |
 
 ## Per-instance configuration
@@ -35,6 +36,17 @@ Recommendations:
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for instance to become RUNNING after wake |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Global switch for idle watcher |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | How often idle candidates are evaluated |
+| `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED` | `true` | Restore `always_on` instances after process/host restart |
+
+## Host / process restart
+
+After a host reboot or Nadir process restart:
+
+1. Health reconcile marks orphan `RUNNING` rows (dead PIDs) as `STOPPED`/`FAILED`.
+2. **Startup reconcile** restarts every **`always_on`** instance in `STOPPED`/`FAILED`.
+3. **`on_demand`** instances stay stopped until the next gateway request (wake-on-request).
+
+This is independent of `ops.auto_restart` (runtime crash recovery while the app stays up). Disable with `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED=false` if needed.
 
 ## Request flow
 
@@ -88,6 +100,7 @@ Clients only need the **gateway alias** in `model` and `api_base` `http://<host>
 | Timeout on first request | Increase client timeout and `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` |
 | Instance never sleeps | Traffic still hitting instance port directly (bypass gateway) |
 | Instance sleeps during long stream | Bug — report; `last_used_at` should update at stream start |
+| `always_on` still down after reboot | Confirm `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED`; check logs for `Startup reconcile` |
 
 ## Related
 
