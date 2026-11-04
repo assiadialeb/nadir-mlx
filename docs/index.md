@@ -64,6 +64,7 @@ flowchart TB
 | Install on macOS | [Installation](installation.md) |
 | Environment variables | [Configuration](configuration.md) |
 | Gateway & curl examples | [Nadir Gateway](usage/nadir-gateway.md) |
+| Client integrations | [Integration recipes](usage/integration-recipes.md) |
 | Gateway security | [Nadir Gateway — Security](usage/nadir-gateway.md#security) |
 | Wake / idle / eviction | [Instance lifecycle](usage/instance-lifecycle.md) |
 | Quality benchmarks | [Quality benchmarks](usage/quality-benchmarks.md) |

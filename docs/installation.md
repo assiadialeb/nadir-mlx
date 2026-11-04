@@ -101,7 +101,7 @@ curl http://127.0.0.1:11380/v1/models
 
 Keep `NADIR_GATEWAY_HOST=127.0.0.1` unless you intentionally expose the LAN. Off-loopback binds require `NADIR_GATEWAY_API_KEY` — see [Nadir Gateway — Security](usage/nadir-gateway.md#security).
 
-Full operator guide: [Nadir Gateway](usage/nadir-gateway.md).
+Full operator guide: [Nadir Gateway](usage/nadir-gateway.md). Client recipes: [Integration recipes](usage/integration-recipes.md).
 
 Use **`http://127.0.0.1:11380/v1`** as `api_base` in your client. Pass the **gateway alias** (shown on each server card) in the `model` field.
 

@@ -117,7 +117,7 @@ flowchart TB
     Benchmark --> Instances
 ```
 
-See [Nadir Gateway](docs/usage/nadir-gateway.md) for the control-plane vs data-plane split. Ollama-like wake on demand and idle offload: [instance lifecycle](docs/usage/instance-lifecycle.md).
+See [Nadir Gateway](docs/usage/nadir-gateway.md) for the control-plane vs data-plane split. Ollama-like wake on demand and idle offload: [instance lifecycle](docs/usage/instance-lifecycle.md). Client recipes (Open WebUI, Continue, Cursor, Claude Code, n8n, LiteLLM): [integration recipes](docs/usage/integration-recipes.md).
 
 **Port allocation**
 
@@ -223,6 +223,8 @@ python manage.py run_gateway
 ```
 
 Operator guide (all launch modes — chat, embeddings, rerank, image, TTS, STT): **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)**.
+
+Client recipes (Open WebUI, Continue, Cursor, Claude Code, n8n, LiteLLM): **[docs/usage/integration-recipes.md](docs/usage/integration-recipes.md)**.
 
 Health check:
 
