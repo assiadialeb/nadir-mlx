@@ -9,6 +9,7 @@ OPENAI_TYPE_BY_CODE: dict[str, str] = {
     "invalid_model": "invalid_request_error",
     "unsupported_endpoint": "invalid_request_error",
     "invalid_request": "invalid_request_error",
+    "not_implemented": "invalid_request_error",
     "invalid_api_key": "authentication_error",
     "model_unavailable": "server_error",
     "upstream_queue_timeout": "server_error",

@@ -20,6 +20,9 @@ Last updated: November 2026 — OpenAI compatibility P0 (alias restore, stream e
 | `X-Request-Id` on responses | ✅ |
 | CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
 | Shared upstream httpx client | ✅ |
+| `POST /v1/responses` (stateless façade) | ✅ MVP (no `previous_response_id` / store) |
+| `POST /v1/messages` (Anthropic) | ✅ MVP non-stream (stream → 501) |
+| Ollama `/api/tags`, `/api/chat`, `/api/embed` | ✅ MVP (`/api/chat` stream → 501) |
 | Multi-worker uvicorn | ❌ single process by default |
 
 ## TEXT

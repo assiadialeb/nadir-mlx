@@ -14,10 +14,13 @@ from orchestrator.gateway.errors import openai_error_envelope
 from orchestrator.gateway.http_client import gateway_lifespan
 from orchestrator.gateway.middleware import install_gateway_middleware, parse_cors_origins
 from orchestrator.gateway.router import GatewayRouteError
+from orchestrator.gateway.routes.anthropic import router as anthropic_router
 from orchestrator.gateway.routes.chat import router as chat_router
 from orchestrator.gateway.routes.image_files import router as image_files_router
 from orchestrator.gateway.routes.models import router as models_router
 from orchestrator.gateway.routes.modes import router as modes_router
+from orchestrator.gateway.routes.ollama import router as ollama_router
+from orchestrator.gateway.routes.responses import router as responses_router
 
 
 def _validation_param(errors: list[dict]) -> str | None:
@@ -106,4 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(image_files_router, dependencies=[Depends(verify_gateway_api_key)])
     app.include_router(chat_router, dependencies=[Depends(verify_gateway_api_key)])
     app.include_router(modes_router, dependencies=[Depends(verify_gateway_api_key)])
+    app.include_router(responses_router, dependencies=[Depends(verify_gateway_api_key)])
+    app.include_router(anthropic_router, dependencies=[Depends(verify_gateway_api_key)])
+    app.include_router(ollama_router, dependencies=[Depends(verify_gateway_api_key)])
     return app
