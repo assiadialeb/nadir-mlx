@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +14,23 @@ from fastapi.testclient import TestClient
 from orchestrator.gateway.app import create_app
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, GatewayTarget
 from orchestrator.gateway.services.anthropic_proxy import _translate_chat_sse_to_anthropic
+
+
+def _anthropic_sse_payloads(raw: bytes) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for block in raw.decode().split("\n\n"):
+        data_lines = [
+            line[6:] for line in block.split("\n") if line.startswith("data: ")
+        ]
+        if not data_lines:
+            continue
+        try:
+            parsed = json.loads("\n".join(data_lines))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            payloads.append(parsed)
+    return payloads
 
 TEXT_TARGET = GatewayTarget(
     alias="demo-chat",
@@ -185,6 +204,7 @@ class GatewayAnthropicProxyTests(SimpleTestCase):
             json={
                 "model": "demo-chat",
                 "max_tokens": 32,
+                "thinking": {"type": "enabled"},
                 "tools": [
                     {
                         "name": "get_weather",
@@ -351,6 +371,7 @@ class AnthropicStreamTranslateAsyncTests(IsolatedAsyncioTestCase):
                 async for chunk in _translate_chat_sse_to_anthropic(
                     thinking_chunks(),
                     client_model_alias="demo",
+                    thinking_enabled=True,
                 )
             ]
         )
@@ -371,3 +392,63 @@ class AnthropicStreamTranslateAsyncTests(IsolatedAsyncioTestCase):
         )
         self.assertIn(b"event: error", err_joined)
         self.assertIn(b"boom", err_joined)
+
+    async def test_thinking_ignored_when_not_enabled(self) -> None:
+        async def chunks():
+            yield b'data: {"choices":[{"delta":{"reasoning":"secret"}}]}\n'
+            yield b'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n'
+
+        joined = b"".join(
+            [
+                chunk
+                async for chunk in _translate_chat_sse_to_anthropic(
+                    chunks(),
+                    client_model_alias="demo",
+                    thinking_enabled=False,
+                )
+            ]
+        )
+        self.assertNotIn(b"thinking_delta", joined)
+        self.assertIn(b"text_delta", joined)
+
+    async def test_reopens_text_and_thinking_after_tool_without_closed_deltas(self) -> None:
+        """Reasoning → text → tool → text → reasoning must never delta a closed index."""
+
+        async def chunks():
+            yield b'data: {"choices":[{"delta":{"reasoning":"plan"}}]}\n'
+            yield b'data: {"choices":[{"delta":{"content":"before"}}]}\n'
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                b'"type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}\n'
+            )
+            yield b'data: {"choices":[{"delta":{"content":"after"}}]}\n'
+            yield b'data: {"choices":[{"delta":{"reasoning":"more"}}]}\n'
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n'
+
+        events = [
+            chunk
+            async for chunk in _translate_chat_sse_to_anthropic(
+                chunks(),
+                client_model_alias="demo",
+                thinking_enabled=True,
+            )
+        ]
+        open_indexes: set[int] = set()
+        closed_indexes: set[int] = set()
+        for raw in events:
+            for payload in _anthropic_sse_payloads(raw):
+                event_type = payload.get("type")
+                index = payload.get("index")
+                if event_type == "content_block_start" and isinstance(index, int):
+                    self.assertNotIn(index, open_indexes)
+                    self.assertNotIn(index, closed_indexes)
+                    open_indexes.add(index)
+                elif event_type == "content_block_stop" and isinstance(index, int):
+                    self.assertIn(index, open_indexes)
+                    open_indexes.remove(index)
+                    closed_indexes.add(index)
+                elif event_type == "content_block_delta" and isinstance(index, int):
+                    self.assertIn(index, open_indexes)
+                    self.assertNotIn(index, closed_indexes)
+        self.assertEqual(open_indexes, set())
+        self.assertGreaterEqual(len(closed_indexes), 5)

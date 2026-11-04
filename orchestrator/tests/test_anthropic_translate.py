@@ -221,6 +221,7 @@ class AnthropicTranslateTests(SimpleTestCase):
                 "usage": {"prompt_tokens": 3, "completion_tokens": 4},
             },
             client_model_alias="demo",
+            include_thinking=True,
         )
         self.assertEqual(payload["stop_reason"], "tool_use")
         self.assertEqual(payload["content"][0], {"type": "thinking", "thinking": "plan"})
@@ -228,6 +229,23 @@ class AnthropicTranslateTests(SimpleTestCase):
         self.assertEqual(payload["content"][2]["type"], "tool_use")
         self.assertEqual(payload["content"][2]["name"], "lookup")
         self.assertEqual(payload["content"][2]["input"], {"q": "a"})
+
+    def test_chat_to_anthropic_omits_thinking_unless_requested(self) -> None:
+        payload = chat_completion_to_anthropic(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "reasoning_content": "secret",
+                            "content": "visible",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            client_model_alias="demo",
+        )
+        self.assertEqual(payload["content"], [{"type": "text", "text": "visible"}])
 
     def test_chat_to_anthropic_max_tokens_stop(self) -> None:
         payload = chat_completion_to_anthropic(

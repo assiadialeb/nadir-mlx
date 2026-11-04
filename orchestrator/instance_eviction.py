@@ -21,14 +21,17 @@ from orchestrator.models import InferenceInstance
 logger = logging.getLogger(__name__)
 
 _MAX_EVICTIONS_PER_LOAD = 3
+_DEFAULT_EVICTION_GRACE_SECONDS = 60
 _eviction_lock = threading.Lock()
+_reserved_victim_ids: set[int] = set()
 
 
 def eviction_grace_seconds() -> int:
     """Minimum idle age before an on_demand instance may be LRU-evicted.
 
-    Defaults to ``NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS`` so a long generation
-    started just after ``last_used_at`` touch is not reaped mid-request.
+    Defaults to a short grace window. ``last_used_at`` is refreshed at request
+    start and end (including stream completion), so mid-request streams stay
+    protected without a multi-minute lockout after every call.
     """
     raw = os.environ.get("NADIR_LRU_EVICTION_GRACE_SECONDS")
     if raw is not None and str(raw).strip():
@@ -36,12 +39,7 @@ def eviction_grace_seconds() -> int:
             return max(0, int(raw))
         except ValueError:
             pass
-    try:
-        from django.conf import settings
-
-        return max(0, int(getattr(settings, "NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS", 300)))
-    except Exception:
-        return 300
+    return _DEFAULT_EVICTION_GRACE_SECONDS
 
 
 def list_lru_evictable_instances(*, exclude_id: int | None = None) -> list[InferenceInstance]:
@@ -52,6 +50,8 @@ def list_lru_evictable_instances(*, exclude_id: int | None = None) -> list[Infer
     now = datetime.now(timezone.utc)
     for instance in rows:
         if exclude_id is not None and instance.pk == exclude_id:
+            continue
+        if instance.pk in _reserved_victim_ids:
             continue
         if not is_on_demand_lifecycle(instance.server_config):
             continue
@@ -112,8 +112,11 @@ def ensure_headroom_for_load(pending: InferenceInstance) -> int:
 
     stopped = 0
     for victim in plan["victims"]:
-        if _stop_planned_victim(victim) is not None:
-            stopped += 1
+        try:
+            if _stop_planned_victim(victim) is not None:
+                stopped += 1
+        finally:
+            _release_victim_reservation(victim.pk)
     available = host_available_bytes()
     if stopped:
         logger.info(
@@ -154,11 +157,17 @@ def _plan_evictions(
         if is_manual_stop_in_progress(candidate):
             continue
         victims.append(candidate)
+        _reserved_victim_ids.add(candidate.pk)
         projected += estimate_instance_footprint_bytes(
             candidate.model_name,
             candidate.server_config,
         )
     return {"victims": victims, "available": available}
+
+
+def _release_victim_reservation(instance_id: int) -> None:
+    with _eviction_lock:
+        _reserved_victim_ids.discard(instance_id)
 
 
 def _stop_planned_victim(instance: InferenceInstance) -> InferenceInstance | None:

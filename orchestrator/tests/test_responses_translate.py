@@ -259,6 +259,27 @@ class ResponsesTranslateTests(SimpleTestCase):
         self.assertEqual(payload["output"][0]["content"][0]["text"], "Hi there")
         self.assertEqual(payload["usage"]["total_tokens"], 5)
 
+    def test_chat_completion_to_response_includes_reasoning_item(self) -> None:
+        payload = chat_completion_to_response(
+            {
+                "id": "chatcmpl-rs",
+                "created": 1,
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "reasoning_content": "plan",
+                            "content": "done",
+                        }
+                    }
+                ],
+            },
+            client_model_alias="demo",
+        )
+        self.assertEqual(payload["output"][0]["type"], "reasoning")
+        self.assertEqual(payload["output"][0]["summary"][0]["text"], "plan")
+        self.assertEqual(payload["output"][1]["content"][0]["text"], "done")
+
     def test_chat_completion_empty_choices_returns_empty_text(self) -> None:
         payload = chat_completion_to_response(
             {"choices": [], "created": 1},

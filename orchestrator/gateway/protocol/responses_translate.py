@@ -325,6 +325,16 @@ def _output_items_from_chat(chat_payload: dict[str, Any], *, message_id: str) ->
         return [_text_message_item(message_id, _assistant_text_from_chat(chat_payload))]
 
     items: list[dict[str, Any]] = []
+    reasoning = message.get("reasoning_content") or message.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        items.append(
+            {
+                "id": f"rs_{message_id[4:]}" if message_id.startswith("msg_") else _new_id("rs"),
+                "type": "reasoning",
+                "status": "completed",
+                "summary": [{"type": "summary_text", "text": reasoning}],
+            }
+        )
     tool_calls = message.get("tool_calls")
     if isinstance(tool_calls, list):
         for call in tool_calls:

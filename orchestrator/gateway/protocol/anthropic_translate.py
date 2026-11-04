@@ -44,10 +44,11 @@ def chat_completion_to_anthropic(
     chat_payload: dict[str, Any],
     *,
     client_model_alias: str,
+    include_thinking: bool = False,
 ) -> dict[str, Any]:
     """Translate chat.completion JSON into Anthropic Messages response."""
     message, stop_reason = _first_choice_message_and_stop(chat_payload)
-    content = _assistant_content_blocks(message)
+    content = _assistant_content_blocks(message, include_thinking=include_thinking)
     usage = chat_payload.get("usage") if isinstance(chat_payload.get("usage"), dict) else {}
     return {
         "id": new_anthropic_message_id(),
@@ -89,11 +90,16 @@ def _first_choice_message_and_stop(
     return message, stop_reason
 
 
-def _assistant_content_blocks(message: dict[str, Any]) -> list[dict[str, Any]]:
+def _assistant_content_blocks(
+    message: dict[str, Any],
+    *,
+    include_thinking: bool = False,
+) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
-    thinking = message.get("reasoning_content") or message.get("reasoning")
-    if isinstance(thinking, str) and thinking:
-        content.append({"type": "thinking", "thinking": thinking})
+    if include_thinking:
+        thinking = message.get("reasoning_content") or message.get("reasoning")
+        if isinstance(thinking, str) and thinking:
+            content.append({"type": "thinking", "thinking": thinking})
     text = message.get("content")
     if isinstance(text, str) and text:
         content.append({"type": "text", "text": text})

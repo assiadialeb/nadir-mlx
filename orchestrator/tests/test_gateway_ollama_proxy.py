@@ -261,6 +261,7 @@ class GatewayOllamaProxyTests(SimpleTestCase):
             json={
                 "model": "demo-chat",
                 "stream": True,
+                "think": True,
                 "messages": [{"role": "user", "content": "Hi"}],
             },
         )
@@ -268,6 +269,42 @@ class GatewayOllamaProxyTests(SimpleTestCase):
         lines = [json.loads(line) for line in response.content.splitlines() if line]
         self.assertEqual(lines[0]["message"]["thinking"], "plan")
         self.assertEqual(lines[1]["message"]["content"], "ok")
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_chat_stream_omits_thinking_without_think_flag(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        async def chunk_stream():
+            yield (
+                b'data: {"choices":[{"delta":{"reasoning":"secret"}}]}\n'
+                b'data: {"choices":[{"delta":{"content":"ok"}}]}\n'
+                b"data: [DONE]\n\n"
+            )
+
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.aiter_bytes = chunk_stream
+        upstream.aclose = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
+        response = self.client.post(
+            "/api/chat",
+            json={
+                "model": "demo-chat",
+                "stream": True,
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        lines = [json.loads(line) for line in response.content.splitlines() if line]
+        self.assertNotIn("thinking", lines[0]["message"])
+        self.assertEqual(lines[0]["message"]["content"], "ok")
 
     @patch(
         "orchestrator.gateway.services.ollama_proxy.get_gateway_model",

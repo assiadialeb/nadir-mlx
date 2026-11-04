@@ -144,6 +144,10 @@ async def proxy_ollama_embed(
     )
 
 
+def _ollama_thinking_enabled(body: dict[str, Any]) -> bool:
+    return body.get("think") is True
+
+
 async def _proxy_chat_like(
     body: dict[str, Any],
     headers: Any,
@@ -154,6 +158,7 @@ async def _proxy_chat_like(
     route_label: str,
 ) -> Response:
     chat_body = translate_request(body)
+    thinking_enabled = _ollama_thinking_enabled(body)
     target = await resolve_target_from_body(chat_body)
     validate_target_launch_mode(target, CHAT_LAUNCH_MODES, route_label)
     request_headers = forward_request_headers(headers)
@@ -173,6 +178,7 @@ async def _proxy_chat_like(
                 upstream.body_iterator,
                 client_model_alias=target.alias,
                 stream_chunk=stream_chunk,
+                thinking_enabled=thinking_enabled,
             ),
             media_type="application/x-ndjson",
             status_code=200,
@@ -181,11 +187,11 @@ async def _proxy_chat_like(
     upstream = await proxy_json_post(target, url, upstream_body, request_headers)
     if upstream.status_code >= 400:
         return upstream
+    kwargs: dict[str, Any] = {"client_model_alias": target.alias}
+    if translate_response is openai_chat_to_ollama:
+        kwargs["include_thinking"] = thinking_enabled
     return JSONResponse(
-        content=translate_response(
-            json.loads(upstream.body),
-            client_model_alias=target.alias,
-        )
+        content=translate_response(json.loads(upstream.body), **kwargs)
     )
 
 
@@ -194,8 +200,9 @@ async def _translate_chat_sse(
     *,
     client_model_alias: str,
     stream_chunk: StreamChunkFn,
+    thinking_enabled: bool = False,
 ) -> AsyncIterator[bytes]:
-    state = _OllamaStreamState()
+    state = _OllamaStreamState(thinking_enabled=thinking_enabled)
     buffer = b""
     async for chunk in chunks:
         buffer += chunk
@@ -214,12 +221,13 @@ async def _translate_chat_sse(
 
 
 class _OllamaStreamState:
-    def __init__(self) -> None:
+    def __init__(self, *, thinking_enabled: bool = False) -> None:
         self.tools = ToolCallAccumulator()
         self.done_reason = "stop"
         self.usage: dict[str, Any] = {}
         self.failed = False
         self.error_message = ""
+        self.thinking_enabled = thinking_enabled
 
 
 def _events_for_ollama_line(
@@ -251,7 +259,11 @@ def _events_for_ollama_line(
     if parsed.tool_call_deltas:
         state.tools.ingest(parsed.tool_call_deltas)
     events: list[bytes] = []
-    if parsed.reasoning and stream_chunk is ollama_chat_stream_chunk:
+    if (
+        parsed.reasoning
+        and state.thinking_enabled
+        and stream_chunk is ollama_chat_stream_chunk
+    ):
         events.append(
             stream_chunk(
                 client_model_alias=client_model_alias,
