@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
-from contextlib import suppress
+import logging
+from contextlib import asynccontextmanager, suppress
 from typing import Any, AsyncIterator
 
 import httpx
@@ -32,6 +32,8 @@ CONTENT_TYPE_JSON = "application/json"
 MSG_UPSTREAM_TIMEOUT = "Upstream request timed out."
 MSG_BAD_GATEWAY = "Could not reach the inference backend."
 _DEFAULT_ACTIVITY_HEARTBEAT_SECONDS = 15.0
+
+logger = logging.getLogger(__name__)
 
 FORWARD_REQUEST_HEADERS = frozenset(
     {
@@ -168,13 +170,20 @@ async def resolve_target_from_body(body: dict[str, Any]) -> GatewayTarget:
 
 
 async def touch_target_last_used_at(target: GatewayTarget) -> None:
-    """Refresh LRU / idle-offload activity for an instance."""
+    """Refresh LRU / idle-offload activity (best-effort; never fails the request)."""
     from orchestrator.lifecycle_services import touch_instance_last_used_at
 
-    await sync_to_async(
-        touch_instance_last_used_at,
-        thread_sensitive=False,
-    )(target.instance_id)
+    try:
+        await sync_to_async(
+            touch_instance_last_used_at,
+            thread_sensitive=False,
+        )(target.instance_id)
+    except Exception:
+        logger.warning(
+            "Failed to refresh last_used_at for instance %s",
+            target.instance_id,
+            exc_info=True,
+        )
 
 
 def activity_heartbeat_seconds() -> float:
@@ -186,28 +195,26 @@ def activity_heartbeat_seconds() -> float:
 
 
 async def _activity_heartbeat_loop(target: GatewayTarget) -> None:
-    """Periodically refresh activity until cancelled (long non-stream calls)."""
+    """Periodically refresh activity until cancelled."""
     interval = activity_heartbeat_seconds()
+    while True:
+        await asyncio.sleep(interval)
+        await touch_target_last_used_at(target)
+
+
+@asynccontextmanager
+async def _activity_heartbeat(target: GatewayTarget):
+    """Run a background activity heartbeat for the duration of a proxy call."""
+    heartbeat = asyncio.create_task(
+        _activity_heartbeat_loop(target),
+        name=f"nadir-activity-heartbeat-{target.instance_id}",
+    )
     try:
-        while True:
-            await asyncio.sleep(interval)
-            await touch_target_last_used_at(target)
-    except asyncio.CancelledError:
-        raise
-
-
-async def _maybe_touch_activity(
-    target: GatewayTarget,
-    *,
-    last_touch_monotonic: float,
-    interval: float,
-) -> float:
-    """Touch activity when ``interval`` elapsed; return updated monotonic stamp."""
-    now = time.monotonic()
-    if now - last_touch_monotonic < interval:
-        return last_touch_monotonic
-    await touch_target_last_used_at(target)
-    return now
+        yield
+    finally:
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
 
 
 def gateway_error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -299,11 +306,7 @@ async def proxy_json_post(
     body: dict[str, Any],
     headers: dict[str, str],
 ) -> Response:
-    heartbeat = asyncio.create_task(
-        _activity_heartbeat_loop(target),
-        name=f"nadir-activity-heartbeat-{target.instance_id}",
-    )
-    try:
+    async with _activity_heartbeat(target):
         try:
             async with upstream_concurrency_slot(target):
                 response = await _proxy_json_post_impl(url, body, headers, target.alias)
@@ -312,10 +315,6 @@ async def proxy_json_post(
         if response.status_code < 400:
             await touch_target_last_used_at(target)
         return response
-    finally:
-        heartbeat.cancel()
-        with suppress(asyncio.CancelledError):
-            await heartbeat
 
 
 async def _proxy_json_post_impl(
@@ -394,24 +393,18 @@ async def proxy_sse_post(
 
     async def iter_chunks() -> AsyncIterator[bytes]:
         response: httpx.Response = state["response"]
-        last_touch = time.monotonic()
-        heartbeat_interval = activity_heartbeat_seconds()
-        try:
-            async for chunk in iter_sse_with_restored_model(
-                response.aiter_bytes(),
-                target.alias,
-            ):
-                last_touch = await _maybe_touch_activity(
-                    target,
-                    last_touch_monotonic=last_touch,
-                    interval=heartbeat_interval,
-                )
-                yield chunk
-        except (httpx.HTTPError, TimeoutError):
-            yield _encode_sse_error(MSG_BAD_GATEWAY)
-        finally:
-            await _close_upstream_sse_session(state)
-            await touch_target_last_used_at(target)
+        async with _activity_heartbeat(target):
+            try:
+                async for chunk in iter_sse_with_restored_model(
+                    response.aiter_bytes(),
+                    target.alias,
+                ):
+                    yield chunk
+            except (httpx.HTTPError, TimeoutError):
+                yield _encode_sse_error(MSG_BAD_GATEWAY)
+            finally:
+                await _close_upstream_sse_session(state)
+                await touch_target_last_used_at(target)
 
     return StreamingResponse(
         iter_chunks(),

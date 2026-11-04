@@ -268,16 +268,127 @@ class HttpProxyBinaryPostTests(IsolatedAsyncioTestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["error"]["message"], "bad request")
 
+    async def test_proxy_sse_post_heartbeats_during_prefill_wait(self) -> None:
+        """Background heartbeat refreshes activity before the first upstream chunk."""
+        touch_times: list[float] = []
+        first_chunk_at = {"value": None}
+
+        async def delayed_stream():
+            await asyncio.sleep(0.12)
+            first_chunk_at["value"] = asyncio.get_running_loop().time()
+            yield b'data: {"model":"default_model","choices":[{"delta":{"content":"hi"}}]}\n\n'
+            yield b'data: {"model":"default_model","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+
+        async def fake_touch(target: GatewayTarget) -> None:
+            touch_times.append(asyncio.get_running_loop().time())
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aiter_bytes = MagicMock(return_value=delayed_stream())
+        mock_response.aclose = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=mock_response)
+        mock_client.aclose = AsyncMock()
+
+        with patch(
+            "orchestrator.gateway.services.http_proxy.get_http_client",
+            return_value=mock_client,
+        ), patch(
+            "orchestrator.gateway.services.http_proxy.activity_heartbeat_seconds",
+            return_value=0.04,
+        ), patch(
+            "orchestrator.gateway.services.http_proxy.touch_target_last_used_at",
+            side_effect=fake_touch,
+        ):
+            response = await proxy_sse_post(
+                TARGET,
+                "http://127.0.0.1:11400/v1/chat/completions",
+                {"model": "default_model", "stream": True},
+                {},
+            )
+            chunks = [chunk async for chunk in response.body_iterator]
+
+        self.assertTrue(chunks)
+        self.assertIsNotNone(first_chunk_at["value"])
+        prefill_touches = [t for t in touch_times if t < first_chunk_at["value"]]
+        self.assertGreaterEqual(len(prefill_touches), 1)
+
+    async def test_proxy_sse_post_survives_touch_failures(self) -> None:
+        async def chunk_stream():
+            yield b'data: {"model":"default_model","choices":[{"delta":{"content":"ok"}}]}\n\n'
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aiter_bytes = MagicMock(return_value=chunk_stream())
+        mock_response.aclose = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=mock_response)
+        mock_client.aclose = AsyncMock()
+
+        with patch(
+            "orchestrator.gateway.services.http_proxy.get_http_client",
+            return_value=mock_client,
+        ), patch(
+            "orchestrator.gateway.services.http_proxy.activity_heartbeat_seconds",
+            return_value=0.01,
+        ), patch(
+            "orchestrator.lifecycle_services.touch_instance_last_used_at",
+            side_effect=RuntimeError("database is locked"),
+        ):
+            response = await proxy_sse_post(
+                TARGET,
+                "http://127.0.0.1:11400/v1/chat/completions",
+                {"model": "default_model", "stream": True},
+                {},
+            )
+            chunks = [chunk async for chunk in response.body_iterator]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'"model":"demo"', b"".join(chunks))
+
+    async def test_proxy_json_post_survives_touch_failures(self) -> None:
+        mock_response = httpx.Response(
+            200,
+            json={"choices": [], "model": "default_model"},
+        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "orchestrator.gateway.services.http_proxy.get_http_client",
+            return_value=mock_client,
+        ), patch(
+            "orchestrator.gateway.services.http_proxy.activity_heartbeat_seconds",
+            return_value=0.01,
+        ), patch(
+            "orchestrator.lifecycle_services.touch_instance_last_used_at",
+            side_effect=RuntimeError("database is locked"),
+        ):
+            await asyncio.sleep(0.03)
+            response = await proxy_json_post(
+                TARGET,
+                "http://127.0.0.1:11400/v1/chat/completions",
+                {"model": "default_model"},
+                {"content-type": "application/json"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["model"], "demo")
+
     async def test_proxy_sse_post_heartbeats_keep_instance_out_of_lru(self) -> None:
-        """Mid-stream touches refresh last_used_at so grace=1s never expires mid-call."""
-        # Simulate request-start touch; stream lasts > grace without mid-stream refresh.
+        """Background heartbeats keep last_used_at fresh across a stream longer than grace."""
         activity = {"last_used_at": timezone.now()}
 
         async def slow_stream():
+            await asyncio.sleep(0.55)
             yield b'data: {"model":"default_model","choices":[{"delta":{"content":"a"}}]}\n\n'
             await asyncio.sleep(0.55)
             yield b'data: {"model":"default_model","choices":[{"delta":{"content":"b"}}]}\n\n'
-            await asyncio.sleep(0.55)
             yield b'data: {"model":"default_model","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
 
         async def fake_touch(target: GatewayTarget) -> None:
@@ -338,7 +449,7 @@ class HttpProxyBinaryPostTests(IsolatedAsyncioTestCase):
                     [inst.model_name for inst in list_lru_evictable_instances()]
                 )
 
-        self.assertGreaterEqual(len(observed_while_streaming), 3)
+        self.assertGreaterEqual(len(observed_while_streaming), 2)
         self.assertTrue(all(names == [] for names in observed_while_streaming))
 
 

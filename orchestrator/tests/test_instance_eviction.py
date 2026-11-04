@@ -87,6 +87,16 @@ class InstanceEvictionTests(SimpleTestCase):
 
         self.assertEqual(eviction_grace_seconds(), 60)
 
+    @patch(
+        "orchestrator.gateway.services.http_proxy.activity_heartbeat_seconds",
+        return_value=15.0,
+    )
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_GRACE_SECONDS": "10"}, clear=False)
+    def test_eviction_grace_floors_to_twice_heartbeat(self, _mock_hb: MagicMock) -> None:
+        from orchestrator.instance_eviction import eviction_grace_seconds
+
+        self.assertEqual(eviction_grace_seconds(), 30)
+
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
     @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
     @patch("orchestrator.instance_eviction._stop_planned_victim")
