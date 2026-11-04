@@ -143,6 +143,22 @@ def is_usage_only_sse_line(line: bytes) -> bool:
     return isinstance(choices, list) and len(choices) == 0 and isinstance(usage, dict)
 
 
+def _observe_and_maybe_forward_sse_line(
+    line: bytes,
+    client_model_alias: str,
+    collector: Any,
+    *,
+    strip_usage_only: bool,
+) -> bytes | None:
+    """Restore alias, feed telemetry, optionally drop usage-only chunks."""
+    restored = rewrite_sse_line_model(line, client_model_alias)
+    if collector is not None:
+        collector.observe_sse_line(restored)
+    if strip_usage_only and is_usage_only_sse_line(restored):
+        return None
+    return restored
+
+
 async def iter_sse_with_restored_model(
     chunks: AsyncIterator[bytes],
     client_model_alias: str,
@@ -159,17 +175,22 @@ async def iter_sse_with_restored_model(
         buffer += chunk
         while b"\n" in buffer:
             line, buffer = buffer.split(b"\n", 1)
-            restored = rewrite_sse_line_model(line, client_model_alias)
-            if collector is not None:
-                collector.observe_sse_line(restored)
-            if strip_usage_only and is_usage_only_sse_line(restored):
-                continue
-            yield restored + b"\n"
+            restored = _observe_and_maybe_forward_sse_line(
+                line,
+                client_model_alias,
+                collector,
+                strip_usage_only=strip_usage_only,
+            )
+            if restored is not None:
+                yield restored + b"\n"
     if buffer:
-        restored = rewrite_sse_line_model(buffer, client_model_alias)
-        if collector is not None:
-            collector.observe_sse_line(restored)
-        if not (strip_usage_only and is_usage_only_sse_line(restored)):
+        restored = _observe_and_maybe_forward_sse_line(
+            buffer,
+            client_model_alias,
+            collector,
+            strip_usage_only=strip_usage_only,
+        )
+        if restored is not None:
             yield restored
 
 

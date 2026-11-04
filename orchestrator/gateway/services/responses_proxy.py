@@ -238,7 +238,6 @@ def _ensure_reasoning_part_opened(meta: dict[str, Any]) -> list[bytes]:
 
 def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[bytes]:
     usage = meta.get("usage") if isinstance(meta.get("usage"), dict) else {}
-    tools: ToolCallAccumulator = meta["tools"]
     events: list[bytes] = []
     events.extend(_close_reasoning_events(meta))
     if meta.get("message_opened"):

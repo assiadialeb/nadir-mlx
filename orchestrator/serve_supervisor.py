@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Callable, Sequence
 
 BACKGROUND_OWNER_ENV = "NADIR_BACKGROUND_OWNER"
 SERVE_PARENT_PID_ENV = "NADIR_SERVE_PARENT_PID"
@@ -98,7 +98,9 @@ def _listener_pids(port: int) -> list[int]:
             check=False,
             timeout=2,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired:
+        return []
+    except OSError:
         return []
     pids: list[int] = []
     for line in result.stdout.splitlines():
@@ -188,27 +190,137 @@ def start_parent_death_watch_if_needed() -> None:
         threading.Thread(target=_watch, name="nadir-parent-death-watch", daemon=True).start()
 
 
+def _safe_signal_pid(pid: int, sig: signal.Signals) -> bool:
+    """Send ``sig`` to ``pid``; return False when the process is gone or denied."""
+    try:
+        os.kill(pid, sig)
+        return True
+    except OSError:
+        return False
+
+
+def _signal_process_group(process: subprocess.Popen[bytes], sig: signal.Signals) -> None:
+    """Deliver ``sig`` to the child's process group (fallback: the child only)."""
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, sig)
+        return
+    except OSError:
+        pass
+    try:
+        # Negative PID = process group; mirrors killpg when setsid() was used.
+        os.kill(-process.pid, sig)
+        return
+    except OSError:
+        pass
+    try:
+        process.send_signal(sig)
+    except OSError:
+        pass
+
+
 def _terminate_process_group(process: subprocess.Popen[bytes], *, grace_seconds: float = 5.0) -> None:
     """SIGTERM the process group, then SIGKILL if needed."""
     if process.poll() is not None:
         return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        process.terminate()
+    _signal_process_group(process, signal.SIGTERM)
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
         if process.poll() is not None:
             return
         time.sleep(0.1)
+    _signal_process_group(process, signal.SIGKILL)
     try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
         process.kill()
+    except OSError:
+        pass
 
 
-def stop_children(processes: Sequence[subprocess.Popen[bytes]], *, grace_seconds: float = 5.0) -> None:
-    """Stop all supervised children (gateway / UI / MCP)."""
+def _is_nadir_serve_listener(pid: int) -> bool:
+    """Return True when ``pid`` looks like a supervised manage.py child."""
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    except OSError:
+        return False
+    command = (result.stdout or "").strip().lower()
+    if "manage.py" not in command:
+        return False
+    return any(token in command for token in ("runserver", "run_gateway", "run_mcp"))
+
+
+def _wait_until_port_free(host: str, port: int, *, timeout_seconds: float = 2.0) -> bool:
+    """Poll until the port is free or ``timeout_seconds`` elapses."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not _port_in_use(host, port):
+            return True
+        time.sleep(0.1)
+    return not _port_in_use(host, port)
+
+
+def _signal_nadir_listeners(
+    port: int,
+    sig: signal.Signals,
+    *,
+    reclaimed: list[int],
+    skip_reclaimed: bool,
+) -> None:
+    """Signal Nadir serve listeners on ``port`` and track reclaimed PIDs."""
+    for pid in _listener_pids(port):
+        if skip_reclaimed and pid in reclaimed:
+            continue
+        if not _is_nadir_serve_listener(pid):
+            continue
+        if not _safe_signal_pid(pid, sig):
+            continue
+        if pid not in reclaimed:
+            reclaimed.append(pid)
+
+
+def _reclaim_port_listeners(host: str, port: int, *, reclaimed: list[int]) -> None:
+    """SIGTERM then SIGKILL Nadir listeners still holding ``port``."""
+    _signal_nadir_listeners(
+        port,
+        signal.SIGTERM,
+        reclaimed=reclaimed,
+        skip_reclaimed=True,
+    )
+    if _wait_until_port_free(host, port):
+        return
+    _signal_nadir_listeners(
+        port,
+        signal.SIGKILL,
+        reclaimed=reclaimed,
+        skip_reclaimed=False,
+    )
+
+
+def reclaim_stale_serve_ports(spec: ServeSpec) -> list[int]:
+    """SIGTERM/SIGKILL leftover listeners on serve ports (orphans after bad Ctrl+C)."""
+    reclaimed: list[int] = []
+    for service in required_bind_services(spec):
+        if not _port_in_use(service.host, service.port):
+            continue
+        _reclaim_port_listeners(service.host, service.port, reclaimed=reclaimed)
+    return reclaimed
+
+
+def stop_children(
+    processes: Sequence[subprocess.Popen[bytes]],
+    *,
+    grace_seconds: float = 5.0,
+    spec: ServeSpec | None = None,
+) -> None:
+    """Stop all supervised children (gateway / UI / MCP) and free their ports."""
     for process in processes:
         _terminate_process_group(process, grace_seconds=grace_seconds)
     for process in processes:
@@ -216,6 +328,8 @@ def stop_children(processes: Sequence[subprocess.Popen[bytes]], *, grace_seconds
             process.wait(timeout=1)
         except subprocess.TimeoutExpired:
             pass
+    if spec is not None:
+        reclaim_stale_serve_ports(spec)
 
 
 def start_children(commands: Sequence[Sequence[str]], *, env: dict[str, str] | None = None) -> list[subprocess.Popen[bytes]]:
@@ -232,11 +346,20 @@ def start_children(commands: Sequence[Sequence[str]], *, env: dict[str, str] | N
     return processes
 
 
-def wait_for_exit(processes: Sequence[subprocess.Popen[bytes]]) -> int:
-    """Block until one child exits; return that exit code (or 1)."""
+def wait_for_exit(
+    processes: Sequence[subprocess.Popen[bytes]],
+    *,
+    should_stop: Callable[[], bool] | None = None,
+) -> int | None:
+    """Block until one child exits or ``should_stop`` is true.
+
+    Returns the child exit code, or ``None`` when stop was requested.
+    """
     while True:
+        if should_stop is not None and should_stop():
+            return None
         for process in processes:
             code = process.poll()
             if code is not None:
                 return int(code)
-        time.sleep(0.4)
+        time.sleep(0.25)

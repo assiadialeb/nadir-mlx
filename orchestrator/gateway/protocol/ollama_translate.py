@@ -269,7 +269,6 @@ def ollama_generate_stream_chunk(
     content: str,
     done: bool,
     done_reason: str | None = None,
-    tool_calls: list[dict[str, Any]] | None = None,
     prompt_eval_count: int | None = None,
     eval_count: int | None = None,
     error: str | None = None,

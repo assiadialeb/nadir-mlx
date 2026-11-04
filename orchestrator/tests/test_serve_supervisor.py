@@ -106,3 +106,48 @@ def test_assert_serve_ports_free_raises_when_busy() -> None:
         with patch("orchestrator.serve_supervisor._listener_pids", return_value=[999]):
             with pytest.raises(SystemExit, match="already in use"):
                 assert_serve_ports_free(spec)
+
+
+def test_reclaim_stale_serve_ports_signals_manage_py_listeners() -> None:
+    from orchestrator.serve_supervisor import reclaim_stale_serve_ports
+
+    spec = ServeSpec(
+        ui_host="127.0.0.1",
+        ui_port=8000,
+        with_mcp=False,
+        mcp_host="127.0.0.1",
+        mcp_port=11381,
+        project_root=Path("/tmp/nadir"),
+    )
+    busy_ports = {8000}
+
+    def port_in_use(host: str, port: int) -> bool:
+        del host
+        return port in busy_ports
+
+    def kill_pid(pid: int, sig: int) -> None:
+        del sig
+        if pid == 4242:
+            busy_ports.discard(8000)
+
+    with patch("orchestrator.serve_supervisor._port_in_use", side_effect=port_in_use):
+        with patch("orchestrator.serve_supervisor._listener_pids", return_value=[4242]):
+            with patch(
+                "orchestrator.serve_supervisor._is_nadir_serve_listener",
+                return_value=True,
+            ):
+                with patch("orchestrator.serve_supervisor.os.kill", side_effect=kill_pid) as mock_kill:
+                    reclaimed = reclaim_stale_serve_ports(spec)
+    assert reclaimed == [4242]
+    assert mock_kill.called
+    assert 8000 not in busy_ports
+
+
+def test_wait_for_exit_returns_none_when_stop_requested() -> None:
+    from orchestrator.serve_supervisor import wait_for_exit
+
+    class _FakeProc:
+        def poll(self):
+            return None
+
+    assert wait_for_exit([_FakeProc()], should_stop=lambda: True) is None
