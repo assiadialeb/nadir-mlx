@@ -68,17 +68,29 @@ def _get_semaphore(instance_id: int, limit: int) -> asyncio.Semaphore:
 @asynccontextmanager
 async def upstream_concurrency_slot(target: GatewayTarget) -> AsyncIterator[None]:
     """Acquire an upstream slot; wait in queue until timeout."""
+    from orchestrator.gateway.request_timing import get_active_collector
+
+    collector = get_active_collector()
     limit = resolve_max_concurrent_upstream(target)
     if limit is None:
+        if collector is not None:
+            collector.mark_queue_enter()
+            collector.mark_queue_acquired()
         yield
         return
 
     semaphore = _get_semaphore(target.instance_id, limit)
+    if collector is not None:
+        collector.mark_queue_enter()
     try:
         async with asyncio.timeout(queue_timeout_seconds()):
             await semaphore.acquire()
     except TimeoutError as exc:
+        if collector is not None:
+            collector.set_error("upstream_queue_timeout")
         raise UpstreamQueueTimeoutError(MSG_QUEUE_TIMEOUT) from exc
+    if collector is not None:
+        collector.mark_queue_acquired()
     try:
         yield
     finally:

@@ -286,6 +286,8 @@ def servers_view(request):
         enrich_instance_lifecycle_ui(instance)
         instance_configs[str(instance.id)] = instance.server_config or {}
 
+    from orchestrator.gateway_telemetry_services import list_recent_gateway_timings
+
     return render(request, 'orchestrator/servers.html', {
         'instances': instances,
         'server_types': SERVER_TYPES,
@@ -299,6 +301,7 @@ def servers_view(request):
             mtp_assistant_suggestions_for_ui_json(installed_names)
         ),
         'instance_configs': instance_configs,
+        'recent_gateway_timings': list_recent_gateway_timings(limit=25),
     })
 
 

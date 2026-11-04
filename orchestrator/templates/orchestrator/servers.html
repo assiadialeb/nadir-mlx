@@ -268,6 +268,50 @@
         </div>
         {% endif %}
     </div>
+
+    <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+        <h2 class="text-lg font-bold text-slate-900 mb-2">Recent gateway latency</h2>
+        <p class="text-sm text-slate-600 mb-4">
+            Last requests through the OpenAI chat path (queue, wake, TTFT, cache).
+        </p>
+        {% if recent_gateway_timings %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-left text-xs text-slate-700">
+                <thead class="border-b border-slate-200 text-slate-500 uppercase tracking-wider">
+                    <tr>
+                        <th class="py-2 pr-3 font-semibold">Time</th>
+                        <th class="py-2 pr-3 font-semibold">Alias</th>
+                        <th class="py-2 pr-3 font-semibold">TTFT</th>
+                        <th class="py-2 pr-3 font-semibold">Visible</th>
+                        <th class="py-2 pr-3 font-semibold">Prefill</th>
+                        <th class="py-2 pr-3 font-semibold">Queue</th>
+                        <th class="py-2 pr-3 font-semibold">Wake</th>
+                        <th class="py-2 pr-3 font-semibold">Gen tok/s</th>
+                        <th class="py-2 pr-3 font-semibold">Cache</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in recent_gateway_timings %}
+                    <tr class="border-b border-slate-100">
+                        <td class="py-2 pr-3 whitespace-nowrap">{{ row.started_at|date:"H:i:s" }}</td>
+                        <td class="py-2 pr-3 font-mono">{{ row.alias|default:"—" }}</td>
+                        <td class="py-2 pr-3">{% if row.ttft_ms != None %}{{ row.ttft_ms|floatformat:0 }} ms{% else %}—{% endif %}</td>
+                        <td class="py-2 pr-3">{% if row.visible_ttft_ms != None %}{{ row.visible_ttft_ms|floatformat:0 }} ms{% else %}—{% endif %}</td>
+                        <td class="py-2 pr-3">{% if row.prefill_ms != None %}{{ row.prefill_ms|floatformat:0 }} ms{% else %}—{% endif %}</td>
+                        <td class="py-2 pr-3">{% if row.queue_wait_ms != None %}{{ row.queue_wait_ms|floatformat:0 }} ms{% else %}—{% endif %}</td>
+                        <td class="py-2 pr-3">{% if row.wake_ms != None %}{{ row.wake_ms|floatformat:0 }} ms{% if row.cold_start %}*{% endif %}{% else %}—{% endif %}</td>
+                        <td class="py-2 pr-3">{% if row.generation_tokens_per_s != None %}{{ row.generation_tokens_per_s|floatformat:1 }}{% else %}—{% endif %}</td>
+                        <td class="py-2 pr-3">{% if row.cached_prompt_tokens != None %}{{ row.cached_prompt_tokens }}{% if row.prompt_tokens != None %}/{{ row.prompt_tokens }}{% endif %}{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="mt-2 text-xs text-slate-500">* cold start (wake from stopped/failed/loading)</p>
+        {% else %}
+        <p class="text-sm text-slate-500">No gateway requests recorded yet.</p>
+        {% endif %}
+    </div>
 </div>
 
 <div id="edit-instance-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">

@@ -7,6 +7,7 @@ from typing import Any
 from starlette.responses import Response
 
 from orchestrator.gateway.chat_extensions import prepare_chat_upstream_body
+from orchestrator.gateway.request_timing import reset_request_timing, start_request_timing
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, COMPLETIONS_PATH
 from orchestrator.gateway.services.http_proxy import (
     forward_request_headers,
@@ -21,28 +22,63 @@ CHAT_LAUNCH_MODES = frozenset({"TEXT", "MULTIMODAL"})
 TEXT_ONLY_LAUNCH_MODES = frozenset({"TEXT"})
 
 
+def _force_usage_for_telemetry() -> bool:
+    from django.conf import settings
+
+    from orchestrator.env_utils import env_bool
+    from orchestrator.gateway.request_timing import telemetry_enabled
+
+    if not telemetry_enabled():
+        return False
+    return env_bool(
+        "NADIR_GATEWAY_TELEMETRY_FORCE_USAGE",
+        bool(getattr(settings, "NADIR_GATEWAY_TELEMETRY_FORCE_USAGE", True)),
+    )
+
+
 async def proxy_chat_completions(body: dict[str, Any], headers: Any) -> Response:
     """Proxy a chat completion request to a TEXT or MULTIMODAL instance."""
-    target = await resolve_target_from_body(body)
-    validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "chat completions")
-    upstream_body = prepare_chat_upstream_body(body, target.upstream_model)
-    request_headers = forward_request_headers(headers)
-    url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
+    stream = bool(body.get("stream"))
+    collector = start_request_timing(endpoint=CHAT_COMPLETIONS_PATH, stream=stream)
+    try:
+        target = await resolve_target_from_body(body)
+        validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "chat completions")
+        upstream_body = prepare_chat_upstream_body(
+            body,
+            target.upstream_model,
+            force_include_usage=_force_usage_for_telemetry(),
+        )
+        request_headers = forward_request_headers(headers)
+        url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
 
-    if body.get("stream"):
-        return await proxy_sse_post(target, url, upstream_body, request_headers)
-    return await proxy_json_post(target, url, upstream_body, request_headers)
+        if stream:
+            return await proxy_sse_post(target, url, upstream_body, request_headers)
+        return await proxy_json_post(target, url, upstream_body, request_headers)
+    finally:
+        # Non-stream: finalize now. Stream: finalize when response closes via middleware?
+        # StreamingResponse keeps generating after return — finalize in a wrapped iterator.
+        if not stream:
+            reset_request_timing(collector)
 
 
 async def proxy_text_completions(body: dict[str, Any], headers: Any) -> Response:
     """Proxy a legacy text completion request to a TEXT instance."""
-    target = await resolve_target_from_body(body)
-    validate_target_launch_mode(target, TEXT_ONLY_LAUNCH_MODES, "text completions")
-    upstream_body = prepare_chat_upstream_body(body, target.upstream_model)
-    request_headers = forward_request_headers(headers)
-    url = upstream_url_for_path(target, COMPLETIONS_PATH)
+    stream = bool(body.get("stream"))
+    collector = start_request_timing(endpoint=COMPLETIONS_PATH, stream=stream)
+    try:
+        target = await resolve_target_from_body(body)
+        validate_target_launch_mode(target, TEXT_ONLY_LAUNCH_MODES, "text completions")
+        upstream_body = prepare_chat_upstream_body(
+            body,
+            target.upstream_model,
+            force_include_usage=_force_usage_for_telemetry(),
+        )
+        request_headers = forward_request_headers(headers)
+        url = upstream_url_for_path(target, COMPLETIONS_PATH)
 
-    if body.get("stream"):
-        return await proxy_sse_post(target, url, upstream_body, request_headers)
-    return await proxy_json_post(target, url, upstream_body, request_headers)
-
+        if stream:
+            return await proxy_sse_post(target, url, upstream_body, request_headers)
+        return await proxy_json_post(target, url, upstream_body, request_headers)
+    finally:
+        if not stream:
+            reset_request_timing(collector)
