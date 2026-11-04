@@ -204,29 +204,22 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
-### 7. Start the control plane
+### 7. Start UI + gateway
 
 ```bash
-python manage.py runserver
+python manage.py serve
+# optional MCP: python manage.py serve --with-mcp
 ```
+
+One command starts the Django UI (**8000**) and the OpenAI-compatible gateway (**11380**). Ctrl+C stops both. Separate `runserver` / `run_gateway` terminals still work if you prefer.
 
 Open **http://127.0.0.1:8000** and sign in with your superuser account.
-
-### 8. Start the gateway (recommended)
-
-In a **second terminal**, start the OpenAI-compatible gateway on port `11380`:
-
-```bash
-source venv/bin/activate
-python manage.py run_gateway
-# equivalent: python -m orchestrator.gateway
-```
 
 Operator guide (all launch modes — chat, embeddings, rerank, image, TTS, STT): **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)**.
 
 Client recipes (Open WebUI, Continue, Cursor, Claude Code, n8n, LiteLLM): **[docs/usage/integration-recipes.md](docs/usage/integration-recipes.md)**.
 
-IDE control (list/start/stop instances via Streamable HTTP MCP): `python manage.py run_mcp` — see **[docs/usage/mcp.md](docs/usage/mcp.md)**.
+IDE control (list/start/stop instances via Streamable HTTP MCP): `python manage.py run_mcp` or `serve --with-mcp` — see **[docs/usage/mcp.md](docs/usage/mcp.md)**.
 
 Health check:
 

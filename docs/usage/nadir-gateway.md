@@ -20,7 +20,15 @@ Clients (Open WebUI, curl, OpenAI SDKs, custom scripts) send the **gateway alias
 
 ### 1. Start Django and the gateway
 
-Use **two terminals** (or `tmux` / `screen`):
+Recommended (one terminal):
+
+```bash
+source venv/bin/activate
+python manage.py serve
+# optional: python manage.py serve --with-mcp
+```
+
+Or use **two terminals** (or `tmux` / `screen`):
 
 ```bash
 # Terminal 1 — control plane

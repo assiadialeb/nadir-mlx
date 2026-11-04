@@ -74,23 +74,26 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
-## 7. Start the control plane
+## 7. Start UI + gateway (one command)
 
 ```bash
-python manage.py runserver
+python manage.py serve
 ```
+
+This supervises:
+
+- Django UI on `DJANGO_HTTP_PORT` (default **8000**)
+- Nadir Gateway (`run_gateway`, default **11380**)
+
+Optional MCP in the same stack:
+
+```bash
+python manage.py serve --with-mcp
+```
+
+Ctrl+C stops every supervised process. You can still run `runserver` / `run_gateway` / `run_mcp` in separate terminals if you prefer.
 
 Open **http://127.0.0.1:8000** and sign in with your superuser account.
-
-## 8. Start the gateway (recommended)
-
-In a **second terminal**:
-
-```bash
-source venv/bin/activate
-python manage.py run_gateway
-# equivalent: python -m orchestrator.gateway
-```
 
 Health check:
 
@@ -105,7 +108,7 @@ Full operator guide: [Nadir Gateway](usage/nadir-gateway.md). Client recipes: [I
 
 Use **`http://127.0.0.1:11380/v1`** as `api_base` in your client. Pass the **gateway alias** (shown on each server card) in the `model` field.
 
-## 9. Download and launch a model
+## 8. Download and launch a model
 
 1. Go to **Search** and find a model (e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit`)
 2. Click **Download** — files land in `./models/<model-name>/`
