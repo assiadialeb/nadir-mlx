@@ -90,12 +90,17 @@ def kwargs_from_anthropic(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def kwargs_from_ollama(body: dict[str, Any]) -> dict[str, Any]:
-    """Ollama: ``think`` boolean (only when explicitly set)."""
+    """Ollama: ``think`` boolean; absent defaults to off (align with Anthropic).
+
+    Models that cannot disable thinking (e.g. DeepSeek-R1) ignore
+    ``enable_thinking: false``; clients that want visible thinking must set
+    ``think: true`` so the Ollama façade emits the ``thinking`` field.
+    """
     if "think" not in body:
-        return {}
+        return {"enable_thinking": False}
     think = body.get("think")
     if think is True:
         return {"enable_thinking": True}
     if think is False:
         return {"enable_thinking": False}
-    return {}
+    return {"enable_thinking": False}

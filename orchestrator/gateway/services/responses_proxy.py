@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from orchestrator.gateway.chat_extensions import prepare_chat_upstream_body
+from orchestrator.gateway.request_timing import reset_request_timing, start_request_timing
 from orchestrator.gateway.protocol.chat_sse import ToolCallAccumulator, parse_chat_sse_line
 from orchestrator.gateway.protocol.responses_translate import (
     build_response_stream_events,
@@ -34,41 +35,48 @@ EVENT_OUTPUT_ITEM_DONE = "response.output_item.done"
 async def proxy_responses_create(body: dict[str, Any], headers: Any) -> Response:
     """Translate Responses → chat completions, then map the result back."""
     chat_body = responses_request_to_chat(body)
-    target = await resolve_target_from_body(chat_body)
-    validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "responses")
-    request_headers = forward_request_headers(headers)
-    url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
-    from orchestrator.gateway.thinking_control import kwargs_from_responses
+    stream = bool(chat_body.get("stream"))
+    collector = start_request_timing(endpoint="/v1/responses", stream=stream)
+    try:
+        target = await resolve_target_from_body(chat_body)
+        validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "responses")
+        request_headers = forward_request_headers(headers)
+        url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
+        from orchestrator.gateway.thinking_control import kwargs_from_responses
 
-    upstream_body = prepare_chat_upstream_body(
-        chat_body,
-        target.upstream_model,
-        force_include_usage=True,
-        chat_template_kwargs=kwargs_from_responses(body),
-    )
-
-    if chat_body.get("stream"):
-        upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
-        if upstream.status_code >= 400:
-            return upstream
-        return StreamingResponse(
-            _translate_chat_sse_to_responses(
-                upstream.body_iterator,
-                client_model_alias=target.alias,
-            ),
-            media_type="text/event-stream",
-            status_code=200,
+        upstream_body = prepare_chat_upstream_body(
+            chat_body,
+            target.upstream_model,
+            force_include_usage=True,
+            chat_template_kwargs=kwargs_from_responses(body),
         )
 
-    upstream = await proxy_json_post(target, url, upstream_body, request_headers)
-    if upstream.status_code >= 400:
-        return upstream
-    chat_payload = json.loads(upstream.body)
-    response_payload = chat_completion_to_response(
-        chat_payload,
-        client_model_alias=target.alias,
-    )
-    return JSONResponse(status_code=200, content=response_payload)
+        if stream:
+            upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
+            if upstream.status_code >= 400:
+                reset_request_timing(collector)
+                return upstream
+            return StreamingResponse(
+                _translate_chat_sse_to_responses(
+                    upstream.body_iterator,
+                    client_model_alias=target.alias,
+                ),
+                media_type="text/event-stream",
+                status_code=200,
+            )
+
+        upstream = await proxy_json_post(target, url, upstream_body, request_headers)
+        if upstream.status_code >= 400:
+            return upstream
+        chat_payload = json.loads(upstream.body)
+        response_payload = chat_completion_to_response(
+            chat_payload,
+            client_model_alias=target.alias,
+        )
+        return JSONResponse(status_code=200, content=response_payload)
+    finally:
+        if not stream:
+            reset_request_timing(collector)
 
 
 async def _translate_chat_sse_to_responses(

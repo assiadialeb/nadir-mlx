@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import queue
+import threading
 from typing import TYPE_CHECKING
 
 from django.db import transaction
@@ -9,10 +13,51 @@ from django.db import transaction
 if TYPE_CHECKING:
     from orchestrator.gateway.request_timing import RequestTimingSnapshot
 
+logger = logging.getLogger(__name__)
+
+# Prune every N inserts so retain cleanup is not on the hot path each request.
+_PRUNE_EVERY_N = 10
+_inserts_since_prune = 0
+_inserts_lock = threading.Lock()
+
+_write_queue: queue.Queue = queue.Queue()
+_writer_started = False
+_writer_lock = threading.Lock()
+_FLUSH_SENTINEL = object()
+
+
+def schedule_gateway_request_timing(snapshot: RequestTimingSnapshot) -> None:
+    """Persist timing without blocking the ASGI event loop.
+
+    Sync contexts (unit tests, non-async callers) write immediately. Async
+    contexts enqueue to a daemon writer thread to avoid
+    ``SynchronousOnlyOperation`` under Django ASGI.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        record_gateway_request_timing(snapshot)
+        return
+    enqueue_gateway_request_timing(snapshot)
+
+
+def enqueue_gateway_request_timing(snapshot: RequestTimingSnapshot) -> None:
+    """Queue a timing row for the background writer (async-safe)."""
+    _ensure_writer()
+    _write_queue.put(snapshot)
+
+
+def flush_gateway_timing_writes(timeout: float = 5.0) -> None:
+    """Block until the telemetry writer queue is drained (tests / shutdown)."""
+    _ensure_writer()
+    finished = threading.Event()
+    _write_queue.put((_FLUSH_SENTINEL, finished))
+    if not finished.wait(timeout=timeout):
+        logger.warning("Timed out flushing gateway telemetry write queue")
+
 
 def record_gateway_request_timing(snapshot: RequestTimingSnapshot) -> None:
-    """Insert one timing row and prune older rows beyond the retain window."""
-    from orchestrator.gateway.request_timing import telemetry_retain_count
+    """Insert one timing row; prune excess rows every ``_PRUNE_EVERY_N`` inserts."""
     from orchestrator.models import GatewayRequestMetric
 
     create_kwargs: dict = {
@@ -39,6 +84,22 @@ def record_gateway_request_timing(snapshot: RequestTimingSnapshot) -> None:
     if snapshot.instance_id is not None:
         create_kwargs["instance_id"] = snapshot.instance_id
     GatewayRequestMetric.objects.create(**create_kwargs)
+    should_prune = False
+    global _inserts_since_prune
+    with _inserts_lock:
+        _inserts_since_prune += 1
+        if _inserts_since_prune >= _PRUNE_EVERY_N:
+            _inserts_since_prune = 0
+            should_prune = True
+    if should_prune:
+        prune_gateway_timing_rows()
+
+
+def prune_gateway_timing_rows() -> None:
+    """Delete timing rows beyond the configured retain window."""
+    from orchestrator.gateway.request_timing import telemetry_retain_count
+    from orchestrator.models import GatewayRequestMetric
+
     retain = telemetry_retain_count()
     with transaction.atomic():
         excess_ids = list(
@@ -82,3 +143,31 @@ def prompt_cache_hit_rate(
     if prompt_total <= 0:
         return None
     return cached_total / prompt_total
+
+
+def _ensure_writer() -> None:
+    global _writer_started
+    with _writer_lock:
+        if _writer_started:
+            return
+        thread = threading.Thread(
+            target=_writer_loop,
+            name="nadir-gateway-telemetry",
+            daemon=True,
+        )
+        thread.start()
+        _writer_started = True
+
+
+def _writer_loop() -> None:
+    while True:
+        item = _write_queue.get()
+        try:
+            if isinstance(item, tuple) and item and item[0] is _FLUSH_SENTINEL:
+                item[1].set()
+                continue
+            record_gateway_request_timing(item)  # type: ignore[arg-type]
+        except Exception:
+            logger.warning("Failed to persist gateway request timing", exc_info=True)
+        finally:
+            _write_queue.task_done()

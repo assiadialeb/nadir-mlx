@@ -292,7 +292,8 @@ mlx-lm accepts per-request `chat_template_kwargs` (notably `enable_thinking`). N
 | Responses `/v1/responses` | `reasoning.effort` or `reasoning_effort` | same mapping |
 | Anthropic `/v1/messages` | `thinking` absent or `type: disabled` | `enable_thinking: false` |
 | Anthropic | `thinking.type: enabled` (+ optional `budget_tokens`) | `enable_thinking: true` (+ budget) |
-| Ollama `/api/chat` | `think: false` / `true` | `enable_thinking: false` / `true` (only when set) |
+| Ollama `/api/chat` | `think` absent or `false` | `enable_thinking: false` |
+| Ollama `/api/chat` | `think: true` | `enable_thinking: true` (façade also emits `thinking`) |
 
 Clients may still send `chat_template_kwargs` directly; façade mappings override colliding keys.
 
@@ -335,9 +336,9 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
 | `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
 | `NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS` | `15` | Mid-request `last_used_at` refresh (SSE + long JSON) |
-| `NADIR_GATEWAY_TELEMETRY_ENABLED` | `true` | Per-request TTFT / prefill / cache metrics (logs + Servers UI) |
-| `NADIR_GATEWAY_TELEMETRY_FORCE_USAGE` | `true` | Force `stream_options.include_usage` on chat proxies for token/cache counts |
-| `NADIR_GATEWAY_TELEMETRY_RETAIN` | `100` | Max recent timing rows kept in the local DB |
+| `NADIR_GATEWAY_TELEMETRY_ENABLED` | `true` | Per-request TTFT / prefill / cache metrics (logs + Servers UI) for OpenAI chat, Anthropic, Responses, and Ollama |
+| `NADIR_GATEWAY_TELEMETRY_FORCE_USAGE` | `true` | Force upstream `stream_options.include_usage` for token/cache counts; usage-only SSE chunks are **stripped** from OpenAI clients that did not opt in (regression C1) |
+| `NADIR_GATEWAY_TELEMETRY_RETAIN` | `100` | Max recent timing rows kept in the local DB (pruned in batches) |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Stop idle `on_demand` instances in background |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | Idle watcher evaluation interval |
 | `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` under memory pressure before load |

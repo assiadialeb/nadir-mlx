@@ -118,6 +118,8 @@ class RequestTimingCollector:
     completion_tokens: int | None = None
     cached_prompt_tokens: int | None = None
     error_code: str | None = None
+    # When True, strip mlx usage-only SSE chunks from the client stream (C1).
+    strip_usage_only: bool = False
     _finalized: bool = False
 
     def mark_queue_enter(self) -> None:
@@ -227,9 +229,9 @@ class RequestTimingCollector:
         snap = self.snapshot()
         logger.info("gateway_request_timing %s", snap.as_log_fields())
         try:
-            from orchestrator.gateway_telemetry_services import record_gateway_request_timing
+            from orchestrator.gateway_telemetry_services import schedule_gateway_request_timing
 
-            record_gateway_request_timing(snap)
+            schedule_gateway_request_timing(snap)
         except Exception:
             logger.warning("Failed to persist gateway request timing", exc_info=True)
         return snap
