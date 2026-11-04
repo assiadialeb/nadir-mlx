@@ -27,3 +27,11 @@ def env_float(key: str, fallback: float) -> float:
     if raw is None or not raw.strip():
         return fallback
     return float(raw)
+
+
+def env_bool(key: str, fallback: bool) -> bool:
+    """Return a bool env value, or fallback when missing or blank."""
+    raw = os.environ.get(key)
+    if raw is None or not raw.strip():
+        return fallback
+    return raw.strip().lower() in {"1", "true", "yes", "on"}

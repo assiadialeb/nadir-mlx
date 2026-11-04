@@ -165,6 +165,16 @@ def _ensure_under_wake_lock(instance: InferenceInstance, alias: str) -> GatewayT
     if _instance_is_ready(instance):
         return _gateway_target_from_instance(instance)
 
+    # Flag cold-start for gateway telemetry (wake / loading wait).
+    try:
+        from orchestrator.gateway.request_timing import get_active_collector
+
+        collector = get_active_collector()
+        if collector is not None:
+            collector.mark_wake(0.0, cold_start=True)
+    except Exception:
+        pass
+
     if instance.status == "LOADING":
         return _wait_until_ready(instance, alias)
 

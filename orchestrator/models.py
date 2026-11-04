@@ -68,6 +68,44 @@ class InferenceInstance(models.Model):
         return f"{self.model_name} on port {self.port} ({self.launch_mode}, PID: {self.pid})"
 
 
+class GatewayRequestMetric(models.Model):
+    """Per-request gateway timing (TTFT, prefill, cache) for local diagnostics."""
+
+    request_id = models.CharField(max_length=64, db_index=True)
+    endpoint = models.CharField(max_length=128)
+    alias = models.CharField(max_length=255, blank=True, default="")
+    instance = models.ForeignKey(
+        InferenceInstance,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="gateway_request_metrics",
+    )
+    stream = models.BooleanField(default=False)
+    started_at = models.DateTimeField(db_index=True)
+    queue_wait_ms = models.FloatField(null=True, blank=True)
+    wake_ms = models.FloatField(null=True, blank=True)
+    cold_start = models.BooleanField(default=False)
+    prefill_ms = models.FloatField(null=True, blank=True)
+    ttft_ms = models.FloatField(null=True, blank=True)
+    visible_ttft_ms = models.FloatField(null=True, blank=True)
+    generation_ms = models.FloatField(null=True, blank=True)
+    total_ms = models.FloatField(null=True, blank=True)
+    prompt_tokens = models.IntegerField(null=True, blank=True)
+    completion_tokens = models.IntegerField(null=True, blank=True)
+    cached_prompt_tokens = models.IntegerField(null=True, blank=True)
+    prefill_tokens_per_s = models.FloatField(null=True, blank=True)
+    generation_tokens_per_s = models.FloatField(null=True, blank=True)
+    error_code = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-started_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"GatewayTiming {self.request_id} alias={self.alias}"
+
+
 class BenchmarkRun(models.Model):
     TARGET_CHOICES = [
         ("INSTANCE", "MLX instance"),

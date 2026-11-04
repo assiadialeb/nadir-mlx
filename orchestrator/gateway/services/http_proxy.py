@@ -126,14 +126,23 @@ async def iter_sse_with_restored_model(
     client_model_alias: str,
 ) -> AsyncIterator[bytes]:
     """Transform an upstream SSE byte stream so ``model`` matches the gateway alias."""
+    from orchestrator.gateway.request_timing import get_active_collector
+
+    collector = get_active_collector()
     buffer = b""
     async for chunk in chunks:
         buffer += chunk
         while b"\n" in buffer:
             line, buffer = buffer.split(b"\n", 1)
-            yield rewrite_sse_line_model(line, client_model_alias) + b"\n"
+            restored = rewrite_sse_line_model(line, client_model_alias)
+            if collector is not None:
+                collector.observe_sse_line(restored)
+            yield restored + b"\n"
     if buffer:
-        yield rewrite_sse_line_model(buffer, client_model_alias)
+        restored = rewrite_sse_line_model(buffer, client_model_alias)
+        if collector is not None:
+            collector.observe_sse_line(restored)
+        yield restored
 
 
 def upstream_url_for_path(target: GatewayTarget, path: str) -> str:
@@ -158,6 +167,9 @@ def validate_target_launch_mode(
 
 
 async def resolve_target_from_model(model: object) -> GatewayTarget:
+    import time
+
+    from orchestrator.gateway.request_timing import get_active_collector
     from orchestrator.lifecycle_services import ensure_instance_ready
 
     if not isinstance(model, str) or not model.strip():
@@ -166,7 +178,23 @@ async def resolve_target_from_model(model: object) -> GatewayTarget:
             code="invalid_model",
             message="The model field is required.",
         )
+    collector = get_active_collector()
+    wake_started = time.perf_counter()
     target = await sync_to_async(ensure_instance_ready, thread_sensitive=False)(model)
+    if collector is not None:
+        # cold_start may already be set inside lifecycle wake path.
+        if collector.wake_ms is None:
+            collector.mark_wake(
+                (time.perf_counter() - wake_started) * 1000.0,
+                cold_start=False,
+            )
+        else:
+            # Keep cold_start flag; refresh duration to include full ensure wait.
+            collector.mark_wake(
+                (time.perf_counter() - wake_started) * 1000.0,
+                cold_start=collector.cold_start,
+            )
+        collector.bind_target(alias=target.alias, instance_id=target.instance_id)
     await touch_target_last_used_at(target)
     return target
 
@@ -312,14 +340,23 @@ async def proxy_json_post(
     body: dict[str, Any],
     headers: dict[str, str],
 ) -> Response:
+    from orchestrator.gateway.request_timing import get_active_collector
+
+    collector = get_active_collector()
     async with _activity_heartbeat(target):
         try:
             async with upstream_concurrency_slot(target):
+                if collector is not None:
+                    collector.mark_upstream_open()
                 response = await _proxy_json_post_impl(url, body, headers, target.alias)
         except UpstreamQueueTimeoutError as exc:
+            if collector is not None:
+                collector.set_error("upstream_queue_timeout")
             return gateway_error(503, "upstream_queue_timeout", exc.message)
         if response.status_code < 400:
             await touch_target_last_used_at(target)
+        elif collector is not None:
+            collector.set_error("upstream_error")
         return response
 
 
@@ -329,13 +366,20 @@ async def _proxy_json_post_impl(
     headers: dict[str, str],
     client_model_alias: str,
 ) -> Response:
+    from orchestrator.gateway.request_timing import get_active_collector
+
+    collector = get_active_collector()
     client = get_http_client()
     try:
         async with asyncio.timeout(proxy_timeout_seconds()):
             response = await client.post(url, json=body, headers=headers)
     except (TimeoutError, httpx.TimeoutException):
+        if collector is not None:
+            collector.set_error("gateway_timeout")
         return gateway_error(504, "gateway_timeout", MSG_UPSTREAM_TIMEOUT)
     except httpx.HTTPError:
+        if collector is not None:
+            collector.set_error("bad_gateway")
         return gateway_error(502, "bad_gateway", MSG_BAD_GATEWAY)
 
     if response.status_code >= 400:
@@ -343,11 +387,16 @@ async def _proxy_json_post_impl(
 
     content_type = response.headers.get("content-type", "")
     if CONTENT_TYPE_JSON in content_type:
+        payload = normalize_client_chat_payload(response.json(), client_model_alias)
+        if collector is not None:
+            collector.mark_json_complete(payload)
         return JSONResponse(
             status_code=response.status_code,
-            content=normalize_client_chat_payload(response.json(), client_model_alias),
+            content=payload,
             headers=passthrough_response_headers(response.headers),
         )
+    if collector is not None:
+        collector.mark_json_complete(None)
     return Response(
         content=response.content,
         status_code=response.status_code,
@@ -392,12 +441,19 @@ async def proxy_sse_post(
     headers: dict[str, str],
 ) -> Response:
     """Open upstream SSE before responding; propagate non-2xx as real HTTP errors."""
+    from orchestrator.gateway.request_timing import get_active_collector
+
+    collector = get_active_collector()
     state: dict[str, Any] = {}
     early_error = await _open_upstream_sse_session(target, url, body, headers, state)
     if early_error is not None:
         return early_error
+    if collector is not None:
+        collector.mark_upstream_open()
 
     async def iter_chunks() -> AsyncIterator[bytes]:
+        from orchestrator.gateway.request_timing import reset_request_timing
+
         response: httpx.Response = state["response"]
         async with _activity_heartbeat(target):
             try:
@@ -407,10 +463,13 @@ async def proxy_sse_post(
                 ):
                     yield chunk
             except (httpx.HTTPError, TimeoutError):
+                if collector is not None:
+                    collector.set_error("bad_gateway")
                 yield _encode_sse_error(MSG_BAD_GATEWAY)
             finally:
                 await _close_upstream_sse_session(state)
                 await touch_target_last_used_at(target)
+                reset_request_timing(collector)
 
     return StreamingResponse(
         iter_chunks(),

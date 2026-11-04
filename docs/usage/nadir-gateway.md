@@ -306,6 +306,9 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
 | `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
 | `NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS` | `15` | Mid-request `last_used_at` refresh (SSE + long JSON) |
+| `NADIR_GATEWAY_TELEMETRY_ENABLED` | `true` | Per-request TTFT / prefill / cache metrics (logs + Servers UI) |
+| `NADIR_GATEWAY_TELEMETRY_FORCE_USAGE` | `true` | Force `stream_options.include_usage` on chat proxies for token/cache counts |
+| `NADIR_GATEWAY_TELEMETRY_RETAIN` | `100` | Max recent timing rows kept in the local DB |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Stop idle `on_demand` instances in background |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | Idle watcher evaluation interval |
 | `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` under memory pressure before load |
