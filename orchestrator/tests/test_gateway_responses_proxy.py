@@ -139,34 +139,49 @@ class GatewayResponsesProxyTests(SimpleTestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"event: response.created", response.content)
+        self.assertIn(b"response.output_item.added", response.content)
         self.assertIn(b"response.output_text.delta", response.content)
+        self.assertIn(b"response.output_text.done", response.content)
         self.assertIn(b"event: response.completed", response.content)
 
 
 class ResponsesSseTranslateUnitTests(SimpleTestCase):
     def test_map_chat_sse_line_delta(self) -> None:
-        meta = {"message_id": "msg_1", "output_index": 0, "text": ""}
-        event = _map_chat_sse_line(
+        meta = {"message_id": "msg_1", "output_index": 0, "text": "", "sequence_number": 0}
+        events = _map_chat_sse_line(
             b'data: {"choices":[{"delta":{"content":"ab"}}]}',
             meta,
         )
-        self.assertIsNotNone(event)
+        self.assertEqual(len(events), 1)
         self.assertEqual(meta["text"], "ab")
-        self.assertIn(b"response.output_text.delta", event or b"")
+        self.assertIn(b"response.output_text.delta", events[0])
+        self.assertIn(b"sequence_number", events[0])
 
     def test_map_chat_sse_line_ignores_noise(self) -> None:
-        meta = {"message_id": "msg_1", "output_index": 0, "text": ""}
-        self.assertIsNone(_map_chat_sse_line(b": comment", meta))
-        self.assertIsNone(_map_chat_sse_line(b"data: [DONE]", meta))
-        self.assertIsNone(_map_chat_sse_line(b"data: {bad", meta))
-        self.assertIsNone(_map_chat_sse_line(b"data: []", meta))
-        self.assertIsNone(
-            _map_chat_sse_line(b'data: {"choices":[{"delta":{}}]}', meta)
+        meta = {"message_id": "msg_1", "output_index": 0, "text": "", "sequence_number": 0}
+        self.assertEqual(_map_chat_sse_line(b": comment", meta), [])
+        self.assertEqual(_map_chat_sse_line(b"data: [DONE]", meta), [])
+        self.assertEqual(_map_chat_sse_line(b"data: {bad", meta), [])
+        self.assertEqual(_map_chat_sse_line(b"data: []", meta), [])
+        self.assertEqual(
+            _map_chat_sse_line(b'data: {"choices":[{"delta":{}}]}', meta),
+            [],
         )
+
+    def test_map_chat_sse_line_marks_failed_on_error_payload(self) -> None:
+        meta = {"message_id": "msg_1", "output_index": 0, "text": "", "sequence_number": 0}
+        events = _map_chat_sse_line(
+            b'data: {"error":{"message":"boom","type":"server_error"}}',
+            meta,
+        )
+        self.assertEqual(events, [])
+        self.assertTrue(meta["failed"])
+        self.assertEqual(meta["error_message"], "boom")
 
     def test_sse_event_encoding(self) -> None:
         encoded = _sse_event("ping", {"type": "ping"})
         self.assertEqual(encoded, b'event: ping\ndata: {"type":"ping"}\n\n')
+
 
 class ResponsesSseTranslateAsyncTests(IsolatedAsyncioTestCase):
     async def test_translate_chat_sse_async(self) -> None:
@@ -183,4 +198,23 @@ class ResponsesSseTranslateAsyncTests(IsolatedAsyncioTestCase):
         ]
         joined = b"".join(parts)
         self.assertIn(b"response.created", joined)
+        self.assertIn(b"response.output_item.added", joined)
+        self.assertIn(b"response.content_part.added", joined)
+        self.assertIn(b"response.output_text.done", joined)
+        self.assertIn(b"response.output_item.done", joined)
         self.assertIn(b"response.completed", joined)
+
+    async def test_translate_chat_sse_emits_failed(self) -> None:
+        async def chunks():
+            yield b'data: {"error":{"message":"upstream boom"}}\n'
+
+        parts = [
+            chunk
+            async for chunk in _translate_chat_sse_to_responses(
+                chunks(),
+                client_model_alias="demo",
+            )
+        ]
+        joined = b"".join(parts)
+        self.assertIn(b"response.failed", joined)
+        self.assertNotIn(b"response.completed", joined)

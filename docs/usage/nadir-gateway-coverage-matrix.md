@@ -20,8 +20,9 @@ Last updated: November 2026 — Ollama bootstrap + legacy embeddings (MLX-119).
 | `X-Request-Id` on responses | ✅ |
 | CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
 | Shared upstream httpx client | ✅ |
-| `POST /v1/responses` (stateless façade) | ✅ MVP (no `previous_response_id` / store) |
-| `POST /v1/messages` (Anthropic) | ✅ MVP non-stream (stream → 501) |
+| `POST /v1/responses` (stateless façade) | ✅ tools/`tool_choice`, stream lifecycle events; no `previous_response_id` / store |
+| `POST /v1/messages` (Anthropic) | ✅ JSON + SSE stream; tools / `tool_use`; thinking from `reasoning`; Anthropic error envelope |
+| `POST /v1/messages/count_tokens` | ✅ best-effort estimate (no tokenizer load) |
 | Ollama façade | ✅ `/`, `/api/version`, `/api/tags`, `/api/ps`, `/api/show`, `/api/chat`, `/api/generate`, `/api/embed` + legacy `/api/embeddings` |
 | Multi-worker uvicorn | ❌ single process by default |
 

@@ -670,6 +670,10 @@ def start_instance(
     log_file = open(log_file_path, "w", encoding="utf-8")
 
     instance = _get_or_create_instance(safe_model_name, port, launch_mode, normalized_config)
+    # Free on_demand LRU victims when unified memory is tight (MLX-112).
+    from orchestrator.instance_eviction import ensure_headroom_for_load
+
+    ensure_headroom_for_load(instance)
     cmd = _build_launch_command(model_path, port, launch_mode, normalized_config, safe_model_name)
 
     try:
