@@ -226,6 +226,8 @@ Operator guide (all launch modes — chat, embeddings, rerank, image, TTS, STT):
 
 Client recipes (Open WebUI, Continue, Cursor, Claude Code, n8n, LiteLLM): **[docs/usage/integration-recipes.md](docs/usage/integration-recipes.md)**.
 
+IDE control (list/start/stop instances via Streamable HTTP MCP): `python manage.py run_mcp` — see **[docs/usage/mcp.md](docs/usage/mcp.md)**.
+
 Health check:
 
 ```bash

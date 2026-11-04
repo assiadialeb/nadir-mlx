@@ -74,6 +74,7 @@ nav:
   - Usage:
       - Nadir Gateway: usage/nadir-gateway.md
       - Integration recipes: usage/integration-recipes.md
+      - MCP server: usage/mcp.md
       - Instance lifecycle: usage/instance-lifecycle.md
       - Server config reference: usage/server-config-reference.md
       - Quality benchmarks: usage/quality-benchmarks.md

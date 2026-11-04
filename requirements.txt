@@ -43,6 +43,7 @@ llguidance==1.7.6
 local-reranker @ git+https://github.com/olafgeibig/local-reranker.git@5449b44763923d6e493c50eef6a675b0063a662b
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
+mcp==1.30.0
 mdurl==0.1.2
 miniaudio==1.71
 misaki[en]==0.9.4

@@ -186,6 +186,31 @@ Keep `NADIR_GATEWAY_HOST=127.0.0.1` and only expose LiteLLM on the LAN (with its
 
 ---
 
+## Cursor / Claude — Nadir MCP (instance control)
+
+Agents can list/start/stop local instances via the **Streamable HTTP MCP** server:
+
+```bash
+python manage.py run_mcp   # http://127.0.0.1:11381/mcp
+```
+
+Cursor `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "nadir": {
+      "url": "http://127.0.0.1:11381/mcp",
+      "headers": { "Authorization": "Bearer change-me" }
+    }
+  }
+}
+```
+
+Full tool list and ASGI mount options: [MCP server](mcp.md).
+
+---
+
 ## Quick verification
 
 ```bash
