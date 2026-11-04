@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from typing import Any
@@ -15,18 +16,16 @@ UNSUPPORTED_RESPONSE_FIELDS = frozenset(
         "background",
         "prompt",
         "truncation",
-        "reasoning",
         "max_tool_calls",
-        "tool_choice",
     }
 )
 
 PASSTHROUGH_CHAT_FIELDS = frozenset(
+
     {
         "temperature",
         "top_p",
         "stream",
-        "tools",
         "user",
         "metadata",
         "stop",
@@ -78,10 +77,42 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         if isinstance(fmt, dict) and fmt.get("type") in {"json_object", "json_schema"}:
             chat["response_format"] = fmt
 
+    tools = body.get("tools")
+    if isinstance(tools, list) and tools:
+        chat["tools"] = [_responses_tool_to_chat(tool) for tool in tools if isinstance(tool, dict)]
+
+    if "tool_choice" in body:
+        chat["tool_choice"] = _responses_tool_choice_to_chat(body.get("tool_choice"))
+
     for key in PASSTHROUGH_CHAT_FIELDS:
         if key in body:
             chat[key] = body[key]
     return chat
+
+
+def _responses_tool_to_chat(tool: dict[str, Any]) -> dict[str, Any]:
+    if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+        return tool
+    name = tool.get("name")
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": tool.get("description") or "",
+            "parameters": tool.get("parameters") if isinstance(tool.get("parameters"), dict) else {},
+        },
+    }
+
+
+def _responses_tool_choice_to_chat(tool_choice: Any) -> Any:
+    if isinstance(tool_choice, str):
+        return tool_choice
+    if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        name = tool_choice.get("name")
+        if isinstance(tool_choice.get("function"), dict):
+            return tool_choice
+        return {"type": "function", "function": {"name": name}}
+    return tool_choice
 
 
 def _input_to_messages(input_value: Any, instructions: Any) -> list[dict[str, Any]]:
@@ -115,25 +146,63 @@ def _input_to_messages(input_value: Any, instructions: Any) -> list[dict[str, An
         raise GatewayRouteError(
             status_code=400,
             code="invalid_request",
-            message="input must include at least one user/assistant message.",
+            message="input must include at least one user/assistant/tool message.",
             param="input",
         )
     return messages
 
 
+def _normalize_role(role: str) -> str:
+    if role == "developer":
+        return "system"
+    return role
+
+
 def _coerce_input_item(item: Any) -> dict[str, Any] | None:
     if not isinstance(item, dict):
         return None
-    if item.get("type") in {None, "message"} and "role" in item:
-        role = str(item.get("role") or "user")
+    item_type = item.get("type")
+    if item_type == "function_call":
+        return _function_call_to_assistant_message(item)
+    if item_type == "function_call_output":
+        return _function_call_output_to_tool_message(item)
+    if item_type in {None, "message"} and "role" in item:
+        role = _normalize_role(str(item.get("role") or "user"))
         content = item.get("content", "")
         return {"role": role, "content": _flatten_content(content)}
     if "role" in item and "content" in item:
         return {
-            "role": str(item["role"]),
+            "role": _normalize_role(str(item["role"])),
             "content": _flatten_content(item.get("content")),
         }
     return None
+
+
+def _function_call_to_assistant_message(item: dict[str, Any]) -> dict[str, Any]:
+    call_id = str(item.get("call_id") or item.get("id") or _new_id("call"))
+    name = str(item.get("name") or "")
+    arguments = item.get("arguments")
+    if not isinstance(arguments, str):
+        arguments = json.dumps(arguments or {}, separators=(",", ":"))
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": arguments},
+            }
+        ],
+    }
+
+
+def _function_call_output_to_tool_message(item: dict[str, Any]) -> dict[str, Any]:
+    call_id = str(item.get("call_id") or "")
+    output = item.get("output")
+    if not isinstance(output, str):
+        output = json.dumps(output, separators=(",", ":")) if output is not None else ""
+    return {"role": "tool", "tool_call_id": call_id, "content": output}
 
 
 def _flatten_content(content: Any) -> Any:
@@ -151,16 +220,23 @@ def _flatten_content(content: Any) -> Any:
             texts.append(str(part["text"]))
             continue
         if part_type in {"input_image", "image_url"}:
-            parts.append(part)
+            parts.append(_normalize_image_part(part))
             continue
         parts.append(part)
     if parts:
-        converted: list[dict[str, Any]] = []
-        for text in texts:
-            converted.append({"type": "text", "text": text})
+        converted: list[dict[str, Any]] = [{"type": "text", "text": text} for text in texts]
         converted.extend(parts)
         return converted
     return "".join(texts)
+
+
+def _normalize_image_part(part: dict[str, Any]) -> dict[str, Any]:
+    image_url = part.get("image_url")
+    if isinstance(image_url, str):
+        return {"type": "image_url", "image_url": {"url": image_url}}
+    if isinstance(image_url, dict) and "url" in image_url:
+        return {"type": "image_url", "image_url": image_url}
+    return part
 
 
 def chat_completion_to_response(
@@ -169,7 +245,6 @@ def chat_completion_to_response(
     client_model_alias: str,
 ) -> dict[str, Any]:
     """Translate a chat.completion JSON body into a Responses object."""
-    text = _assistant_text_from_chat(chat_payload)
     message_id = _new_id("msg")
     response_id = str(chat_payload.get("id") or _new_id("resp")).replace(
         "chatcmpl-",
@@ -178,31 +253,72 @@ def chat_completion_to_response(
     )
     created = int(chat_payload.get("created") or time.time())
     usage = chat_payload.get("usage") if isinstance(chat_payload.get("usage"), dict) else {}
+    output = _output_items_from_chat(chat_payload, message_id=message_id)
     return {
         "id": response_id,
         "object": "response",
         "created_at": created,
         "status": "completed",
         "model": client_model_alias,
-        "output": [
-            {
-                "id": message_id,
-                "type": "message",
-                "role": "assistant",
-                "status": "completed",
-                "content": [
-                    {
-                        "type": "output_text",
-                        "text": text,
-                    }
-                ],
-            }
-        ],
+        "output": output,
         "usage": {
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
             "total_tokens": usage.get("total_tokens", 0),
         },
+    }
+
+
+def _output_items_from_chat(chat_payload: dict[str, Any], *, message_id: str) -> list[dict[str, Any]]:
+    choices = chat_payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return [_text_message_item(message_id, "")]
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return [_text_message_item(message_id, _assistant_text_from_chat(chat_payload))]
+
+    items: list[dict[str, Any]] = []
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for call in tool_calls:
+            converted = _tool_call_to_function_call_item(call)
+            if converted is not None:
+                items.append(converted)
+    text = message.get("content")
+    if isinstance(text, str) and text:
+        items.append(_text_message_item(message_id, text))
+    elif not items:
+        items.append(_text_message_item(message_id, _assistant_text_from_chat(chat_payload)))
+    return items
+
+
+def _tool_call_to_function_call_item(call: Any) -> dict[str, Any] | None:
+    if not isinstance(call, dict):
+        return None
+    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    arguments = function.get("arguments")
+    if not isinstance(arguments, str):
+        arguments = json.dumps(arguments or {}, separators=(",", ":"))
+    return {
+        "id": str(call.get("id") or _new_id("fc")),
+        "type": "function_call",
+        "call_id": str(call.get("id") or _new_id("call")),
+        "name": name,
+        "arguments": arguments,
+        "status": "completed",
+    }
+
+
+def _text_message_item(message_id: str, text: str) -> dict[str, Any]:
+    return {
+        "id": message_id,
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": text}],
     }
 
 
@@ -234,4 +350,14 @@ def build_response_stream_events(
         "model": client_model_alias,
         "output_index": output_index,
         "created_at": int(time.time()),
+        "sequence_number": 0,
+        "text": "",
+        "failed": False,
+        "error_message": "",
+        "usage": {},
     }
+
+
+def next_sequence(meta: dict[str, Any]) -> int:
+    meta["sequence_number"] = int(meta.get("sequence_number") or 0) + 1
+    return int(meta["sequence_number"])

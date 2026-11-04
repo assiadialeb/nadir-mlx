@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -17,10 +18,13 @@ def anthropic_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
     _append_system_message(messages, body.get("system"))
     for item in messages_in:
-        if not isinstance(item, dict):
+        converted = _anthropic_message_to_chat(item)
+        if converted is None:
             continue
-        role = str(item.get("role") or "user")
-        messages.append({"role": role, "content": _normalize_content(item.get("content"))})
+        if isinstance(converted, list):
+            messages.extend(converted)
+        else:
+            messages.append(converted)
 
     chat: dict[str, Any] = {
         "model": model,
@@ -28,6 +32,7 @@ def anthropic_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         "max_tokens": max_tokens,
     }
     _copy_optional_sampling_fields(chat, body)
+    _copy_tools(chat, body)
     return chat
 
 
@@ -37,25 +42,42 @@ def chat_completion_to_anthropic(
     client_model_alias: str,
 ) -> dict[str, Any]:
     """Translate chat.completion JSON into Anthropic Messages response."""
-    text = ""
+    content: list[dict[str, Any]] = []
     stop_reason = "end_turn"
     choices = chat_payload.get("choices")
+    message: dict[str, Any] = {}
     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-        message = choices[0].get("message")
-        if isinstance(message, dict) and isinstance(message.get("content"), str):
-            text = message["content"]
+        raw_message = choices[0].get("message")
+        if isinstance(raw_message, dict):
+            message = raw_message
         finish = choices[0].get("finish_reason")
-        if finish == "length":
-            stop_reason = "max_tokens"
-        elif finish == "stop":
-            stop_reason = "end_turn"
+        stop_reason = _finish_to_stop_reason(finish, message)
+
+    thinking = message.get("reasoning_content") or message.get("reasoning")
+    if isinstance(thinking, str) and thinking:
+        content.append({"type": "thinking", "thinking": thinking})
+
+    text = message.get("content")
+    if isinstance(text, str) and text:
+        content.append({"type": "text", "text": text})
+
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for call in tool_calls:
+            block = _tool_call_to_tool_use(call)
+            if block is not None:
+                content.append(block)
+
+    if not content:
+        content.append({"type": "text", "text": ""})
+
     usage = chat_payload.get("usage") if isinstance(chat_payload.get("usage"), dict) else {}
     return {
-        "id": f"msg_{uuid.uuid4().hex[:24]}",
+        "id": new_anthropic_message_id(),
         "type": "message",
         "role": "assistant",
         "model": client_model_alias,
-        "content": [{"type": "text", "text": text}],
+        "content": content,
         "stop_reason": stop_reason,
         "stop_sequence": None,
         "usage": {
@@ -63,6 +85,62 @@ def chat_completion_to_anthropic(
             "output_tokens": usage.get("completion_tokens", 0),
         },
     }
+
+
+def estimate_anthropic_token_count(body: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort token estimate for ``/v1/messages/count_tokens`` (MVP)."""
+    model = _require_model(body)
+    messages = body.get("messages") if isinstance(body.get("messages"), list) else []
+    system = body.get("system")
+    blob_parts: list[str] = []
+    if isinstance(system, str):
+        blob_parts.append(system)
+    elif isinstance(system, list):
+        blob_parts.append(_blocks_to_text(system))
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            blob_parts.append(content)
+        elif isinstance(content, list):
+            blob_parts.append(_blocks_to_text(content))
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    blob_parts.append(json.dumps(block.get("input") or {}, separators=(",", ":")))
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    blob_parts.append(str(block.get("content") or ""))
+    text = "\n".join(blob_parts)
+    # Rough heuristic without loading a tokenizer (~4 chars / token).
+    input_tokens = max(1, (len(text) + 3) // 4) if text else 0
+    return {"input_tokens": input_tokens, "model": model}
+
+
+def anthropic_error_envelope(message: str, error_type: str = "invalid_request_error") -> dict[str, Any]:
+    """Build Anthropic-shaped ``{"type":"error","error":{...}}`` payload."""
+    return {
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": message,
+        },
+    }
+
+
+def anthropic_error_type_for_code(code: str) -> str:
+    mapping = {
+        "invalid_api_key": "authentication_error",
+        "invalid_model": "invalid_request_error",
+        "invalid_request": "invalid_request_error",
+        "not_implemented": "invalid_request_error",
+        "model_not_found": "not_found_error",
+        "model_unavailable": "api_error",
+        "gateway_timeout": "api_error",
+        "bad_gateway": "api_error",
+        "gateway_error": "api_error",
+        "upstream_error": "api_error",
+    }
+    return mapping.get(code, "api_error")
 
 
 def _require_model(body: dict[str, Any]) -> str:
@@ -122,12 +200,102 @@ def _copy_optional_sampling_fields(chat: dict[str, Any], body: dict[str, Any]) -
         chat["stream"] = True
 
 
-def _normalize_content(content: Any) -> Any:
+def _copy_tools(chat: dict[str, Any], body: dict[str, Any]) -> None:
+    tools = body.get("tools")
+    if isinstance(tools, list) and tools:
+        chat["tools"] = [_anthropic_tool_to_openai(tool) for tool in tools if isinstance(tool, dict)]
+    if "tool_choice" in body:
+        chat["tool_choice"] = _anthropic_tool_choice_to_openai(body.get("tool_choice"))
+
+
+def _anthropic_tool_to_openai(tool: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.get("name"),
+            "description": tool.get("description") or "",
+            "parameters": tool.get("input_schema")
+            if isinstance(tool.get("input_schema"), dict)
+            else {},
+        },
+    }
+
+
+def _anthropic_tool_choice_to_openai(tool_choice: Any) -> Any:
+    if tool_choice == "any":
+        return "required"
+    if isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
+        return {"type": "function", "function": {"name": tool_choice.get("name")}}
+    if tool_choice in {"auto", "none"}:
+        return tool_choice
+    return tool_choice
+
+
+def _anthropic_message_to_chat(item: Any) -> dict[str, Any] | list[dict[str, Any]] | None:
+    if not isinstance(item, dict):
+        return None
+    role = str(item.get("role") or "user")
+    content = item.get("content")
+    if isinstance(content, str):
+        return {"role": role, "content": content}
+    if not isinstance(content, list):
+        return {"role": role, "content": ""}
+
+    tool_results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
+    if tool_results:
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": str(block.get("tool_use_id") or ""),
+                "content": _tool_result_content(block.get("content")),
+            }
+            for block in tool_results
+        ]
+
+    tool_uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+    text = _blocks_to_text(content)
+    images = [b for b in content if isinstance(b, dict) and b.get("type") == "image"]
+    thinking = _blocks_to_thinking(content)
+    if tool_uses:
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": text or None,
+            "tool_calls": [],
+        }
+        if thinking:
+            message["reasoning_content"] = thinking
+        for block in tool_uses:
+            message["tool_calls"].append(
+                {
+                    "id": str(block.get("id") or new_anthropic_message_id()),
+                    "type": "function",
+                    "function": {
+                        "name": str(block.get("name") or ""),
+                        "arguments": json.dumps(block.get("input") or {}, separators=(",", ":")),
+                    },
+                }
+            )
+        return message
+
+    if images:
+        result: dict[str, Any] = {"role": role, "content": _normalize_content_blocks(content)}
+        if thinking:
+            result["reasoning_content"] = thinking
+        return result
+    result = {"role": role, "content": text}
+    if thinking:
+        result["reasoning_content"] = thinking
+    return result
+
+
+def _tool_result_content(content: Any) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return _normalize_content_blocks(content)
-    return ""
+        return _blocks_to_text(content)
+    if content is None:
+        return ""
+    return json.dumps(content, separators=(",", ":"))
 
 
 def _normalize_content_blocks(content: list[Any]) -> Any:
@@ -164,3 +332,178 @@ def _blocks_to_text(blocks: list[Any]) -> str:
         elif isinstance(block, str):
             texts.append(block)
     return "".join(texts)
+
+
+def _blocks_to_thinking(blocks: list[Any]) -> str:
+    parts: list[str] = []
+    for block in blocks:
+        if isinstance(block, dict) and block.get("type") == "thinking":
+            parts.append(str(block.get("thinking") or ""))
+    return "".join(parts)
+
+
+def _finish_to_stop_reason(finish: Any, message: dict[str, Any]) -> str:
+    if finish == "length":
+        return "max_tokens"
+    if finish == "tool_calls" or (
+        isinstance(message.get("tool_calls"), list) and message.get("tool_calls")
+    ):
+        return "tool_use"
+    return "end_turn"
+
+
+def _tool_call_to_tool_use(call: Any) -> dict[str, Any] | None:
+    if not isinstance(call, dict):
+        return None
+    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    arguments = function.get("arguments")
+    parsed: Any = {}
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            parsed = {"raw": arguments}
+    elif isinstance(arguments, dict):
+        parsed = arguments
+    return {
+        "type": "tool_use",
+        "id": str(call.get("id") or new_anthropic_message_id()),
+        "name": name,
+        "input": parsed if isinstance(parsed, dict) else {"value": parsed},
+    }
+
+
+def new_anthropic_message_id() -> str:
+    return f"msg_{uuid.uuid4().hex[:24]}"
+
+
+def anthropic_sse_event(event_name: str, payload: dict[str, Any]) -> bytes:
+    """Encode one Anthropic Messages SSE event."""
+    body = json.dumps(payload, separators=(",", ":"))
+    return f"event: {event_name}\ndata: {body}\n\n".encode()
+
+
+def anthropic_stream_message_start(
+    *,
+    message_id: str,
+    client_model_alias: str,
+) -> bytes:
+    return anthropic_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": message_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": client_model_alias,
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            },
+        },
+    )
+
+
+def anthropic_stream_content_block_start() -> bytes:
+    return anthropic_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+    )
+
+
+def anthropic_stream_text_delta(text: str) -> bytes:
+    return anthropic_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": text},
+        },
+    )
+
+
+def anthropic_stream_content_block_stop() -> bytes:
+    return anthropic_sse_event(
+        "content_block_stop",
+        {"type": "content_block_stop", "index": 0},
+    )
+
+
+def anthropic_stream_message_delta(stop_reason: str) -> bytes:
+    return anthropic_sse_event(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+            "usage": {"output_tokens": 0},
+        },
+    )
+
+
+def anthropic_stream_message_stop() -> bytes:
+    return anthropic_sse_event("message_stop", {"type": "message_stop"})
+
+
+def chat_sse_delta_text(line: bytes) -> str | None:
+    """Extract assistant text delta from one OpenAI chat SSE ``data:`` line."""
+    if not line.startswith(b"data:"):
+        return None
+    raw = line[5:].strip()
+    if not raw or raw == b"[DONE]":
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return None
+    text = delta.get("content")
+    if not isinstance(text, str) or text == "":
+        return None
+    return text
+
+
+def chat_sse_finish_reason(line: bytes) -> str | None:
+    """Return OpenAI ``finish_reason`` from a chat SSE line when present."""
+    if not line.startswith(b"data:"):
+        return None
+    raw = line[5:].strip()
+    if not raw or raw == b"[DONE]":
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    finish = choices[0].get("finish_reason")
+    return finish if isinstance(finish, str) and finish else None
+
+
+def openai_finish_to_anthropic_stop(finish_reason: str | None) -> str:
+    if finish_reason == "length":
+        return "max_tokens"
+    if finish_reason == "tool_calls":
+        return "tool_use"
+    return "end_turn"
