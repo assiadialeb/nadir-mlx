@@ -31,6 +31,17 @@ def parse_cors_origins(raw: str) -> list[str]:
     return [part.strip() for part in (raw or "").split(",") if part.strip()]
 
 
+def cors_allow_credentials(origins: Sequence[str]) -> bool:
+    """Whether CORS may set ``Access-Control-Allow-Credentials``.
+
+    Always ``False`` for this gateway: clients authenticate with bearer /
+    ``X-API-Key`` headers, not cookies. This also prevents the forbidden
+    ``credentials=True`` + ``Allow-Origin: *`` combination.
+    """
+    _ = origins
+    return False
+
+
 def install_gateway_middleware(
     app: FastAPI,
     cors_origins: Sequence[str] | None = None,
@@ -38,12 +49,16 @@ def install_gateway_middleware(
     """Attach request-id (always) and optional CORS middleware."""
     app.add_middleware(RequestIdMiddleware)
     origins = list(cors_origins or [])
-    if origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-            expose_headers=[REQUEST_ID_HEADER],
-        )
+    if not origins:
+        return
+    # Wildcard cannot mix with explicit origins under credentialed CORS.
+    if "*" in origins:
+        origins = ["*"]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=cors_allow_credentials(origins),
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=[REQUEST_ID_HEADER],
+    )

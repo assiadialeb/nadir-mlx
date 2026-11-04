@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+
 from fastapi import Header
 
 from orchestrator.env_utils import env_str
@@ -19,9 +21,20 @@ def verify_gateway_api_key(
         return
 
     token = extract_bearer_token(authorization) or (x_api_key or "").strip()
-    if token != expected:
+    if not _api_keys_match(token, expected):
         raise GatewayRouteError(
             status_code=401,
             code="invalid_api_key",
             message="Invalid API key.",
         )
+
+
+def _api_keys_match(provided: str, expected: str) -> bool:
+    """Constant-time compare of API key strings."""
+    provided_bytes = provided.encode("utf-8")
+    expected_bytes = expected.encode("utf-8")
+    if len(provided_bytes) != len(expected_bytes):
+        # Keep a fixed compare against expected so length mismatch is not a no-op path.
+        hmac.compare_digest(expected_bytes, expected_bytes)
+        return False
+    return hmac.compare_digest(provided_bytes, expected_bytes)

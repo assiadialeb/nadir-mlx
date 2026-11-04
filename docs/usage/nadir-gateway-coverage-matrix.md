@@ -18,7 +18,7 @@ Last updated: November 2026 — OpenAI compatibility P0 (alias restore, stream e
 | Wake / idle stop for instances | ✅ [runbook](instance-lifecycle.md) |
 | API key auth on gateway | ✅ optional via `NADIR_GATEWAY_API_KEY` |
 | `X-Request-Id` on responses | ✅ |
-| CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
+| CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` (no credentials; `*` collapsed safely) |
 | Shared upstream httpx client | ✅ |
 | `POST /v1/responses` (stateless façade) | ✅ MVP (no `previous_response_id` / store) |
 | `POST /v1/messages` (Anthropic) | ✅ MVP non-stream (stream → 501) |

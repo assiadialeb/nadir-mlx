@@ -50,7 +50,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         first = errors[0] if errors else {}
         message = str(first.get("msg") or "Invalid request.")
         return JSONResponse(
-            status_code=422,
+            status_code=400,
             content=openai_error_envelope(
                 message,
                 "invalid_request",

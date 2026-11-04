@@ -32,6 +32,12 @@ class GatewayAuthTests(SimpleTestCase):
         self.assertEqual(ctx.exception.status_code, 401)
         self.assertEqual(ctx.exception.code, "invalid_api_key")
 
+    def test_verify_gateway_api_key_rejects_length_mismatch(self) -> None:
+        with patch.dict(os.environ, {"NADIR_GATEWAY_API_KEY": "secret"}, clear=False):
+            with self.assertRaises(GatewayRouteError) as ctx:
+                verify_gateway_api_key(authorization="Bearer se", x_api_key=None)
+        self.assertEqual(ctx.exception.code, "invalid_api_key")
+
     def test_verify_gateway_api_key_treats_blank_env_as_unconfigured(self) -> None:
         with patch.dict(os.environ, {"NADIR_GATEWAY_API_KEY": "  "}, clear=False):
             verify_gateway_api_key(authorization=None, x_api_key=None)
