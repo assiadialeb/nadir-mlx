@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
@@ -70,3 +71,21 @@ class LmEvalRunnerTests(SimpleTestCase):
         result = run_lm_eval("127.0.0.1", 11380, "alias", Path("/tmp/out"))
         self.assertTrue(result["skipped"])
         self.assertIn("langdetect", result["reason"])
+
+    @patch("orchestrator.vendor.lm_eval_runner.parse_lm_eval_output")
+    @patch("orchestrator.vendor.lm_eval_runner.subprocess.run")
+    @patch("orchestrator.vendor.lm_eval_runner.missing_industry_dependencies", return_value=[])
+    @patch("orchestrator.vendor.lm_eval_runner.is_lm_eval_available", return_value=True)
+    def test_run_lm_eval_exports_gateway_key_as_openai_api_key(
+        self,
+        _mock_available: object,
+        _mock_deps: object,
+        mock_run: MagicMock,
+        mock_parse: MagicMock,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
+        mock_parse.return_value = {"tasks": {}, "source": "lm_eval"}
+        with patch.dict(os.environ, {"NADIR_GATEWAY_API_KEY": "bench-secret"}, clear=False):
+            run_lm_eval("127.0.0.1", 11380, "alias", Path("/tmp/out"))
+        env = mock_run.call_args.kwargs.get("env") or {}
+        self.assertEqual(env.get("OPENAI_API_KEY"), "bench-secret")

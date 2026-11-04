@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -9,6 +10,7 @@ from django.test import SimpleTestCase
 from orchestrator.vendor.qualitybench import (
     load_suite,
     run_platform_suites,
+    run_suite_case,
     score_response,
 )
 
@@ -53,3 +55,22 @@ class QualitybenchRunTests(SimpleTestCase):
         payload = result["suites"]["text_platform"]
         self.assertEqual(payload["total"], len(suite["cases"]))
         self.assertGreaterEqual(payload["pass_rate"], 0.0)
+
+    @patch("orchestrator.vendor.qualitybench.httpx.post")
+    def test_run_suite_case_sends_gateway_api_key(self, mock_post: MagicMock) -> None:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "choices": [{"message": {"content": "YES"}}],
+        }
+        mock_post.return_value = response
+        case = {
+            "id": "auth",
+            "prompt": "Say YES",
+            "max_tokens": 8,
+            "scorer": {"type": "regex", "pattern": "^YES$"},
+        }
+        with patch.dict(os.environ, {"NADIR_GATEWAY_API_KEY": "bench-secret"}, clear=False):
+            run_suite_case("127.0.0.1", 11380, "alias", case)
+        headers = mock_post.call_args.kwargs.get("headers") or {}
+        self.assertEqual(headers.get("Authorization"), "Bearer bench-secret")

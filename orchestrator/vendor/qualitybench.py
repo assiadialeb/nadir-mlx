@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from orchestrator.gateway_client_auth import gateway_auth_headers
 from orchestrator.security_utils import (
     build_validated_http_url,
     validated_launch_port,
@@ -134,7 +135,12 @@ def run_suite_case(
         "temperature": 0,
         "max_tokens": int(case.get("max_tokens", 128)),
     }
-    response = httpx.post(url, json=payload, timeout=timeout_seconds)
+    response = httpx.post(
+        url,
+        json=payload,
+        headers=gateway_auth_headers(),
+        timeout=timeout_seconds,
+    )
     response.raise_for_status()
     body = response.json()
     content = (
