@@ -95,8 +95,10 @@ If you call a route with an alias whose launch mode does not match (e.g. chat on
 | Setting | Value |
 |---------|--------|
 | **API Base** | `http://127.0.0.1:11380/v1` (host) or `http://host.docker.internal:11380/v1` (client in Docker on macOS) |
-| **API Key** | Any non-empty string (`sk-local`) — gateway does not validate keys today |
+| **API Key** | Optional on loopback; required when `NADIR_GATEWAY_API_KEY` is set (`Authorization: Bearer` or `X-API-Key`). Placeholders like `sk-local` work only if no key is configured. |
 | **Model** | Gateway alias exactly as shown in the UI or `GET /v1/models` |
+
+Copy-paste setups for Open WebUI, Continue, Cursor, Claude Code, n8n, and LiteLLM (team keys / metrics): **[Integration recipes](integration-recipes.md)**.
 
 Example with the OpenAI Python SDK:
 

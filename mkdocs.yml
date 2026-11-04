@@ -73,6 +73,7 @@ nav:
       - Troubleshooting: troubleshooting.md
   - Usage:
       - Nadir Gateway: usage/nadir-gateway.md
+      - Integration recipes: usage/integration-recipes.md
       - Instance lifecycle: usage/instance-lifecycle.md
       - Server config reference: usage/server-config-reference.md
       - Quality benchmarks: usage/quality-benchmarks.md
