@@ -139,6 +139,27 @@ class InstanceHealthTests(TestCase):
         with patch.dict("os.environ", {"MLX_DISABLE_INSTANCE_WATCHDOG": "1"}):
             self.assertTrue(should_skip_watchdog())
 
+    def test_should_skip_watchdog_for_serve_and_run_mcp(self) -> None:
+        with patch.dict("os.environ", {"MLX_DISABLE_INSTANCE_WATCHDOG": "0"}, clear=False):
+            with patch("sys.argv", ["manage.py", "serve"]):
+                self.assertTrue(should_skip_watchdog())
+            with patch("sys.argv", ["manage.py", "run_mcp", "--port", "11381"]):
+                self.assertTrue(should_skip_watchdog())
+
+    def test_should_skip_watchdog_when_owner_gateway_and_not_gateway(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MLX_DISABLE_INSTANCE_WATCHDOG": "0",
+                "NADIR_BACKGROUND_OWNER": "gateway",
+            },
+            clear=False,
+        ):
+            with patch("sys.argv", ["manage.py", "runserver", "127.0.0.1:8000"]):
+                self.assertTrue(should_skip_watchdog())
+            with patch("sys.argv", ["manage.py", "run_gateway"]):
+                self.assertFalse(should_skip_watchdog())
+
 
 class InstanceWatchdogConfigTests(TestCase):
     def test_auto_restart_enabled_reads_ops_block(self) -> None:

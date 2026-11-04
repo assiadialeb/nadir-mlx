@@ -6,6 +6,11 @@ class OrchestratorConfig(AppConfig):
     name = 'orchestrator'
 
     def ready(self) -> None:
+        from orchestrator.serve_supervisor import start_parent_death_watch_if_needed
+
+        # Orphaned serve children exit when the parent is SIGKILL'd / OOM'd.
+        start_parent_death_watch_if_needed()
+
         from orchestrator.instance_health import should_skip_watchdog
 
         if should_skip_watchdog():

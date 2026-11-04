@@ -62,7 +62,7 @@ Omit `headers` when no `NADIR_MCP_API_KEY` / `NADIR_GATEWAY_API_KEY` is set (loo
 | `NADIR_MCP_PORT` | `11381` | Bind port for `run_mcp` |
 | `NADIR_MCP_PATH` | `/mcp` | URL path |
 | `NADIR_MCP_API_KEY` | — | Auth for MCP (falls back to gateway key) |
-| `NADIR_MCP_ENABLED` | `false` | Opt-in mount of `/mcp` on Django ASGI (`uvicorn`) |
+| `NADIR_MCP_ENABLED` | `false` | Opt-in mount of `/mcp` on Django ASGI only — does **not** affect `run_mcp` / `serve --with-mcp` |
 | `NADIR_MCP_ALLOWED_HOSTS` | — | Extra Host values (loopback always allowed) |
 | `NADIR_MCP_CORS_ORIGINS` | — | Allowed browser `Origin` values; empty rejects any `Origin` |
 
