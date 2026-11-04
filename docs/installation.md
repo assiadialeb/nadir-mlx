@@ -67,17 +67,21 @@ Edit `.env` as needed. See [Configuration](configuration.md) for all variables.
 
 PostgreSQL is optional — SQLite is the default when `NADIR_DB_HOST` is unset.
 
-## 6. Initialize the database
-
-```bash
-python manage.py migrate
-python manage.py createsuperuser
-```
-
-## 7. Start UI + gateway (one command)
+## 6. Start UI + gateway (one command)
 
 ```bash
 python manage.py serve
+```
+
+On first run, `serve`:
+
+- generates `DJANGO_SECRET_KEY` into `data/django_secret_key` (mode `600`) when unset
+- runs `migrate` before starting children
+
+You can still set `DJANGO_SECRET_KEY` in `.env` yourself. Create an admin when ready:
+
+```bash
+python manage.py createsuperuser
 ```
 
 This supervises:
@@ -108,7 +112,7 @@ Full operator guide: [Nadir Gateway](usage/nadir-gateway.md). Client recipes: [I
 
 Use **`http://127.0.0.1:11380/v1`** as `api_base` in your client. Pass the **gateway alias** (shown on each server card) in the `model` field.
 
-## 8. Download and launch a model
+## 7. Download and launch a model
 
 1. Go to **Search** and find a model (e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit`)
 2. Click **Download** — files land in `./models/<model-name>/`

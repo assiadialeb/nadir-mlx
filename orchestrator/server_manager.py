@@ -572,6 +572,11 @@ def _get_launch_env(
     model_name: str = "",
 ) -> dict[str, str]:
     env = os.environ.copy()
+    # Serve supervisor vars must not reach MLX workers (wrong ppid / ownership).
+    from orchestrator.serve_supervisor import BACKGROUND_OWNER_ENV, SERVE_PARENT_PID_ENV
+
+    env.pop(BACKGROUND_OWNER_ENV, None)
+    env.pop(SERVE_PARENT_PID_ENV, None)
     if launch_mode in ("TEXT", "MULTIMODAL"):
         env["NADIR_GATEWAY_ALIAS"] = _config_model_id(server_config, model_name)
     if launch_mode in ("IMAGE", "TTS", "STT"):

@@ -193,25 +193,18 @@ See [docs/usage/quality-benchmarks.md](docs/usage/quality-benchmarks.md) for pre
 cp .env.example .env
 ```
 
-Edit `.env` as needed. Minimal local setup works with defaults; production-like installs should set `DJANGO_SECRET_KEY` and `DJANGO_DEBUG=false` with matching `DJANGO_CSRF_TRUSTED_ORIGINS`.
+Edit `.env` as needed. Optional for a quick local start: if `DJANGO_SECRET_KEY` is unset, the first process generates `data/django_secret_key` (mode `600`). Production-like installs should set an explicit key and `DJANGO_DEBUG=false` with matching `DJANGO_CSRF_TRUSTED_ORIGINS`.
 
 PostgreSQL is optional — SQLite is the default when `NADIR_DB_HOST` is unset. For production or multi-user setups, point `NADIR_DATABASE_URL` or the `NADIR_DB_*` variables at an external PostgreSQL instance. See `.env.example`.
 
-### 6. Initialize the database
-
-```bash
-python manage.py migrate
-python manage.py createsuperuser
-```
-
-### 7. Start UI + gateway
+### 6. Start UI + gateway
 
 ```bash
 python manage.py serve
 # optional MCP: python manage.py serve --with-mcp
 ```
 
-One command starts the Django UI (**8000**) and the OpenAI-compatible gateway (**11380**). Ctrl+C stops both. Separate `runserver` / `run_gateway` terminals still work if you prefer.
+`serve` runs `migrate` automatically, then starts the Django UI (**8000**) and the OpenAI-compatible gateway (**11380**). Ctrl+C stops both. Create an admin when ready: `python manage.py createsuperuser`. Separate `runserver` / `run_gateway` terminals still work if you prefer.
 
 Open **http://127.0.0.1:8000** and sign in with your superuser account.
 
