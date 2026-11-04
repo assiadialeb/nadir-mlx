@@ -207,6 +207,32 @@ class StartInstanceTests(DjangoTestCase):
             with self.assertRaises(ValueError):
                 start_instance("ghost-model", port=11455)
 
+    @patch(
+        "orchestrator.instance_eviction.ensure_headroom_for_load",
+        side_effect=RuntimeError("no headroom"),
+    )
+    @patch("orchestrator.server_manager.is_port_free", return_value=True)
+    @patch("orchestrator.server_manager._terminate_launchers_on_port")
+    @patch("orchestrator.server_manager._prepare_model_for_launch")
+    @patch("orchestrator.server_manager.is_model_complete", return_value=True)
+    @patch("orchestrator.server_manager.resolve_model_dir")
+    def test_start_instance_marks_failed_when_pre_popen_raises(
+        self,
+        mock_resolve: MagicMock,
+        _mock_complete: MagicMock,
+        _mock_prepare: MagicMock,
+        _mock_terminate: MagicMock,
+        _mock_port_free: MagicMock,
+        _mock_headroom: MagicMock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as model_dir:
+            mock_resolve.return_value = Path(model_dir)
+            with self.assertRaises(RuntimeError):
+                start_instance("demo-model", port=11457, launch_mode="TEXT")
+        row = InferenceInstance.objects.get(model_name="demo-model", port=11457)
+        self.assertEqual(row.status, "FAILED")
+        self.assertIsNone(row.pid)
+
 
 class DeleteAndRestartTests(DjangoTestCase):
     @patch("orchestrator.server_manager.stop_instance")

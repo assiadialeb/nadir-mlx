@@ -12,6 +12,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from orchestrator.instance_health import refresh_all_instance_health, should_skip_watchdog
+from orchestrator.lifecycle_selectors import is_manual_lifecycle
 from orchestrator.models import InferenceInstance
 from orchestrator.server_manager import is_manual_stop_in_progress, restart_instance
 
@@ -69,6 +70,8 @@ def _persist_ops(instance: InferenceInstance, ops: dict[str, Any]) -> None:
 
 def _attempt_auto_restart(instance: InferenceInstance) -> None:
     if is_manual_stop_in_progress(instance):
+        return
+    if is_manual_lifecycle(instance.server_config):
         return
     if not _auto_restart_enabled(instance):
         return

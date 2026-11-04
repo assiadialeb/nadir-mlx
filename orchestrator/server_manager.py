@@ -5,6 +5,7 @@ import re
 import socket
 import subprocess
 import signal
+import threading
 import time
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -599,6 +600,20 @@ def _get_launch_env(
     return env
 
 
+_port_start_locks: dict[int, threading.Lock] = {}
+_port_start_locks_guard = threading.Lock()
+
+
+def _port_start_lock(port: int) -> threading.Lock:
+    """Return a per-port lock so concurrent starts cannot race on the same slot."""
+    with _port_start_locks_guard:
+        lock = _port_start_locks.get(port)
+        if lock is None:
+            lock = threading.Lock()
+            _port_start_locks[port] = lock
+        return lock
+
+
 def _find_reusable_instance(model_name: str, port: int) -> InferenceInstance | None:
     """Return a stopped or failed instance row that can be relaunched on the same slot."""
     return (
@@ -610,6 +625,15 @@ def _find_reusable_instance(model_name: str, port: int) -> InferenceInstance | N
         .order_by("-created_at")
         .first()
     )
+
+
+def _mark_instance_start_failed(instance: InferenceInstance | None) -> None:
+    """Roll back a LOADING row when launch fails before RUNNING."""
+    if instance is None or instance.status == "FAILED":
+        return
+    instance.status = "FAILED"
+    instance.pid = None
+    instance.save(update_fields=["status", "pid"])
 
 
 def _get_or_create_instance(
@@ -661,6 +685,27 @@ def start_instance(
     else:
         port = validated_launch_port(int(port))
 
+    with _port_start_lock(port):
+        return _start_instance_locked(
+            safe_model_name=safe_model_name,
+            model_path=model_path,
+            port=port,
+            launch_mode=launch_mode,
+            server_config=server_config,
+            model_name=model_name,
+        )
+
+
+def _start_instance_locked(
+    *,
+    safe_model_name: str,
+    model_path: str,
+    port: int,
+    launch_mode: LaunchMode,
+    server_config: dict[str, Any] | None,
+    model_name: str,
+) -> InferenceInstance:
+    """Launch one instance while holding the per-port start lock."""
     reusable = _find_reusable_instance(safe_model_name, port)
     normalized_config = _resolve_server_config(
         launch_mode,
@@ -676,15 +721,19 @@ def start_instance(
     os.makedirs(settings.LOGS_DIR, exist_ok=True)
     log_file_path = str(resolve_log_file_path(safe_model_name, port))
     log_file = open(log_file_path, "w", encoding="utf-8")
-
-    instance = _get_or_create_instance(safe_model_name, port, launch_mode, normalized_config)
-    # Free on_demand LRU victims when unified memory is tight (MLX-112).
-    from orchestrator.instance_eviction import ensure_headroom_for_load
-
-    ensure_headroom_for_load(instance)
-    cmd = _build_launch_command(model_path, port, launch_mode, normalized_config, safe_model_name)
+    instance: InferenceInstance | None = None
 
     try:
+        instance = _get_or_create_instance(
+            safe_model_name, port, launch_mode, normalized_config
+        )
+        # Free on_demand LRU victims when unified memory is tight (MLX-112).
+        from orchestrator.instance_eviction import ensure_headroom_for_load
+
+        ensure_headroom_for_load(instance)
+        cmd = _build_launch_command(
+            model_path, port, launch_mode, normalized_config, safe_model_name
+        )
         process = subprocess.Popen(
             cmd,
             stdout=log_file,
@@ -722,9 +771,7 @@ def start_instance(
         maybe_run_load_warmup(instance)
         return instance
     except Exception:
-        if instance.status != "FAILED":
-            instance.status = "FAILED"
-            instance.save(update_fields=["status"])
+        _mark_instance_start_failed(instance)
         raise
     finally:
         log_file.close()
@@ -874,6 +921,11 @@ def stop_instance(instance: InferenceInstance) -> None:
         mark_instance_needs_warmup(instance.pk)
     except Exception:
         _set_manual_stop_in_progress(instance, active=False)
+        # Process may already be dead while status still says RUNNING; fail closed.
+        instance.pid = None
+        instance.status = "FAILED"
+        instance.stopped_at = timezone.now()
+        instance.save(update_fields=["status", "pid", "stopped_at"])
         raise
 
 

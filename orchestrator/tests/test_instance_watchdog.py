@@ -88,6 +88,19 @@ class InstanceWatchdogAutoRestartTests(TestCase):
         self.instance.refresh_from_db()
         self.assertEqual(self.instance.server_config["ops"]["restart_attempts"], 1)
 
+    @patch("orchestrator.instance_watchdog.restart_instance")
+    def test_attempt_auto_restart_skips_manual_lifecycle(
+        self,
+        mock_restart: MagicMock,
+    ) -> None:
+        config = dict(self.instance.server_config)
+        config["ops"] = {**config["ops"], "lifecycle_mode": "manual"}
+        self.instance.server_config = config
+        self.instance.save(update_fields=["server_config"])
+
+        _attempt_auto_restart(self.instance)
+        mock_restart.assert_not_called()
+
     @patch("orchestrator.instance_watchdog.restart_instance", side_effect=RuntimeError("boom"))
     def test_attempt_auto_restart_records_failure_and_freeze(
         self,

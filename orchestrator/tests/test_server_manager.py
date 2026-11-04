@@ -106,6 +106,8 @@ class ServerManagerStopTests(TestCase):
         with self.assertRaises(RuntimeError):
             stop_instance(instance)
         mock_stop_flag.assert_any_call(instance, active=False)
+        self.assertEqual(instance.status, "FAILED")
+        self.assertIsNone(instance.pid)
 
 
 class ServerManagerLogFailureTests(TestCase):
