@@ -74,12 +74,18 @@ def httpx_client_timeout() -> httpx.Timeout:
 
 
 def forward_request_headers(headers: Any) -> dict[str, str]:
+    from orchestrator.env_utils import env_str
+
     forwarded: dict[str, str] = {}
     for key, value in headers.items():
         if key.lower() in FORWARD_REQUEST_HEADERS:
             forwarded[key] = value
     if "content-type" not in {name.lower() for name in forwarded}:
         forwarded["content-type"] = CONTENT_TYPE_JSON
+    # Inject worker auth when configured (image/stt/embedding/tts Nadir servers).
+    inference_key = env_str("NADIR_INFERENCE_API_KEY", "")
+    if inference_key:
+        forwarded["authorization"] = f"Bearer {inference_key}"
     return forwarded
 
 

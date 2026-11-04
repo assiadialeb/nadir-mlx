@@ -54,8 +54,11 @@ SQLite is used when no PostgreSQL host is configured.
 | `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` instances before a load when memory is tight |
 | `NADIR_MEMORY_RESERVE_GB` | `4` | Keep this much free memory (GiB) when evaluating LRU eviction |
 | `NADIR_GATEWAY_PUBLIC_BASE_URL` | `http://127.0.0.1:11380` | Base URL for generated image links |
-| `NADIR_GATEWAY_API_KEY` | — | Optional gateway API key (`Authorization: Bearer` or `X-API-Key`) |
-| `NADIR_GATEWAY_CORS_ORIGINS` | — | Comma-separated browser origins; empty disables CORS |
+| `NADIR_GATEWAY_API_KEY` | — | Required when binding outside loopback; `Authorization: Bearer` or `X-API-Key` |
+| `NADIR_INFERENCE_API_KEY` | — | Optional auth for Nadir workers (image/stt/embedding/tts); gateway injects it upstream. mlx-lm/mlx-vlm remain loopback-only. |
+| `NADIR_GATEWAY_CORS_ORIGINS` | — | Allowed browser `Origin` values; empty rejects any `Origin` (CLI/SDK without Origin still work) |
+| `NADIR_GATEWAY_ALLOWED_HOSTS` | — | Extra `Host` values for TrustedHostMiddleware (beyond localhost / 127.0.0.1 / `[::1]`) |
+| `NADIR_GATEWAY_MAX_BODY_MB` | `50` | Reject requests whose `Content-Length` exceeds this size |
 
 Per-instance overrides (lifecycle, idle minutes, concurrency) are set in **server config** in the UI. See [Server config reference](usage/server-config-reference.md).
 

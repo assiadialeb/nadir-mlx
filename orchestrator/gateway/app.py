@@ -12,7 +12,11 @@ from django.conf import settings
 from orchestrator.gateway.auth import verify_gateway_api_key
 from orchestrator.gateway.errors import openai_error_envelope
 from orchestrator.gateway.http_client import gateway_lifespan
-from orchestrator.gateway.middleware import install_gateway_middleware, parse_cors_origins
+from orchestrator.gateway.middleware import (
+    expose_gateway_docs,
+    install_gateway_middleware,
+    parse_cors_origins,
+)
 from orchestrator.gateway.router import GatewayRouteError
 from orchestrator.gateway.routes.anthropic import router as anthropic_router
 from orchestrator.gateway.routes.chat import router as chat_router
@@ -98,11 +102,15 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     """Build the gateway FastAPI application."""
+    docs_enabled = expose_gateway_docs()
     app = FastAPI(
         title="Nadir Gateway",
         description="OpenAI-compatible proxy for local MLX inference instances.",
         version="0.1.0",
         lifespan=gateway_lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
     install_gateway_middleware(
         app,
@@ -112,15 +120,18 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def gateway_health() -> dict[str, str]:
-        return {
+        payload = {
             "status": "ok",
             "service": "nadir-gateway",
-            "docs": "/docs",
             "models": "/v1/models",
         }
+        if docs_enabled:
+            payload["docs"] = "/docs"
+        return payload
 
     app.include_router(models_router, dependencies=[Depends(verify_gateway_api_key)])
-    app.include_router(image_files_router, dependencies=[Depends(verify_gateway_api_key)])
+    # Image file ids are unguessable uuid4 values; allow <img src> without API key.
+    app.include_router(image_files_router)
     app.include_router(chat_router, dependencies=[Depends(verify_gateway_api_key)])
     app.include_router(modes_router, dependencies=[Depends(verify_gateway_api_key)])
     app.include_router(responses_router, dependencies=[Depends(verify_gateway_api_key)])

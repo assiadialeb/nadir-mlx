@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -139,6 +140,11 @@ class HttpProxyUtilityTests(TestCase):
     def test_forward_request_headers_adds_json_content_type(self) -> None:
         headers = forward_request_headers({"Accept": "application/json"})
         self.assertEqual(headers["content-type"], "application/json")
+
+    def test_forward_request_headers_injects_inference_api_key(self) -> None:
+        with patch.dict(os.environ, {"NADIR_INFERENCE_API_KEY": "worker-secret"}, clear=False):
+            headers = forward_request_headers({"Accept": "application/json"})
+        self.assertEqual(headers["authorization"], "Bearer worker-secret")
 
     def test_passthrough_response_headers_skips_hop_by_hop(self) -> None:
         upstream = httpx.Headers(

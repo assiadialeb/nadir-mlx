@@ -152,11 +152,12 @@
 </div>
 
 <script src="{% static 'orchestrator/vendor/chart.umd.min.js' %}"></script>
+{{ status_payload|json_script:"benchmark-status-payload" }}
 <script>
 (function () {
     const statusUrl = "{% url 'benchmark_status' run.id %}";
     const needsLiveUpdate = {{ needs_live_update|yesno:"true,false" }};
-    const initialPayload = {{ status_payload_json|safe }};
+    const initialPayload = JSON.parse(document.getElementById("benchmark-status-payload").textContent);
     let chartInstances = {};
     let pollTimer = null;
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
+import logging
 import os
 import re
 from pathlib import Path
@@ -11,6 +13,8 @@ from urllib.parse import urlencode, urlparse
 
 from django.conf import settings
 from django.urls import reverse
+
+logger = logging.getLogger(__name__)
 
 _BLOCKED_OUTBOUND_HOSTS = frozenset(
     {
@@ -33,6 +37,29 @@ def extract_bearer_token(authorization: str | None) -> str:
     if value.lower().startswith("bearer "):
         return value[7:].strip()
     return value
+
+
+def api_keys_match(provided: str, expected: str) -> bool:
+    """Constant-time compare of API key strings."""
+    provided_bytes = provided.encode("utf-8")
+    expected_bytes = expected.encode("utf-8")
+    if len(provided_bytes) != len(expected_bytes):
+        hmac.compare_digest(expected_bytes, expected_bytes)
+        return False
+    return hmac.compare_digest(provided_bytes, expected_bytes)
+
+
+def is_loopback_bind_host(host: str) -> bool:
+    """Return True when ``host`` is a loopback bind/connect address."""
+    cleaned = (host or "").strip().strip("[]")
+    if not cleaned:
+        return False
+    if cleaned.lower() in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(cleaned).is_loopback
+    except ValueError:
+        return False
 
 
 def public_error_message(
@@ -84,9 +111,21 @@ def validate_server_bind_host(host: str) -> str:
     except ValueError:
         if not _HOSTNAME_PATTERN.fullmatch(cleaned):
             raise ValueError("Invalid host.") from None
+        logger.warning(
+            "Inference bind host %r is a hostname (not loopback); "
+            "mlx-lm/mlx-vlm have no auth — prefer 127.0.0.1 behind the gateway.",
+            cleaned,
+        )
         return cleaned
 
-    if address.is_loopback or address.is_private:
+    if address.is_loopback:
+        return cleaned
+    if address.is_private:
+        logger.warning(
+            "Inference bind host %s is reachable beyond loopback; "
+            "mlx-lm/mlx-vlm have no auth — prefer 127.0.0.1 behind the gateway.",
+            cleaned,
+        )
         return cleaned
     if address.is_link_local or address.is_multicast or address.is_reserved:
         raise ValueError("Host is not allowed.")

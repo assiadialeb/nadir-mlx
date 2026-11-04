@@ -9,6 +9,7 @@ from django.contrib import messages
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.http import require_POST
 from .models import InferenceInstance, BenchmarkRun, ModelDownload
 from .downloader import start_model_download
 from .model_lifecycle import delete_installed_model
@@ -91,22 +92,47 @@ def _ensure_downloads_reconciled() -> None:
 
 
 # Authentication Views
+_LOGIN_THROTTLE_LIMIT = 8
+_LOGIN_THROTTLE_WINDOW_SECONDS = 300
+
+
+def _login_throttle_key(request, username: str) -> str:
+    ip = request.META.get("REMOTE_ADDR") or "unknown"
+    return f"nadir-login:{ip}:{username.strip().lower()}"
+
+
 def login_view(request):
     if request.user.is_authenticated:
         return redirect('servers')
-    
+
     if request.method == 'POST':
-        username = request.POST.get('username')
+        from django.core.cache import cache
+
+        username = request.POST.get('username') or ""
         password = request.POST.get('password')
+        throttle_key = _login_throttle_key(request, username)
+        attempts = int(cache.get(throttle_key) or 0)
+        if attempts >= _LOGIN_THROTTLE_LIMIT:
+            messages.error(request, "Too many login attempts. Try again later.")
+            return render(request, 'orchestrator/login.html')
+
         user = authenticate(request, username=username, password=password)
         if user is not None:
+            cache.delete(throttle_key)
             login(request, user)
             return redirect('servers')
-        else:
-            messages.error(request, "Invalid username or password.")
-            
+
+        cache.set(
+            throttle_key,
+            attempts + 1,
+            timeout=_LOGIN_THROTTLE_WINDOW_SECONDS,
+        )
+        messages.error(request, "Invalid username or password.")
+
     return render(request, 'orchestrator/login.html')
 
+
+@require_POST
 def logout_view(request):
     logout(request)
     return redirect('login')
@@ -254,21 +280,25 @@ def servers_view(request):
     installed_models = list_installed_models()
     installed_names = [model["name"] for model in installed_models]
     instances = InferenceInstance.objects.all().order_by('-created_at')
+    instance_configs: dict[str, dict] = {}
     for instance in instances:
         refresh_instance_health(instance)
-        instance.server_config_json = json.dumps(instance.server_config or {})
         enrich_instance_lifecycle_ui(instance)
+        instance_configs[str(instance.id)] = instance.server_config or {}
 
     return render(request, 'orchestrator/servers.html', {
         'instances': instances,
         'server_types': SERVER_TYPES,
-        'models_by_mode_json': models_by_server_type_json(installed_models),
-        'config_fields_json': config_fields_for_ui_json(),
-        'advanced_keys_json': advanced_keys_for_ui_json(),
-        'registry_defaults_json': build_registry_defaults_json(installed_names),
-        'registry_metadata_json': build_registry_metadata_json(installed_names),
-        'perf_profiles_json': perf_profiles_for_ui_json(installed_names),
-        'mtp_assistant_suggestions_json': mtp_assistant_suggestions_for_ui_json(installed_names),
+        'models_by_mode': json.loads(models_by_server_type_json(installed_models)),
+        'config_fields': json.loads(config_fields_for_ui_json()),
+        'advanced_keys': json.loads(advanced_keys_for_ui_json()),
+        'registry_defaults': json.loads(build_registry_defaults_json(installed_names)),
+        'registry_metadata': json.loads(build_registry_metadata_json(installed_names)),
+        'perf_profiles': json.loads(perf_profiles_for_ui_json(installed_names)),
+        'mtp_assistant_suggestions': json.loads(
+            mtp_assistant_suggestions_for_ui_json(installed_names)
+        ),
+        'instance_configs': instance_configs,
     })
 
 
@@ -527,7 +557,7 @@ def benchmark_detail_view(request, run_id: int):
         "waiting_message": benchmark_detail_phase_message(run, perf_child, quality_child),
         "needs_live_update": needs_live_update,
         "render_ready": render_ready,
-        "status_payload_json": json.dumps(status_payload),
+        "status_payload": status_payload,
         "history_model_query": benchmark_history_model_query(run),
     })
 
@@ -588,7 +618,7 @@ def benchmark_history_view(request):
         "page_obj": page_obj,
         "filter_options": list_filter_options(),
         "preset_keys": list_distinct_preset_keys(BenchmarkRun.objects.all()),
-        "chart_data_json": json.dumps(chart_data),
+        "chart_data": chart_data,
         "history_query": build_benchmark_history_query(
             **{**filters, "page": None},
         ),
@@ -614,13 +644,13 @@ def benchmark_compare_view(request):
     run_b_id = str(request.GET.get("run_b") or "").strip()
     run_a = run_b = None
     rows: list[dict] = []
-    chart_overlay_json = "{}"
+    chart_overlay: dict = {}
 
     if run_a_id.isdigit() and run_b_id.isdigit():
         run_a = get_object_or_404(BenchmarkRun, id=int(run_a_id), status="COMPLETED")
         run_b = get_object_or_404(BenchmarkRun, id=int(run_b_id), status="COMPLETED")
         rows = comparison_rows(run_a, run_b)
-        chart_overlay_json = json.dumps(_comparison_chart_payload(run_a, run_b, gateway_port))
+        chart_overlay = _comparison_chart_payload(run_a, run_b, gateway_port)
 
     completed_runs = list(completed.order_by("-completed_at")[:100])
     completed_run_options = [
@@ -650,7 +680,7 @@ def benchmark_compare_view(request):
         "run_a": run_a,
         "run_b": run_b,
         "comparison_rows": rows,
-        "chart_overlay_json": chart_overlay_json,
+        "chart_overlay": chart_overlay,
         "preset_keys": list_distinct_preset_keys(completed),
     })
 
