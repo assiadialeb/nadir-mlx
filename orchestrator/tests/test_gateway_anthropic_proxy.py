@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from orchestrator.gateway.app import create_app
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, GatewayTarget
+from orchestrator.gateway.services.anthropic_proxy import _translate_chat_sse_to_anthropic
 
 TEXT_TARGET = GatewayTarget(
     alias="demo-chat",
@@ -66,7 +68,30 @@ class GatewayAnthropicProxyTests(SimpleTestCase):
         self.assertEqual(payload["content"][0]["text"], "Hello")
         self.assertEqual(payload["model"], "demo-chat")
 
-    def test_messages_stream_returns_501(self) -> None:
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_messages_stream_translates_sse(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        async def chunk_stream():
+            yield (
+                b'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}\n'
+                b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n'
+                b"data: [DONE]\n\n"
+            )
+
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.aiter_bytes = chunk_stream
+        upstream.aclose = AsyncMock()
+
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
         response = self.client.post(
             "/v1/messages",
             json={
@@ -76,8 +101,12 @@ class GatewayAnthropicProxyTests(SimpleTestCase):
                 "messages": [{"role": "user", "content": "Hi"}],
             },
         )
-        self.assertEqual(response.status_code, 501)
-        self.assertEqual(response.json()["error"]["code"], "not_implemented")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"event: message_start", response.content)
+        self.assertIn(b"content_block_delta", response.content)
+        self.assertIn(b"text_delta", response.content)
+        self.assertIn(b"event: message_stop", response.content)
+        self.assertNotIn(b"not_implemented", response.content)
 
     def test_messages_invalid_json_returns_400(self) -> None:
         response = self.client.post(
@@ -113,3 +142,24 @@ class GatewayAnthropicProxyTests(SimpleTestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
+
+
+class AnthropicStreamTranslateAsyncTests(IsolatedAsyncioTestCase):
+    async def test_translate_chat_sse_emits_anthropic_lifecycle(self) -> None:
+        async def chunks():
+            yield b'data: {"choices":[{"delta":{"content":"Z"},"finish_reason":null}]}\n'
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n'
+
+        parts = [
+            chunk
+            async for chunk in _translate_chat_sse_to_anthropic(
+                chunks(),
+                client_model_alias="demo",
+            )
+        ]
+        joined = b"".join(parts)
+        self.assertIn(b"message_start", joined)
+        self.assertIn(b"content_block_start", joined)
+        self.assertIn(b"text_delta", joined)
+        self.assertIn(b"max_tokens", joined)
+        self.assertIn(b"message_stop", joined)

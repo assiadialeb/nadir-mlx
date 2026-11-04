@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -164,3 +165,134 @@ def _blocks_to_text(blocks: list[Any]) -> str:
         elif isinstance(block, str):
             texts.append(block)
     return "".join(texts)
+
+
+def new_anthropic_message_id() -> str:
+    return f"msg_{uuid.uuid4().hex[:24]}"
+
+
+def anthropic_sse_event(event_name: str, payload: dict[str, Any]) -> bytes:
+    """Encode one Anthropic Messages SSE event."""
+    body = json.dumps(payload, separators=(",", ":"))
+    return f"event: {event_name}\ndata: {body}\n\n".encode()
+
+
+def anthropic_stream_message_start(
+    *,
+    message_id: str,
+    client_model_alias: str,
+) -> bytes:
+    return anthropic_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": message_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": client_model_alias,
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            },
+        },
+    )
+
+
+def anthropic_stream_content_block_start() -> bytes:
+    return anthropic_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+    )
+
+
+def anthropic_stream_text_delta(text: str) -> bytes:
+    return anthropic_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": text},
+        },
+    )
+
+
+def anthropic_stream_content_block_stop() -> bytes:
+    return anthropic_sse_event(
+        "content_block_stop",
+        {"type": "content_block_stop", "index": 0},
+    )
+
+
+def anthropic_stream_message_delta(stop_reason: str) -> bytes:
+    return anthropic_sse_event(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+            "usage": {"output_tokens": 0},
+        },
+    )
+
+
+def anthropic_stream_message_stop() -> bytes:
+    return anthropic_sse_event("message_stop", {"type": "message_stop"})
+
+
+def chat_sse_delta_text(line: bytes) -> str | None:
+    """Extract assistant text delta from one OpenAI chat SSE ``data:`` line."""
+    if not line.startswith(b"data:"):
+        return None
+    raw = line[5:].strip()
+    if not raw or raw == b"[DONE]":
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return None
+    text = delta.get("content")
+    if not isinstance(text, str) or text == "":
+        return None
+    return text
+
+
+def chat_sse_finish_reason(line: bytes) -> str | None:
+    """Return OpenAI ``finish_reason`` from a chat SSE line when present."""
+    if not line.startswith(b"data:"):
+        return None
+    raw = line[5:].strip()
+    if not raw or raw == b"[DONE]":
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    finish = choices[0].get("finish_reason")
+    return finish if isinstance(finish, str) and finish else None
+
+
+def openai_finish_to_anthropic_stop(finish_reason: str | None) -> str:
+    if finish_reason == "length":
+        return "max_tokens"
+    return "end_turn"

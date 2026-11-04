@@ -21,8 +21,8 @@ Last updated: November 2026 — Responses tools + stream events for Codex/Agents
 | CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
 | Shared upstream httpx client | ✅ |
 | `POST /v1/responses` (stateless façade) | ✅ tools/`tool_choice`, stream lifecycle events; no `previous_response_id` / store |
-| `POST /v1/messages` (Anthropic) | ✅ MVP non-stream (stream → 501) |
-| Ollama `/api/tags`, `/api/chat`, `/api/embed` | ✅ MVP (`/api/chat` stream → 501) |
+| `POST /v1/messages` (Anthropic) | ✅ JSON + SSE stream (chat completions upstream) |
+| Ollama `/api/tags`, `/api/chat`, `/api/embed` | ✅ (`/api/chat` JSON + NDJSON stream) |
 | Multi-worker uvicorn | ❌ single process by default |
 
 ## TEXT

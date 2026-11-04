@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from orchestrator.gateway.router import GatewayRouteError
@@ -122,3 +123,46 @@ def models_list_to_ollama_tags(models_payload: dict[str, Any]) -> dict[str, Any]
                 }
             )
     return {"models": models}
+
+
+def ollama_chat_stream_chunk(
+    *,
+    client_model_alias: str,
+    content: str,
+    done: bool,
+) -> bytes:
+    """Encode one Ollama ``/api/chat`` NDJSON stream line."""
+    payload = {
+        "model": client_model_alias,
+        "message": {"role": "assistant", "content": content},
+        "done": done,
+    }
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+
+
+def chat_sse_delta_text(line: bytes) -> str | None:
+    """Extract assistant text delta from one OpenAI chat SSE ``data:`` line."""
+    if not line.startswith(b"data:"):
+        return None
+    raw = line[5:].strip()
+    if not raw or raw == b"[DONE]":
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return None
+    text = delta.get("content")
+    if not isinstance(text, str) or text == "":
+        return None
+    return text

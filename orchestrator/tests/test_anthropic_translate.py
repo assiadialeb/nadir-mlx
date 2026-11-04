@@ -5,6 +5,9 @@ from django.test import SimpleTestCase
 from orchestrator.gateway.protocol.anthropic_translate import (
     anthropic_request_to_chat,
     chat_completion_to_anthropic,
+    chat_sse_delta_text,
+    chat_sse_finish_reason,
+    openai_finish_to_anthropic_stop,
 )
 from orchestrator.gateway.router import GatewayRouteError
 
@@ -101,3 +104,13 @@ class AnthropicTranslateTests(SimpleTestCase):
             client_model_alias="demo",
         )
         self.assertEqual(payload["stop_reason"], "max_tokens")
+
+    def test_chat_sse_delta_and_finish_helpers(self) -> None:
+        line = b'data: {"choices":[{"delta":{"content":"ab"},"finish_reason":null}]}'
+        self.assertEqual(chat_sse_delta_text(line), "ab")
+        self.assertIsNone(chat_sse_finish_reason(line))
+        done = b'data: {"choices":[{"delta":{},"finish_reason":"length"}]}'
+        self.assertIsNone(chat_sse_delta_text(done))
+        self.assertEqual(chat_sse_finish_reason(done), "length")
+        self.assertEqual(openai_finish_to_anthropic_stop("length"), "max_tokens")
+        self.assertEqual(openai_finish_to_anthropic_stop("stop"), "end_turn")
