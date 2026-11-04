@@ -147,7 +147,7 @@ def validate_target_launch_mode(
 
 
 async def resolve_target_from_model(model: object) -> GatewayTarget:
-    from orchestrator.lifecycle_services import ensure_instance_ready, touch_instance_last_used_at
+    from orchestrator.lifecycle_services import ensure_instance_ready
 
     if not isinstance(model, str) or not model.strip():
         raise GatewayRouteError(
@@ -156,15 +156,22 @@ async def resolve_target_from_model(model: object) -> GatewayTarget:
             message="The model field is required.",
         )
     target = await sync_to_async(ensure_instance_ready, thread_sensitive=False)(model)
-    await sync_to_async(
-        touch_instance_last_used_at,
-        thread_sensitive=False,
-    )(target.instance_id)
+    await touch_target_last_used_at(target)
     return target
 
 
 async def resolve_target_from_body(body: dict[str, Any]) -> GatewayTarget:
     return await resolve_target_from_model(body.get("model"))
+
+
+async def touch_target_last_used_at(target: GatewayTarget) -> None:
+    """Refresh LRU activity for an instance (request start and end)."""
+    from orchestrator.lifecycle_services import touch_instance_last_used_at
+
+    await sync_to_async(
+        touch_instance_last_used_at,
+        thread_sensitive=False,
+    )(target.instance_id)
 
 
 def gateway_error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -258,9 +265,12 @@ async def proxy_json_post(
 ) -> Response:
     try:
         async with upstream_concurrency_slot(target):
-            return await _proxy_json_post_impl(url, body, headers, target.alias)
+            response = await _proxy_json_post_impl(url, body, headers, target.alias)
     except UpstreamQueueTimeoutError as exc:
         return gateway_error(503, "upstream_queue_timeout", exc.message)
+    if response.status_code < 400:
+        await touch_target_last_used_at(target)
+    return response
 
 
 async def _proxy_json_post_impl(
@@ -349,6 +359,7 @@ async def proxy_sse_post(
             yield _encode_sse_error(MSG_BAD_GATEWAY)
         finally:
             await _close_upstream_sse_session(state)
+            await touch_target_last_used_at(target)
 
     return StreamingResponse(
         iter_chunks(),

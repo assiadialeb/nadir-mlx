@@ -86,10 +86,15 @@ def openai_chat_to_ollama(
     chat_payload: dict[str, Any],
     *,
     client_model_alias: str,
+    include_thinking: bool = False,
 ) -> dict[str, Any]:
     """Translate chat.completion JSON into Ollama chat response."""
     content, finish_reason, usage = _extract_chat_fields(chat_payload)
     message: dict[str, Any] = {"role": "assistant", "content": content}
+    if include_thinking:
+        thinking = _extract_thinking(chat_payload)
+        if thinking:
+            message["thinking"] = thinking
     tool_calls = _extract_tool_calls(chat_payload)
     if tool_calls:
         message["tool_calls"] = tool_calls
@@ -487,6 +492,19 @@ def _extract_chat_fields(
             finish_reason = finish
     usage = chat_payload.get("usage") if isinstance(chat_payload.get("usage"), dict) else {}
     return content, finish_reason, usage
+
+
+def _extract_thinking(chat_payload: dict[str, Any]) -> str | None:
+    choices = chat_payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return None
+    thinking = message.get("reasoning_content") or message.get("reasoning")
+    if isinstance(thinking, str) and thinking:
+        return thinking
+    return None
 
 
 def _extract_tool_calls(chat_payload: dict[str, Any]) -> list[Any] | None:

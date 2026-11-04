@@ -85,7 +85,10 @@ async def _translate_chat_sse_to_responses(
     meta["next_output_index"] = 0
     meta["message_opened"] = False
     meta["reasoning_opened"] = False
+    meta["reasoning_part_opened"] = False
     meta["reasoning"] = ""
+    meta["reasoning_seq"] = 0
+    meta["completed_reasoning_items"] = []
     meta["reasoning_id"] = f"rs_{meta['message_id'][4:]}"
     yield _sse_event(
         "response.created",
@@ -177,8 +180,14 @@ def _ensure_reasoning_opened(meta: dict[str, Any]) -> list[bytes]:
     if meta.get("reasoning_opened"):
         return []
     meta["reasoning_opened"] = True
+    meta["reasoning_part_opened"] = False
+    meta["reasoning"] = ""
     meta["reasoning_output_index"] = int(meta["next_output_index"])
     meta["next_output_index"] = int(meta["reasoning_output_index"]) + 1
+    reasoning_seq = int(meta.get("reasoning_seq", 0))
+    meta["reasoning_seq"] = reasoning_seq + 1
+    if reasoning_seq:
+        meta["reasoning_id"] = f"rs_{meta['message_id'][4:]}_{reasoning_seq}"
     return [
         _sse_event(
             EVENT_OUTPUT_ITEM_ADDED,
@@ -192,6 +201,25 @@ def _ensure_reasoning_opened(meta: dict[str, Any]) -> list[bytes]:
                     "status": "in_progress",
                     "summary": [],
                 },
+            },
+        )
+    ]
+
+
+def _ensure_reasoning_part_opened(meta: dict[str, Any]) -> list[bytes]:
+    if meta.get("reasoning_part_opened"):
+        return []
+    meta["reasoning_part_opened"] = True
+    return [
+        _sse_event(
+            "response.reasoning_summary_part.added",
+            {
+                "type": "response.reasoning_summary_part.added",
+                "sequence_number": next_sequence(meta),
+                "item_id": meta["reasoning_id"],
+                "output_index": meta["reasoning_output_index"],
+                "summary_index": 0,
+                "part": {"type": "summary_text", "text": ""},
             },
         )
     ]
@@ -247,16 +275,7 @@ def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[
             ]
         )
     events.extend(_close_tool_call_events(meta))
-    output_items: list[dict[str, Any]] = []
-    if meta.get("reasoning_opened") and meta.get("reasoning"):
-        output_items.append(
-            {
-                "id": meta["reasoning_id"],
-                "type": "reasoning",
-                "status": "completed",
-                "summary": [{"type": "summary_text", "text": meta.get("reasoning", "")}],
-            }
-        )
+    output_items: list[dict[str, Any]] = list(meta.get("completed_reasoning_items") or [])
     if meta.get("message_opened"):
         output_items.append(
             {
@@ -296,7 +315,26 @@ def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[
 def _close_reasoning_events(meta: dict[str, Any]) -> list[bytes]:
     if not meta.get("reasoning_opened"):
         return []
-    return [
+    events: list[bytes] = []
+    if meta.get("reasoning_part_opened"):
+        events.append(
+            _sse_event(
+                "response.reasoning_summary_part.done",
+                {
+                    "type": "response.reasoning_summary_part.done",
+                    "sequence_number": next_sequence(meta),
+                    "item_id": meta["reasoning_id"],
+                    "output_index": meta["reasoning_output_index"],
+                    "summary_index": 0,
+                    "part": {
+                        "type": "summary_text",
+                        "text": meta.get("reasoning", ""),
+                    },
+                },
+            )
+        )
+        meta["reasoning_part_opened"] = False
+    events.append(
         _sse_event(
             "response.reasoning_summary_text.done",
             {
@@ -304,26 +342,31 @@ def _close_reasoning_events(meta: dict[str, Any]) -> list[bytes]:
                 "sequence_number": next_sequence(meta),
                 "item_id": meta["reasoning_id"],
                 "output_index": meta["reasoning_output_index"],
+                "summary_index": 0,
                 "text": meta.get("reasoning", ""),
             },
-        ),
+        )
+    )
+    completed_item = {
+        "id": meta["reasoning_id"],
+        "type": "reasoning",
+        "status": "completed",
+        "summary": [{"type": "summary_text", "text": meta.get("reasoning", "")}],
+    }
+    events.append(
         _sse_event(
             EVENT_OUTPUT_ITEM_DONE,
             {
                 "type": EVENT_OUTPUT_ITEM_DONE,
                 "sequence_number": next_sequence(meta),
                 "output_index": meta["reasoning_output_index"],
-                "item": {
-                    "id": meta["reasoning_id"],
-                    "type": "reasoning",
-                    "status": "completed",
-                    "summary": [
-                        {"type": "summary_text", "text": meta.get("reasoning", "")}
-                    ],
-                },
+                "item": completed_item,
             },
-        ),
-    ]
+        )
+    )
+    meta.setdefault("completed_reasoning_items", []).append(completed_item)
+    meta["reasoning_opened"] = False
+    return events
 
 
 def _close_tool_call_events(meta: dict[str, Any]) -> list[bytes]:
@@ -427,6 +470,7 @@ def _map_chat_sse_line(line: bytes, meta: dict[str, Any]) -> list[bytes]:
     events: list[bytes] = []
     if parsed.reasoning:
         events.extend(_ensure_reasoning_opened(meta))
+        events.extend(_ensure_reasoning_part_opened(meta))
         meta["reasoning"] = str(meta.get("reasoning", "")) + parsed.reasoning
         events.append(
             _sse_event(
@@ -436,11 +480,13 @@ def _map_chat_sse_line(line: bytes, meta: dict[str, Any]) -> list[bytes]:
                     "sequence_number": next_sequence(meta),
                     "item_id": meta["reasoning_id"],
                     "output_index": meta["reasoning_output_index"],
+                    "summary_index": 0,
                     "delta": parsed.reasoning,
                 },
             )
         )
     if parsed.text:
+        events.extend(_close_reasoning_events(meta))
         events.extend(_ensure_message_opened(meta))
         meta["text"] = str(meta.get("text", "")) + parsed.text
         events.append(
@@ -457,6 +503,7 @@ def _map_chat_sse_line(line: bytes, meta: dict[str, Any]) -> list[bytes]:
             )
         )
     if parsed.tool_call_deltas:
+        events.extend(_close_reasoning_events(meta))
         events.extend(_map_tool_call_deltas(parsed.tool_call_deltas, meta))
     return events
 

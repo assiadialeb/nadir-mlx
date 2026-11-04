@@ -85,7 +85,52 @@ class InstanceEvictionTests(SimpleTestCase):
     def test_eviction_grace_falls_back_on_invalid_env(self) -> None:
         from orchestrator.instance_eviction import eviction_grace_seconds
 
-        self.assertGreaterEqual(eviction_grace_seconds(), 0)
+        self.assertEqual(eviction_grace_seconds(), 60)
+
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
+    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.instance_eviction._stop_planned_victim")
+    @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
+    @patch("orchestrator.instance_eviction.host_available_bytes", return_value=10)
+    @patch(
+        "orchestrator.instance_eviction.estimate_instance_footprint_bytes",
+        return_value=500,
+    )
+    def test_plan_evictions_reserves_victims_until_stop_finishes(
+        self,
+        _mock_need: MagicMock,
+        _mock_available: MagicMock,
+        mock_list: MagicMock,
+        mock_stop: MagicMock,
+        _mock_manual: MagicMock,
+    ) -> None:
+        from orchestrator import instance_eviction as eviction_mod
+
+        pending = _instance(
+            pk=30,
+            model_name="pending",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+            status="LOADING",
+        )
+        victim = _instance(
+            pk=7,
+            model_name="victim",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+        )
+        mock_list.return_value = [victim]
+        reserved_during_stop: set[int] = set()
+
+        def _stop_and_capture(row: MagicMock) -> MagicMock:
+            reserved_during_stop.update(eviction_mod._reserved_victim_ids)
+            return row
+
+        mock_stop.side_effect = _stop_and_capture
+        eviction_mod._reserved_victim_ids.clear()
+        self.assertEqual(ensure_headroom_for_load(pending), 1)
+        self.assertIn(7, reserved_during_stop)
+        self.assertNotIn(7, eviction_mod._reserved_victim_ids)
 
     @patch("orchestrator.instance_eviction._stop_planned_victim")
     @patch("orchestrator.server_manager.is_manual_stop_in_progress", side_effect=[True, False])

@@ -190,6 +190,39 @@ class OllamaTranslateTests(SimpleTestCase):
         self.assertEqual(payload["eval_count"], 3)
         self.assertEqual(payload["prompt_eval_count"], 2)
 
+    def test_openai_to_ollama_chat_includes_thinking_when_requested(self) -> None:
+        with_thinking = openai_chat_to_ollama(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Hi",
+                            "reasoning_content": "plan",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            client_model_alias="demo",
+            include_thinking=True,
+        )
+        self.assertEqual(with_thinking["message"]["thinking"], "plan")
+        without = openai_chat_to_ollama(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Hi",
+                            "reasoning_content": "plan",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            client_model_alias="demo",
+        )
+        self.assertNotIn("thinking", without["message"])
+
     def test_openai_to_ollama_generate(self) -> None:
         payload = openai_chat_to_ollama_generate(
             {

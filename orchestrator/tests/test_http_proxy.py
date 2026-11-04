@@ -85,6 +85,8 @@ class HttpProxyJsonPostTests(IsolatedAsyncioTestCase):
         with patch(
             "orchestrator.gateway.services.http_proxy.get_http_client",
             return_value=mock_client,
+        ), patch(
+            "orchestrator.lifecycle_services.touch_instance_last_used_at",
         ):
             response = await proxy_json_post(
                 TARGET,
@@ -221,6 +223,8 @@ class HttpProxyBinaryPostTests(IsolatedAsyncioTestCase):
         with patch(
             "orchestrator.gateway.services.http_proxy.get_http_client",
             return_value=mock_client,
+        ), patch(
+            "orchestrator.lifecycle_services.touch_instance_last_used_at",
         ):
             response = await proxy_sse_post(
                 TARGET,
