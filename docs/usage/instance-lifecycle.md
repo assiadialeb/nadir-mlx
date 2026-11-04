@@ -12,6 +12,7 @@ Operator guide for Ollama-like **sleep / wake** behaviour on Nadir MLX.
 | **always_on** | Instance stays running until manually stopped (default, pre-v0.3 behaviour) |
 | **on_demand** | Instance may be **stopped** when idle; gateway **wakes** it on first request |
 | **Idle offload** | Background watcher stops `on_demand` instances after `idle_minutes` without traffic |
+| **LRU eviction** | Before starting a model, stop least-recently-used `on_demand` instances if free memory is below the pending footprint (+ reserve) |
 | **Startup reconcile** | On app boot, `always_on` instances left `STOPPED`/`FAILED` (e.g. after host reboot) are restarted |
 | **Cold start** | Time to load weights into unified memory after wake |
 
@@ -36,7 +37,12 @@ Recommendations:
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for instance to become RUNNING after wake |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Global switch for idle watcher |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | How often idle candidates are evaluated |
+| `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` instances under memory pressure before load |
+| `NADIR_MEMORY_RESERVE_GB` | `4` | Free-memory headroom (GiB) kept when deciding to evict |
 | `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED` | `true` | Restore `always_on` instances after process/host restart |
+
+!!! note "always_on is never LRU-evicted"
+    Only `lifecycle_mode=on_demand` instances are candidates. Primary chat models should stay `always_on`.
 
 ## Host / process restart
 
