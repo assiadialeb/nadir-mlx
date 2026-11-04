@@ -6,9 +6,9 @@ import os
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
-from fastapi import HTTPException
 
 from orchestrator.gateway.auth import verify_gateway_api_key
+from orchestrator.gateway.router import GatewayRouteError
 
 
 class GatewayAuthTests(SimpleTestCase):
@@ -27,9 +27,10 @@ class GatewayAuthTests(SimpleTestCase):
 
     def test_verify_gateway_api_key_rejects_invalid_token(self) -> None:
         with patch.dict(os.environ, {"NADIR_GATEWAY_API_KEY": "secret"}, clear=False):
-            with self.assertRaises(HTTPException) as ctx:
+            with self.assertRaises(GatewayRouteError) as ctx:
                 verify_gateway_api_key(authorization="Bearer wrong", x_api_key=None)
         self.assertEqual(ctx.exception.status_code, 401)
+        self.assertEqual(ctx.exception.code, "invalid_api_key")
 
     def test_verify_gateway_api_key_treats_blank_env_as_unconfigured(self) -> None:
         with patch.dict(os.environ, {"NADIR_GATEWAY_API_KEY": "  "}, clear=False):
