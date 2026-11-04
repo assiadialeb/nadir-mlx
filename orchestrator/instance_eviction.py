@@ -29,9 +29,11 @@ _reserved_victim_ids: set[int] = set()
 def eviction_grace_seconds() -> int:
     """Minimum idle age before an on_demand instance may be LRU-evicted.
 
-    Defaults to a short grace window. ``last_used_at`` is refreshed at request
-    start and end (including stream completion), so mid-request streams stay
-    protected without a multi-minute lockout after every call.
+    Defaults to a short grace window. Gateway traffic refreshes ``last_used_at``
+    at request start/end and on a mid-request heartbeat (~15s) during long
+    JSON calls and SSE streams, so active generations stay non-evictable
+    without a multi-minute lockout after every call. Idle offload uses the
+    same timestamp.
     """
     raw = os.environ.get("NADIR_LRU_EVICTION_GRACE_SECONDS")
     if raw is not None and str(raw).strip():

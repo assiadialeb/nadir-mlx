@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 from django.test import override_settings
+from django.utils import timezone
 
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, GatewayRouteError, GatewayTarget
 from orchestrator.gateway.services.http_proxy import (
@@ -265,6 +267,79 @@ class HttpProxyBinaryPostTests(IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         payload = json.loads(response.body)
         self.assertEqual(payload["error"]["message"], "bad request")
+
+    async def test_proxy_sse_post_heartbeats_keep_instance_out_of_lru(self) -> None:
+        """Mid-stream touches refresh last_used_at so grace=1s never expires mid-call."""
+        # Simulate request-start touch; stream lasts > grace without mid-stream refresh.
+        activity = {"last_used_at": timezone.now()}
+
+        async def slow_stream():
+            yield b'data: {"model":"default_model","choices":[{"delta":{"content":"a"}}]}\n\n'
+            await asyncio.sleep(0.55)
+            yield b'data: {"model":"default_model","choices":[{"delta":{"content":"b"}}]}\n\n'
+            await asyncio.sleep(0.55)
+            yield b'data: {"model":"default_model","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+
+        async def fake_touch(target: GatewayTarget) -> None:
+            activity["last_used_at"] = timezone.now()
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aiter_bytes = MagicMock(return_value=slow_stream())
+        mock_response.aclose = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=mock_response)
+        mock_client.aclose = AsyncMock()
+
+        row = MagicMock()
+        row.pk = TARGET.instance_id
+        row.model_name = "streaming"
+        row.port = 11400
+        row.status = "RUNNING"
+        row.server_config = {"ops": {"lifecycle_mode": "on_demand", "idle_minutes": 30}}
+        type(row).last_used_at = property(lambda self: activity["last_used_at"])
+
+        observed_while_streaming: list[list[str]] = []
+
+        with patch(
+            "orchestrator.gateway.services.http_proxy.get_http_client",
+            return_value=mock_client,
+        ), patch(
+            "orchestrator.gateway.services.http_proxy.activity_heartbeat_seconds",
+            return_value=0.25,
+        ), patch(
+            "orchestrator.gateway.services.http_proxy.touch_target_last_used_at",
+            side_effect=fake_touch,
+        ), patch(
+            "orchestrator.instance_eviction.InferenceInstance.objects.filter",
+        ) as mock_filter, patch(
+            "orchestrator.instance_eviction.is_wake_in_progress",
+            return_value=False,
+        ), patch(
+            "orchestrator.instance_eviction.instance_gateway_alias",
+            side_effect=lambda i: i.model_name,
+        ), patch.dict(
+            "os.environ",
+            {"NADIR_LRU_EVICTION_GRACE_SECONDS": "1"},
+            clear=False,
+        ):
+            mock_filter.return_value.order_by.return_value = [row]
+            response = await proxy_sse_post(
+                TARGET,
+                "http://127.0.0.1:11400/v1/chat/completions",
+                {"model": "default_model", "stream": True},
+                {},
+            )
+            from orchestrator.instance_eviction import list_lru_evictable_instances
+
+            async for _chunk in response.body_iterator:
+                observed_while_streaming.append(
+                    [inst.model_name for inst in list_lru_evictable_instances()]
+                )
+
+        self.assertGreaterEqual(len(observed_while_streaming), 3)
+        self.assertTrue(all(names == [] for names in observed_while_streaming))
 
 
 class HttpProxyResolveTargetTests(IsolatedAsyncioTestCase):

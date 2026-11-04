@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from contextlib import suppress
 from typing import Any, AsyncIterator
 
 import httpx
@@ -29,6 +31,7 @@ from orchestrator.gateway.upstream_concurrency import (
 CONTENT_TYPE_JSON = "application/json"
 MSG_UPSTREAM_TIMEOUT = "Upstream request timed out."
 MSG_BAD_GATEWAY = "Could not reach the inference backend."
+_DEFAULT_ACTIVITY_HEARTBEAT_SECONDS = 15.0
 
 FORWARD_REQUEST_HEADERS = frozenset(
     {
@@ -165,13 +168,46 @@ async def resolve_target_from_body(body: dict[str, Any]) -> GatewayTarget:
 
 
 async def touch_target_last_used_at(target: GatewayTarget) -> None:
-    """Refresh LRU activity for an instance (request start and end)."""
+    """Refresh LRU / idle-offload activity for an instance."""
     from orchestrator.lifecycle_services import touch_instance_last_used_at
 
     await sync_to_async(
         touch_instance_last_used_at,
         thread_sensitive=False,
     )(target.instance_id)
+
+
+def activity_heartbeat_seconds() -> float:
+    """Interval for mid-request ``last_used_at`` refresh during long calls."""
+    return max(1.0, env_float(
+        "NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS",
+        _DEFAULT_ACTIVITY_HEARTBEAT_SECONDS,
+    ))
+
+
+async def _activity_heartbeat_loop(target: GatewayTarget) -> None:
+    """Periodically refresh activity until cancelled (long non-stream calls)."""
+    interval = activity_heartbeat_seconds()
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            await touch_target_last_used_at(target)
+    except asyncio.CancelledError:
+        raise
+
+
+async def _maybe_touch_activity(
+    target: GatewayTarget,
+    *,
+    last_touch_monotonic: float,
+    interval: float,
+) -> float:
+    """Touch activity when ``interval`` elapsed; return updated monotonic stamp."""
+    now = time.monotonic()
+    if now - last_touch_monotonic < interval:
+        return last_touch_monotonic
+    await touch_target_last_used_at(target)
+    return now
 
 
 def gateway_error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -263,14 +299,23 @@ async def proxy_json_post(
     body: dict[str, Any],
     headers: dict[str, str],
 ) -> Response:
+    heartbeat = asyncio.create_task(
+        _activity_heartbeat_loop(target),
+        name=f"nadir-activity-heartbeat-{target.instance_id}",
+    )
     try:
-        async with upstream_concurrency_slot(target):
-            response = await _proxy_json_post_impl(url, body, headers, target.alias)
-    except UpstreamQueueTimeoutError as exc:
-        return gateway_error(503, "upstream_queue_timeout", exc.message)
-    if response.status_code < 400:
-        await touch_target_last_used_at(target)
-    return response
+        try:
+            async with upstream_concurrency_slot(target):
+                response = await _proxy_json_post_impl(url, body, headers, target.alias)
+        except UpstreamQueueTimeoutError as exc:
+            return gateway_error(503, "upstream_queue_timeout", exc.message)
+        if response.status_code < 400:
+            await touch_target_last_used_at(target)
+        return response
+    finally:
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
 
 
 async def _proxy_json_post_impl(
@@ -349,11 +394,18 @@ async def proxy_sse_post(
 
     async def iter_chunks() -> AsyncIterator[bytes]:
         response: httpx.Response = state["response"]
+        last_touch = time.monotonic()
+        heartbeat_interval = activity_heartbeat_seconds()
         try:
             async for chunk in iter_sse_with_restored_model(
                 response.aiter_bytes(),
                 target.alias,
             ):
+                last_touch = await _maybe_touch_activity(
+                    target,
+                    last_touch_monotonic=last_touch,
+                    interval=heartbeat_interval,
+                )
                 yield chunk
         except (httpx.HTTPError, TimeoutError):
             yield _encode_sse_error(MSG_BAD_GATEWAY)

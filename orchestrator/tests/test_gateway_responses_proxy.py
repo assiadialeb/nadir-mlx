@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -292,9 +293,45 @@ class ResponsesSseTranslateAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn(b'"type":"reasoning"', joined)
         part_added = joined.find(b"response.reasoning_summary_part.added")
         first_delta = joined.find(b"response.reasoning_summary_text.delta")
+        text_done = joined.find(b"response.reasoning_summary_text.done")
         part_done = joined.find(b"response.reasoning_summary_part.done")
         text_delta = joined.find(b"response.output_text.delta")
         self.assertGreater(first_delta, part_added)
-        self.assertGreater(part_done, first_delta)
+        self.assertGreater(text_done, first_delta)
+        self.assertGreater(part_done, text_done)
         self.assertGreater(text_delta, part_done)
         self.assertIn(b"response.output_text.delta", joined)
+
+    async def test_completed_output_sorted_by_output_index_with_late_reasoning(
+        self,
+    ) -> None:
+        async def chunks():
+            yield b'data: {"choices":[{"delta":{"reasoning_content":"first"}}]}\n'
+            yield b'data: {"choices":[{"delta":{"content":"hello"}}]}\n'
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                b'"type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}\n'
+            )
+            yield b'data: {"choices":[{"delta":{"reasoning_content":"late"}}]}\n'
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n'
+
+        joined = b"".join(
+            [
+                chunk
+                async for chunk in _translate_chat_sse_to_responses(
+                    chunks(),
+                    client_model_alias="demo",
+                )
+            ]
+        )
+        completed = None
+        for block in joined.decode().split("\n\n"):
+            if "event: response.completed" not in block:
+                continue
+            for line in block.split("\n"):
+                if line.startswith("data: "):
+                    completed = json.loads(line[6:])
+        self.assertIsNotNone(completed)
+        assert completed is not None
+        types = [item["type"] for item in completed["response"]["output"]]
+        self.assertEqual(types, ["reasoning", "message", "function_call", "reasoning"])
