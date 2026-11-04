@@ -150,11 +150,13 @@ def install_gateway_middleware(
     if "*" in origins:
         origins = ["*"]
 
-    # Last added runs first on the request path.
+    # Last added runs first on the request path. CORS must be outermost so
+    # preflight OPTIONS can short-circuit before TrustedHost / body limits.
     app.add_middleware(RequestIdMiddleware)
     if origins != ["*"]:
         app.add_middleware(OriginGuardMiddleware, allowed_origins=origins)
     app.add_middleware(MaxBodySizeMiddleware, max_body_bytes=gateway_max_body_bytes())
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=gateway_allowed_hosts())
     if origins:
         app.add_middleware(
             CORSMiddleware,
@@ -164,4 +166,3 @@ def install_gateway_middleware(
             allow_headers=["*"],
             expose_headers=[REQUEST_ID_HEADER],
         )
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=gateway_allowed_hosts())

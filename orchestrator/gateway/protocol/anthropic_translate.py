@@ -313,9 +313,10 @@ def _tool_results_and_followup(
     if not followup:
         return messages
     followup_message = _role_content_with_optional_thinking(role, followup)
-    if followup_message.get("content") not in (None, ""):
-        messages.append(followup_message)
-    elif followup_message.get("reasoning_content"):
+    if (
+        followup_message.get("content") not in (None, "")
+        or followup_message.get("reasoning_content")
+    ):
         messages.append(followup_message)
     return messages
 

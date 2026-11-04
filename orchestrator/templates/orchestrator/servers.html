@@ -390,24 +390,43 @@
     Gateway alias copied to clipboard.
 </div>
 
-{{ models_by_mode|json_script:"models-by-mode" }}
-{{ config_fields|json_script:"config-fields" }}
-{{ advanced_keys|json_script:"advanced-keys" }}
-{{ registry_defaults|json_script:"registry-defaults" }}
-{{ registry_metadata|json_script:"registry-metadata" }}
-{{ perf_profiles|json_script:"perf-profiles" }}
-{{ mtp_assistant_suggestions|json_script:"mtp-assistant-suggestions" }}
-{{ instance_configs|json_script:"instance-configs" }}
+{{ models_by_mode|json_script:"models-by-mode-data" }}
+{{ config_fields|json_script:"config-fields-data" }}
+{{ advanced_keys|json_script:"advanced-keys-data" }}
+{{ registry_defaults|json_script:"registry-defaults-data" }}
+{{ registry_metadata|json_script:"registry-metadata-data" }}
+{{ perf_profiles|json_script:"perf-profiles-data" }}
+{{ mtp_assistant_suggestions|json_script:"mtp-assistant-suggestions-data" }}
+{{ instance_configs|json_script:"instance-configs-data" }}
 <script>
-const modelsByMode = JSON.parse(document.getElementById("models-by-mode").textContent);
-const configFieldsByMode = JSON.parse(document.getElementById("config-fields").textContent);
-const advancedKeysByMode = JSON.parse(document.getElementById("advanced-keys").textContent);
-const registryDefaultsByMode = JSON.parse(document.getElementById("registry-defaults").textContent);
-const registryMetadata = JSON.parse(document.getElementById("registry-metadata").textContent);
-const perfProfilesByMode = JSON.parse(document.getElementById("perf-profiles").textContent);
-const mtpAssistantSuggestions = JSON.parse(document.getElementById("mtp-assistant-suggestions").textContent);
+function parseJsonScript(elementId, fallback) {
+    const element = document.getElementById(elementId);
+    if (!element) {
+        console.warn(`Missing JSON script #${elementId}`);
+        return fallback;
+    }
+    const raw = (element.textContent || "").trim();
+    if (!raw) {
+        console.warn(`Empty JSON script #${elementId}`);
+        return fallback;
+    }
+    try {
+        return JSON.parse(raw);
+    } catch (error) {
+        console.warn(`Invalid JSON script #${elementId}`, error);
+        return fallback;
+    }
+}
+
+const modelsByMode = parseJsonScript("models-by-mode-data", {});
+const configFieldsByMode = parseJsonScript("config-fields-data", {});
+const advancedKeysByMode = parseJsonScript("advanced-keys-data", {});
+const registryDefaultsByMode = parseJsonScript("registry-defaults-data", {});
+const registryMetadata = parseJsonScript("registry-metadata-data", {});
+const perfProfilesByMode = parseJsonScript("perf-profiles-data", {});
+const mtpAssistantSuggestions = parseJsonScript("mtp-assistant-suggestions-data", {});
 const _QUANTIZED_DRAFT_RE = /(qat|[-_]4bit|[-_]8bit)/i;
-const instanceConfigsById = JSON.parse(document.getElementById("instance-configs").textContent);
+const instanceConfigsById = parseJsonScript("instance-configs-data", {});
 
 let lastPrefilledGatewayAlias = '';
 
@@ -419,7 +438,7 @@ function showGatewayAliasToast() {
 
 function copyGatewayAlias(alias) {
     navigator.clipboard.writeText(alias).then(showGatewayAliasToast).catch(() => {
-        window.prompt('Copy gateway alias:', alias);
+        globalThis.prompt('Copy gateway alias:', alias);
     });
 }
 
@@ -485,7 +504,8 @@ function applyAdvancedDefaults(defaults) {
     if (textarea.value.trim()) {
         try {
             current = JSON.parse(textarea.value);
-        } catch (_error) {
+        } catch (error) {
+            console.warn('Invalid Advanced JSON while applying defaults', error);
             return;
         }
     }
@@ -514,7 +534,8 @@ function applyMtpAssistantSuggest(mode, modelName) {
     if (textarea.value.trim()) {
         try {
             current = JSON.parse(textarea.value);
-        } catch (_error) {
+        } catch (error) {
+            console.warn('Invalid Advanced JSON while suggesting MTP assistant', error);
             hint.classList.add('hidden');
             return;
         }
@@ -551,7 +572,8 @@ function warnIncompatibleMtpDraft() {
     let current = {};
     try {
         current = JSON.parse(textarea.value);
-    } catch (_error) {
+    } catch (error) {
+        console.warn('Invalid Advanced JSON while checking MTP draft', error);
         warning.classList.add('hidden');
         return;
     }
@@ -685,8 +707,15 @@ function readEnableThinkingFromConfig(mode, config) {
     return false;
 }
 
+function deepCloneJson(value) {
+    if (typeof structuredClone === 'function') {
+        return structuredClone(value);
+    }
+    return JSON.parse(JSON.stringify(value));
+}
+
 function advancedJsonForTextarea(advanced) {
-    const copy = JSON.parse(JSON.stringify(advanced || {}));
+    const copy = deepCloneJson(advanced || {});
     delete copy.enable_thinking;
     if (copy.chat_template_args && typeof copy.chat_template_args === 'object') {
         const templateArgs = { ...copy.chat_template_args };
@@ -710,6 +739,50 @@ function readConfigFieldValue(field, mode, existingConfig) {
     return existingConfig[field.name];
 }
 
+function appendOpsSectionHeader(container) {
+    const header = document.createElement('div');
+    header.className = 'md:col-span-2 pt-2 border-t border-slate-100';
+    const title = document.createElement('p');
+    title.className = 'text-xs font-semibold uppercase tracking-wider text-slate-500';
+    title.textContent = 'Lifecycle & operations';
+    header.appendChild(title);
+    container.appendChild(header);
+}
+
+function createConfigFieldInput(field, existingValue) {
+    if (field.widget === 'select') {
+        const input = document.createElement('select');
+        field.choices.forEach(choice => {
+            const opt = document.createElement('option');
+            opt.value = choice.value;
+            opt.textContent = choice.label;
+            input.appendChild(opt);
+        });
+        input.value = existingValue ?? field.default ?? '';
+        return input;
+    }
+    if (field.widget === 'checkbox') {
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = existingValue == null ? Boolean(field.default) : Boolean(existingValue);
+        input.className = 'h-4 w-4 rounded border-slate-300 text-indigo-600';
+        return input;
+    }
+    const input = document.createElement('input');
+    input.type = field.widget === 'number' ? 'number' : 'text';
+    if (field.placeholder) input.placeholder = field.placeholder;
+    if (field.min != null) input.min = field.min;
+    if (field.max != null) input.max = field.max;
+    if (field.name === 'gateway_aliases') {
+        input.value = formatGatewayAliasesFieldValue(existingValue);
+    } else if (existingValue != null && existingValue !== '') {
+        input.value = existingValue;
+    } else if (field.default != null) {
+        input.value = field.default;
+    }
+    return input;
+}
+
 function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfig = {}, idPrefix = 'config') {
     const container = document.getElementById(containerId);
     const fields = configFieldsByMode[mode] || [];
@@ -719,13 +792,7 @@ function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfi
     fields.forEach(field => {
         if (field.section === 'ops' && !opsHeaderAdded) {
             opsHeaderAdded = true;
-            const header = document.createElement('div');
-            header.className = 'md:col-span-2 pt-2 border-t border-slate-100';
-            const title = document.createElement('p');
-            title.className = 'text-xs font-semibold uppercase tracking-wider text-slate-500';
-            title.textContent = 'Lifecycle & operations';
-            header.appendChild(title);
-            container.appendChild(header);
+            appendOpsSectionHeader(container);
         }
 
         const wrapper = document.createElement('div');
@@ -739,40 +806,10 @@ function renderConfigFieldsInto(containerId, mode, modelName = '', existingConfi
         wrapper.appendChild(label);
 
         const existingValue = readConfigFieldValue(field, mode, existingConfig);
-
-        let input;
-        if (field.widget === 'select') {
-            input = document.createElement('select');
-            field.choices.forEach(choice => {
-                const opt = document.createElement('option');
-                opt.value = choice.value;
-                opt.textContent = choice.label;
-                input.appendChild(opt);
-            });
-            input.value = existingValue ?? field.default ?? '';
-        } else if (field.widget === 'checkbox') {
-            input = document.createElement('input');
-            input.type = 'checkbox';
-            input.checked = existingValue != null ? Boolean(existingValue) : Boolean(field.default);
-            input.className = 'h-4 w-4 rounded border-slate-300 text-indigo-600';
-        } else {
-            input = document.createElement('input');
-            input.type = field.widget === 'number' ? 'number' : 'text';
-            if (field.placeholder) input.placeholder = field.placeholder;
-            if (field.min != null) input.min = field.min;
-            if (field.max != null) input.max = field.max;
-            if (field.name === 'gateway_aliases') {
-                input.value = formatGatewayAliasesFieldValue(existingValue);
-            } else if (existingValue != null && existingValue !== '') {
-                input.value = existingValue;
-            } else if (field.default != null) {
-                input.value = field.default;
-            }
-        }
-
+        const input = createConfigFieldInput(field, existingValue);
         input.id = `${idPrefix}_${field.name}`;
         input.name = `config_${field.name}`;
-        if (input.type !== 'checkbox') {
+        if (input.type === 'text' || input.type === 'number' || input.tagName === 'SELECT') {
             input.className = 'w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500';
         }
         wrapper.appendChild(input);

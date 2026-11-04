@@ -49,18 +49,36 @@ def _new_id(prefix: str) -> str:
 
 def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     """Translate a Responses create body into a chat.completions body."""
-    unsupported = sorted(UNSUPPORTED_RESPONSE_FIELDS.intersection(body))
-    if unsupported:
-        raise GatewayRouteError(
-            status_code=400,
-            code="invalid_request",
-            message=(
-                "Unsupported Responses fields for Nadir MVP: "
-                + ", ".join(unsupported)
-            ),
-            param=unsupported[0],
-        )
+    _reject_unsupported_responses_fields(body)
+    model = _require_responses_model(body)
+    chat: dict[str, Any] = {
+        "model": model,
+        "messages": _input_to_messages(body.get("input"), body.get("instructions")),
+    }
+    _copy_responses_sampling_fields(chat, body)
+    _copy_responses_tools(chat, body)
+    for key in PASSTHROUGH_CHAT_FIELDS:
+        if key in body:
+            chat[key] = body[key]
+    return chat
 
+
+def _reject_unsupported_responses_fields(body: dict[str, Any]) -> None:
+    unsupported = sorted(UNSUPPORTED_RESPONSE_FIELDS.intersection(body))
+    if not unsupported:
+        return
+    raise GatewayRouteError(
+        status_code=400,
+        code="invalid_request",
+        message=(
+            "Unsupported Responses fields for Nadir MVP: "
+            + ", ".join(unsupported)
+        ),
+        param=unsupported[0],
+    )
+
+
+def _require_responses_model(body: dict[str, Any]) -> str:
     model = body.get("model")
     if not isinstance(model, str) or not model.strip():
         raise GatewayRouteError(
@@ -69,20 +87,22 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
             message="The model field is required.",
             param="model",
         )
+    return model.strip()
 
-    messages = _input_to_messages(body.get("input"), body.get("instructions"))
-    chat: dict[str, Any] = {"model": model.strip(), "messages": messages}
 
+def _copy_responses_sampling_fields(chat: dict[str, Any], body: dict[str, Any]) -> None:
     max_output_tokens = body.get("max_output_tokens")
     if max_output_tokens is not None:
         chat["max_tokens"] = max_output_tokens
-
     text = body.get("text")
-    if isinstance(text, dict):
-        fmt = text.get("format")
-        if isinstance(fmt, dict) and fmt.get("type") in {"json_object", "json_schema"}:
-            chat["response_format"] = _responses_format_to_chat(fmt)
+    if not isinstance(text, dict):
+        return
+    fmt = text.get("format")
+    if isinstance(fmt, dict) and fmt.get("type") in {"json_object", "json_schema"}:
+        chat["response_format"] = _responses_format_to_chat(fmt)
 
+
+def _copy_responses_tools(chat: dict[str, Any], body: dict[str, Any]) -> None:
     tools = body.get("tools")
     if isinstance(tools, list) and tools:
         chat_tools = [
@@ -92,14 +112,8 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         ]
         if chat_tools:
             chat["tools"] = stabilize_chat_tools(chat_tools)
-
     if "tool_choice" in body:
         chat["tool_choice"] = _responses_tool_choice_to_chat(body.get("tool_choice"))
-
-    for key in PASSTHROUGH_CHAT_FIELDS:
-        if key in body:
-            chat[key] = body[key]
-    return chat
 
 
 def _responses_format_to_chat(fmt: dict[str, Any]) -> dict[str, Any]:
@@ -182,6 +196,15 @@ def _input_to_messages(input_value: Any, instructions: Any) -> list[dict[str, An
             param="input",
         )
 
+    _append_input_list_messages(messages, input_value)
+    _ensure_non_system_message(messages)
+    return messages
+
+
+def _append_input_list_messages(
+    messages: list[dict[str, Any]],
+    input_value: list[Any],
+) -> None:
     pending_tool_calls: list[dict[str, Any]] = []
 
     def flush_tool_calls() -> None:
@@ -207,14 +230,17 @@ def _input_to_messages(input_value: Any, instructions: Any) -> list[dict[str, An
         if message is not None:
             messages.append(message)
     flush_tool_calls()
-    if not any(msg.get("role") != "system" for msg in messages):
-        raise GatewayRouteError(
-            status_code=400,
-            code="invalid_request",
-            message="input must include at least one user/assistant/tool message.",
-            param="input",
-        )
-    return messages
+
+
+def _ensure_non_system_message(messages: list[dict[str, Any]]) -> None:
+    if any(msg.get("role") != "system" for msg in messages):
+        return
+    raise GatewayRouteError(
+        status_code=400,
+        code="invalid_request",
+        message="input must include at least one user/assistant/tool message.",
+        param="input",
+    )
 
 
 def _normalize_role(role: str) -> str:
@@ -335,27 +361,42 @@ def _output_items_from_chat(chat_payload: dict[str, Any], *, message_id: str) ->
         return [_text_message_item(message_id, _assistant_text_from_chat(chat_payload))]
 
     items: list[dict[str, Any]] = []
-    reasoning = message.get("reasoning_content") or message.get("reasoning")
-    if isinstance(reasoning, str) and reasoning:
-        items.append(
-            {
-                "id": f"rs_{message_id[4:]}" if message_id.startswith("msg_") else _new_id("rs"),
-                "type": "reasoning",
-                "status": "completed",
-                "summary": [{"type": "summary_text", "text": reasoning}],
-            }
-        )
-    tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list):
-        for call in tool_calls:
-            converted = _tool_call_to_function_call_item(call)
-            if converted is not None:
-                items.append(converted)
+    items.extend(_reasoning_output_items(message, message_id=message_id))
+    items.extend(_tool_call_output_items(message))
     text = message.get("content")
     if isinstance(text, str) and text:
         items.append(_text_message_item(message_id, text))
     elif not items:
         items.append(_text_message_item(message_id, _assistant_text_from_chat(chat_payload)))
+    return items
+
+
+def _reasoning_output_items(message: dict[str, Any], *, message_id: str) -> list[dict[str, Any]]:
+    reasoning = message.get("reasoning_content") or message.get("reasoning")
+    if not isinstance(reasoning, str) or not reasoning:
+        return []
+    reasoning_id = (
+        f"rs_{message_id[4:]}" if message_id.startswith("msg_") else _new_id("rs")
+    )
+    return [
+        {
+            "id": reasoning_id,
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [{"type": "summary_text", "text": reasoning}],
+        }
+    ]
+
+
+def _tool_call_output_items(message: dict[str, Any]) -> list[dict[str, Any]]:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for call in tool_calls:
+        converted = _tool_call_to_function_call_item(call)
+        if converted is not None:
+            items.append(converted)
     return items
 
 

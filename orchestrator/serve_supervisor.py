@@ -98,7 +98,7 @@ def _listener_pids(port: int) -> list[int]:
             check=False,
             timeout=2,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return []
     pids: list[int] = []
     for line in result.stdout.splitlines():
