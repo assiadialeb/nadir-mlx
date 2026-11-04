@@ -74,14 +74,22 @@ def _env_bool(name: str, default: bool) -> bool:
 DEBUG = _env_bool("DJANGO_DEBUG", False)
 
 # SECURITY WARNING: keep the secret key used in production secret!
-_raw_secret = (os.environ.get("DJANGO_SECRET_KEY") or "").strip()
+# Fresh installs: generate + persist under data/django_secret_key (mode 600)
+# when DJANGO_SECRET_KEY is unset — enables `pip install && manage.py serve`.
+from mlx_orchestrator.local_secret import resolve_django_secret_key
+
+_raw_secret = resolve_django_secret_key(
+    data_dir=BASE_DIR / "data",
+    allow_generate=not _RUNNING_TESTS,
+)
 if _raw_secret:
     SECRET_KEY = _raw_secret
 elif DEBUG or _RUNNING_TESTS:
     SECRET_KEY = _INSECURE_DEFAULT_SECRET_KEY
 else:
     raise ImproperlyConfigured(
-        "DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false."
+        "DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false "
+        "(or allow writing data/django_secret_key)."
     )
 if (
     not DEBUG

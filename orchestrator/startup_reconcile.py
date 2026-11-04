@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import threading
+import time
 
 from orchestrator.instance_health import refresh_all_instance_health, should_skip_watchdog
 from orchestrator.lifecycle_selectors import (
@@ -20,6 +21,8 @@ logger = logging.getLogger(__name__)
 _reconcile_started = False
 _reconcile_lock = threading.Lock()
 _RESTARTABLE_STATUSES = ("FAILED", "STOPPED")
+# Defer DB access until after AppConfig.ready() returns (avoids RuntimeWarning).
+_RECONCILE_START_DELAY_SECONDS = 1.0
 
 
 def _should_restore_on_startup(instance: InferenceInstance) -> bool:
@@ -83,6 +86,7 @@ def reconcile_instances_on_startup() -> dict[str, int]:
 
 
 def _reconcile_once() -> None:
+    time.sleep(_RECONCILE_START_DELAY_SECONDS)
     try:
         reconcile_instances_on_startup()
     except Exception:

@@ -6,7 +6,7 @@ Environment variables are loaded from `.env` at the project root (see `.env.exam
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `DJANGO_SECRET_KEY` | — | Production | Secret key for sessions and signing |
+| `DJANGO_SECRET_KEY` | auto `data/django_secret_key` | Production | Secret key; generated on first run if unset (mode 600) |
 | `DJANGO_DEBUG` | `false` | No | Set `true` only for local development |
 | `DJANGO_ALLOWED_HOSTS` | `127.0.0.1,localhost` | Production | Comma-separated hostnames |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | — | When `DEBUG=false` | Full URLs with scheme and port |

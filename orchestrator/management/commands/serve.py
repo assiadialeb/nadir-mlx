@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import signal
+import sys
 from dataclasses import replace
 from typing import Any
 
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 
 from orchestrator.serve_supervisor import (
@@ -42,6 +44,11 @@ class Command(BaseCommand):
             default=None,
             help="Django bind port (default DJANGO_HTTP_PORT or 8000).",
         )
+        parser.add_argument(
+            "--skip-migrate",
+            action="store_true",
+            help="Skip automatic migrate before starting children.",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         spec = default_serve_spec(with_mcp=bool(options["with_mcp"]))
@@ -49,6 +56,11 @@ class Command(BaseCommand):
             spec = replace(spec, ui_host=str(options["ui_host"]).strip() or spec.ui_host)
         if options["ui_port"] is not None:
             spec = replace(spec, ui_port=int(options["ui_port"]))
+
+        if not options["skip_migrate"]:
+            self.stdout.write("Running migrate…")
+            self.stdout.flush()
+            call_command("migrate", interactive=False, verbosity=1)
 
         assert_serve_ports_free(spec)
         commands = build_child_commands(spec)
@@ -62,6 +74,9 @@ class Command(BaseCommand):
             )
         else:
             self.stdout.write("  MCP:     skipped (pass --with-mcp to enable)")
+        # LaunchAgent / redirected logs must see the banner immediately.
+        self.stdout.flush()
+        sys.stdout.flush()
 
         processes = start_children(commands)
         stopping = False
@@ -72,6 +87,7 @@ class Command(BaseCommand):
                 return
             stopping = True
             self.stdout.write(self.style.WARNING(f"\nSignal {signum}: stopping children…"))
+            self.stdout.flush()
             stop_children(processes)
 
         signal.signal(signal.SIGINT, _shutdown)
@@ -85,6 +101,7 @@ class Command(BaseCommand):
                         f"A supervised process exited (code {exit_code}); shutting down."
                     )
                 )
+                self.stdout.flush()
                 stop_children(processes)
             if exit_code not in (0, None) and not stopping:
                 raise SystemExit(exit_code)

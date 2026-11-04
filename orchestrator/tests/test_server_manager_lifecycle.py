@@ -58,6 +58,19 @@ class GetLaunchEnvTests(TestCase):
         env = _get_launch_env("TEXT", {"model_id": "qwen"}, model_name="qwen-folder")
         self.assertEqual(env["NADIR_GATEWAY_ALIAS"], "qwen")
 
+    def test_get_launch_env_strips_serve_supervisor_vars(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "NADIR_SERVE_PARENT_PID": "12345",
+                "NADIR_BACKGROUND_OWNER": "gateway",
+            },
+            clear=False,
+        ):
+            env = _get_launch_env("TEXT", {"model_id": "qwen"}, model_name="qwen-folder")
+        self.assertNotIn("NADIR_SERVE_PARENT_PID", env)
+        self.assertNotIn("NADIR_BACKGROUND_OWNER", env)
+
 
 class GetDownloadedModelsTests(DjangoTestCase):
     def test_get_downloaded_models_returns_complete_folders(self) -> None:
