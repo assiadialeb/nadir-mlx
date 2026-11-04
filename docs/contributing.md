@@ -65,6 +65,16 @@ export NADIR_SMOKE_MTP_ALIAS=<multimodal-mtp-alias> # MTP generation smoke (MLX-
 pytest -m smoke orchestrator/tests/smoke -q
 ```
 
+SDK façade smokes (mocked upstream, no GPU — MLX-121):
+
+```bash
+pip install -r requirements-test.txt   # includes openai, anthropic, ollama
+pytest -m sdk orchestrator/tests/test_gateway_sdk_smoke.py -q
+```
+
+These exercise the official Python clients against the FastAPI app (`TestClient` /
+`ASGITransport`). Anthropic/Ollama **stream** cases skip until streaming PRs are merged.
+
 Deep instance health (optional, probes a minimal generation request):
 
 ```bash
