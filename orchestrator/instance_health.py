@@ -34,11 +34,24 @@ def _connect_host(instance: InferenceInstance) -> str:
     return validate_server_bind_host(raw_host)
 
 
+def _inference_auth_headers() -> dict[str, str]:
+    from orchestrator.env_utils import env_str
+
+    key = env_str("NADIR_INFERENCE_API_KEY", "")
+    if not key:
+        return {}
+    return {"Authorization": f"Bearer {key}"}
+
+
 def probe_http_health(instance: InferenceInstance) -> bool:
     """Return True when the instance responds on /health."""
     url = build_validated_http_url(_connect_host(instance), instance.port, HEALTH_PATH)
     try:
-        response = httpx.get(url, timeout=HEALTH_TIMEOUT_SECONDS)
+        response = httpx.get(
+            url,
+            timeout=HEALTH_TIMEOUT_SECONDS,
+            headers=_inference_auth_headers(),
+        )
         return response.status_code < 500
     except httpx.HTTPError:
         return False
@@ -90,7 +103,12 @@ def probe_generation_health(instance: InferenceInstance) -> bool:
     path, payload = probe
     url = build_validated_http_url(_connect_host(instance), instance.port, path)
     try:
-        response = httpx.post(url, json=payload, timeout=GENERATION_PROBE_TIMEOUT_SECONDS)
+        response = httpx.post(
+            url,
+            json=payload,
+            timeout=GENERATION_PROBE_TIMEOUT_SECONDS,
+            headers=_inference_auth_headers(),
+        )
         _last_generation_probe_at[instance.id] = time.monotonic()
         return response.status_code < 500
     except httpx.HTTPError:

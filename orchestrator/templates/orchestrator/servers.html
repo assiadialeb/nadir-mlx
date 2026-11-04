@@ -341,20 +341,24 @@
     Gateway alias copied to clipboard.
 </div>
 
+{{ models_by_mode|json_script:"models-by-mode" }}
+{{ config_fields|json_script:"config-fields" }}
+{{ advanced_keys|json_script:"advanced-keys" }}
+{{ registry_defaults|json_script:"registry-defaults" }}
+{{ registry_metadata|json_script:"registry-metadata" }}
+{{ perf_profiles|json_script:"perf-profiles" }}
+{{ mtp_assistant_suggestions|json_script:"mtp-assistant-suggestions" }}
+{{ instance_configs|json_script:"instance-configs" }}
 <script>
-const modelsByMode = {{ models_by_mode_json|safe }};
-const configFieldsByMode = {{ config_fields_json|safe }};
-const advancedKeysByMode = {{ advanced_keys_json|safe }};
-const registryDefaultsByMode = {{ registry_defaults_json|safe }};
-const registryMetadata = {{ registry_metadata_json|safe }};
-const perfProfilesByMode = {{ perf_profiles_json|safe }};
-const mtpAssistantSuggestions = {{ mtp_assistant_suggestions_json|safe }};
+const modelsByMode = JSON.parse(document.getElementById("models-by-mode").textContent);
+const configFieldsByMode = JSON.parse(document.getElementById("config-fields").textContent);
+const advancedKeysByMode = JSON.parse(document.getElementById("advanced-keys").textContent);
+const registryDefaultsByMode = JSON.parse(document.getElementById("registry-defaults").textContent);
+const registryMetadata = JSON.parse(document.getElementById("registry-metadata").textContent);
+const perfProfilesByMode = JSON.parse(document.getElementById("perf-profiles").textContent);
+const mtpAssistantSuggestions = JSON.parse(document.getElementById("mtp-assistant-suggestions").textContent);
 const _QUANTIZED_DRAFT_RE = /(qat|[-_]4bit|[-_]8bit)/i;
-const instanceConfigsById = {
-{% for instance in instances %}
-    "{{ instance.id }}": {{ instance.server_config_json|safe }}{% if not forloop.last %},{% endif %}
-{% endfor %}
-};
+const instanceConfigsById = JSON.parse(document.getElementById("instance-configs").textContent);
 
 let lastPrefilledGatewayAlias = '';
 

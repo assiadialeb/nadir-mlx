@@ -501,7 +501,15 @@ class GatewayModeProxyTests(SimpleTestCase):
         self.assertEqual(response.json()["data"][0]["id"], "llama-chat")
 
     def test_health_includes_docs_and_models_links(self) -> None:
-        response = self.client.get("/health")
+        with patch(
+            "orchestrator.gateway.app.expose_gateway_docs",
+            return_value=True,
+        ):
+            from orchestrator.gateway.app import create_app
+            from fastapi.testclient import TestClient
+
+            client = TestClient(create_app())
+            response = client.get("/health")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["docs"], "/docs")

@@ -12,11 +12,19 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+import sys
+
+from django.core.exceptions import ImproperlyConfigured
 
 from mlx_orchestrator.database import build_database_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+_INSECURE_DEFAULT_SECRET_KEY = (
+    "django-insecure-k8k&vy*1mu4iuaa*=jz9mx^+qkwi(0$qf^inbqz44j)+4v22om"
+)
+_RUNNING_TESTS = "pytest" in sys.modules or os.environ.get("NADIR_TESTING") == "1"
 
 
 def _load_dotenv_file() -> None:
@@ -62,14 +70,27 @@ def _env_bool(name: str, default: bool) -> bool:
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-k8k&vy*1mu4iuaa*=jz9mx^+qkwi(0$qf^inbqz44j)+4v22om",
-)
-
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = _env_bool("DJANGO_DEBUG", True)
+DEBUG = _env_bool("DJANGO_DEBUG", False)
+
+# SECURITY WARNING: keep the secret key used in production secret!
+_raw_secret = (os.environ.get("DJANGO_SECRET_KEY") or "").strip()
+if _raw_secret:
+    SECRET_KEY = _raw_secret
+elif DEBUG or _RUNNING_TESTS:
+    SECRET_KEY = _INSECURE_DEFAULT_SECRET_KEY
+else:
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false."
+    )
+if (
+    not DEBUG
+    and not _RUNNING_TESTS
+    and SECRET_KEY == _INSECURE_DEFAULT_SECRET_KEY
+):
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY must not use the insecure default when DJANGO_DEBUG is false."
+    )
 
 _allowed_hosts_raw = os.environ.get("DJANGO_ALLOWED_HOSTS", "")
 if _allowed_hosts_raw.strip():
@@ -181,11 +202,9 @@ LOGOUT_REDIRECT_URL = 'login'
 MODELS_DIR = BASE_DIR / 'models'
 LOGS_DIR = BASE_DIR / 'logs'
 
-# Inference plane defaults (private bind in production)
-MLX_DEFAULT_SERVER_HOST = os.environ.get(
-    "MLX_DEFAULT_SERVER_HOST",
-    "127.0.0.1" if not DEBUG else "0.0.0.0",
-)
+# Inference plane defaults — always loopback unless explicitly overridden.
+# mlx-lm / mlx-vlm have no auth; never bind 0.0.0.0 just because DEBUG is on.
+MLX_DEFAULT_SERVER_HOST = os.environ.get("MLX_DEFAULT_SERVER_HOST", "127.0.0.1")
 INSTANCE_HEALTH_CHECK_INTERVAL_SECONDS = int(
     os.environ.get("MLX_HEALTH_INTERVAL_SECONDS", "30")
 )
@@ -250,7 +269,12 @@ NADIR_GATEWAY_PUBLIC_BASE_URL = os.environ.get(
     f"http://{NADIR_GATEWAY_HOST}:{NADIR_GATEWAY_PORT}",
 )
 # Comma-separated browser origins; empty disables CORS middleware (local-first default).
+# Any non-empty Origin header must match this list or the gateway returns 403.
 NADIR_GATEWAY_CORS_ORIGINS = os.environ.get("NADIR_GATEWAY_CORS_ORIGINS", "")
+# Extra Host values for TrustedHostMiddleware (beyond localhost / 127.0.0.1 / ::1).
+NADIR_GATEWAY_ALLOWED_HOSTS = os.environ.get("NADIR_GATEWAY_ALLOWED_HOSTS", "")
+# Reject request bodies larger than this many megabytes (Content-Length).
+NADIR_GATEWAY_MAX_BODY_MB = float(os.environ.get("NADIR_GATEWAY_MAX_BODY_MB", "50"))
 
 # Benchmark custom endpoints (anti-SSRF): disabled in production unless explicitly enabled.
 NADIR_BENCHMARK_ENDPOINT_ENABLED = _env_bool(

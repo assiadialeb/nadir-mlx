@@ -66,10 +66,13 @@ COMMON_FIELDS: tuple[ConfigFieldSpec, ...] = (
         modes=ALL_LAUNCH_MODES,
         default=None,
         choices=(
-            ("0.0.0.0", "All interfaces (0.0.0.0)"),
-            ("127.0.0.1", "Local only (127.0.0.1)"),
+            ("127.0.0.1", "Local only (127.0.0.1) — recommended"),
+            ("0.0.0.0", "All interfaces (0.0.0.0) — no auth on mlx-lm/mlx-vlm"),
         ),
-        help_text="Use 127.0.0.1 to restrict access to this machine.",
+        help_text=(
+            "Prefer 127.0.0.1 and expose clients only through the Nadir gateway. "
+            "0.0.0.0 makes the inference port reachable on the LAN without auth."
+        ),
     ),
     ConfigFieldSpec(
         name="model_id",
@@ -129,7 +132,10 @@ MODE_FIELDS: tuple[ConfigFieldSpec, ...] = (
         widget="checkbox",
         modes=("TEXT", "MULTIMODAL"),
         default=False,
-        help_text="Required for some custom tokenizers or architectures.",
+        help_text=(
+            "WARNING: executes Python from the Hugging Face repo (custom tokenizers "
+            "or architectures). Enable only for models you trust."
+        ),
     ),
     ConfigFieldSpec(
         name="enable_thinking",

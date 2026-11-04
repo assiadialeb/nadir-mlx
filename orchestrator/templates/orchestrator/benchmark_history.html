@@ -226,8 +226,9 @@
 </div>
 
 <script src="{% static 'orchestrator/vendor/chart.umd.min.js' %}"></script>
+{{ chart_data|json_script:"benchmark-chart-data" }}
 <script>
-const chartPayload = {{ chart_data_json|safe }};
+const chartPayload = JSON.parse(document.getElementById("benchmark-chart-data").textContent);
 
 function buildLineChart(canvasId, label, values, color) {
     const canvas = document.getElementById(canvasId);

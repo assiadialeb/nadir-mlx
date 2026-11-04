@@ -1,4 +1,4 @@
-"""Optional API-key authentication for local MLX inference worker processes."""
+"""Optional API-key authentication for local Nadir inference workers."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 
 from fastapi import Header, HTTPException, status
 
-from orchestrator.security_utils import extract_bearer_token
+from orchestrator.security_utils import api_keys_match, extract_bearer_token
 
 
 def require_inference_api_key(
@@ -19,7 +19,7 @@ def require_inference_api_key(
         return
 
     token = extract_bearer_token(authorization) or (x_api_key or "").strip()
-    if token != expected:
+    if not api_keys_match(token, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key.",

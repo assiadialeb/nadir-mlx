@@ -12,8 +12,12 @@ from orchestrator.gateway.router import GatewayRouteError
 
 class GatewayAppTests(SimpleTestCase):
     def test_health_endpoint_returns_ok(self) -> None:
-        client = TestClient(create_app())
-        response = client.get("/health")
+        with patch(
+            "orchestrator.gateway.app.expose_gateway_docs",
+            return_value=True,
+        ):
+            client = TestClient(create_app())
+            response = client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),

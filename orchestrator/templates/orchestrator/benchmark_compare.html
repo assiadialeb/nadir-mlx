@@ -147,8 +147,9 @@
 
 {% if run_a and run_b %}
 <script src="{% static 'orchestrator/vendor/chart.umd.min.js' %}"></script>
+{{ chart_overlay|json_script:"benchmark-chart-overlay" }}
 <script>
-const overlay = {{ chart_overlay_json|safe }};
+const overlay = JSON.parse(document.getElementById("benchmark-chart-overlay").textContent);
 
 function groupedBarChart(canvasId, leftData, rightData, leftLabel, rightLabel, yLabel) {
     const canvas = document.getElementById(canvasId);
