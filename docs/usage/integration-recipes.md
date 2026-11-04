@@ -155,10 +155,38 @@ model_list:
 
 litellm_settings:
   drop_params: true
+  # Avoid waking on_demand models via LiteLLM background probes.
+  background_health_checks: false
+  num_retries: 0
 
 general_settings:
   master_key: sk-litellm-master
 ```
+
+!!! warning "on_demand + LiteLLM"
+    Keep `background_health_checks: false` (or point health at `/health` only — never a chat completion). Set `num_retries: 0` for `on_demand` aliases so a timeout does not re-wake models across Macs. For exact token counters, request `stream_options.include_usage` where the client supports it.
+
+### Multi-Mac example
+
+Same public `model_name`, two Nadir hosts:
+
+```yaml
+model_list:
+  - model_name: nadir-chat
+    litellm_params:
+      model: openai/<gateway-alias>
+      api_base: http://studio-a.local:11380/v1
+      api_key: sk-local
+      timeout: 300
+  - model_name: nadir-chat
+    litellm_params:
+      model: openai/<gateway-alias>
+      api_base: http://studio-b.local:11380/v1
+      api_key: sk-local
+      timeout: 300
+```
+
+Each Mac still binds its **gateway to loopback** behind SSH/tunnel or a host firewall; only LiteLLM (or the tunnel) should be LAN-facing. Add each public Host to that Mac’s `NADIR_GATEWAY_ALLOWED_HOSTS` if the gateway bind is ever non-loopback.
 
 Run:
 

@@ -83,14 +83,14 @@ class Command(BaseCommand):
     def handle(self, *args, **options) -> None:
         host = str(options["host"]).strip() or "127.0.0.1"
         port = int(options["port"])
-        if host not in {"127.0.0.1", "localhost", "::1"}:
-            from orchestrator.mcp.auth_middleware import configured_mcp_api_key
+        from orchestrator.mcp.auth_middleware import configured_mcp_api_key
+        from orchestrator.security_utils import is_loopback_bind_host
 
-            if not configured_mcp_api_key():
-                raise SystemExit(
-                    "Refusing non-loopback MCP bind without NADIR_MCP_API_KEY "
-                    "(or NADIR_GATEWAY_API_KEY)."
-                )
+        if not is_loopback_bind_host(host) and not configured_mcp_api_key():
+            raise SystemExit(
+                "Refusing non-loopback MCP bind without NADIR_MCP_API_KEY "
+                "(or NADIR_GATEWAY_API_KEY)."
+            )
 
         app = _build_asgi_app()
         self.stdout.write(

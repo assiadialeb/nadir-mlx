@@ -15,22 +15,49 @@ from orchestrator.mcp.tools import register_tools
 
 MCP_HTTP_PATH = os.environ.get("NADIR_MCP_PATH", "/mcp").strip() or "/mcp"
 
+_LOOPBACK_HOST_PATTERNS = (
+    "127.0.0.1",
+    "127.0.0.1:*",
+    "localhost",
+    "localhost:*",
+    "[::1]",
+    "[::1]:*",
+    "::1",
+    "::1:*",
+)
+
+
+def _parse_csv_env(name: str) -> list[str]:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def mcp_allowed_hosts() -> list[str]:
+    """Hosts accepted by MCP transport security (anti DNS rebinding)."""
+    hosts = list(_LOOPBACK_HOST_PATTERNS)
+    for host in _parse_csv_env("NADIR_MCP_ALLOWED_HOSTS"):
+        hosts.append(host if ":" in host else f"{host}:*")
+    # Preserve order, drop duplicates.
+    return list(dict.fromkeys(hosts))
+
+
+def mcp_allowed_origins() -> list[str]:
+    """Browser Origins allowed to call MCP.
+
+    Empty list rejects any request that carries an ``Origin`` header (CLI/SDK
+    clients that omit Origin still work), matching the gateway Origin guard.
+    """
+    return _parse_csv_env("NADIR_MCP_CORS_ORIGINS")
+
 
 def _mcp_transport_security() -> TransportSecuritySettings:
-    """DNS-rebinding protection for non-loopback MCP binds."""
-    raw_hosts = os.environ.get("NADIR_MCP_ALLOWED_HOSTS", "").strip()
-    if not raw_hosts:
-        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
-
-    allowed_hosts: list[str] = []
-    for item in raw_hosts.split(","):
-        host = item.strip()
-        if not host:
-            continue
-        allowed_hosts.append(host if ":" in host else f"{host}:*")
+    """Always enable Host/Origin checks (loopback defaults + optional extras)."""
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=allowed_hosts,
+        allowed_hosts=mcp_allowed_hosts(),
+        allowed_origins=mcp_allowed_origins(),
     )
 
 
@@ -47,8 +74,13 @@ _session_manager_ready = False
 
 
 def mcp_http_enabled() -> bool:
-    """Return True when the integrated HTTP MCP endpoint should be mounted."""
-    return os.environ.get("NADIR_MCP_ENABLED", "true").strip().lower() in {
+    """Return True when the integrated HTTP MCP endpoint should be mounted.
+
+    Defaults to **false**: ``/mcp`` on Django ASGI is opt-in. Prefer
+    ``manage.py run_mcp`` on loopback. Set ``NADIR_MCP_ENABLED=true`` only when
+    the ASGI bind is intentional and auth/Host rules are configured.
+    """
+    return os.environ.get("NADIR_MCP_ENABLED", "false").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -90,3 +122,10 @@ def get_mcp_http_application() -> Any:
         handler = StreamableHTTPASGIApp(mcp.session_manager)
         _mcp_http_application = NadirMcpAuthMiddleware(handler)
     return _mcp_http_application
+
+
+def reset_mcp_http_application_cache() -> None:
+    """Clear the cached ASGI handler (tests only)."""
+    global _mcp_http_application, _session_manager_ready
+    _mcp_http_application = None
+    _session_manager_ready = False

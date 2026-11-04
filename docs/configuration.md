@@ -72,8 +72,9 @@ Per-instance overrides (lifecycle, idle minutes, concurrency) are set in **serve
 | `NADIR_MCP_PORT` | `11381` | Bind port for `manage.py run_mcp` |
 | `NADIR_MCP_PATH` | `/mcp` | URL path (Streamable HTTP) |
 | `NADIR_MCP_API_KEY` | — | Auth for MCP; falls back to `NADIR_GATEWAY_API_KEY` |
-| `NADIR_MCP_ENABLED` | `true` | Mount MCP on Django ASGI (`uvicorn mlx_orchestrator.asgi:application`) |
-| `NADIR_MCP_ALLOWED_HOSTS` | — | Extra Host values for MCP DNS-rebinding protection |
+| `NADIR_MCP_ENABLED` | `false` | Opt-in mount of `/mcp` on Django ASGI |
+| `NADIR_MCP_ALLOWED_HOSTS` | — | Extra Host values (loopback always allowed) |
+| `NADIR_MCP_CORS_ORIGINS` | — | Allowed browser Origins; empty rejects any `Origin` |
 
 See [MCP server](usage/mcp.md).
 

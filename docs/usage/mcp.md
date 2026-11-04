@@ -62,23 +62,26 @@ Omit `headers` when no `NADIR_MCP_API_KEY` / `NADIR_GATEWAY_API_KEY` is set (loo
 | `NADIR_MCP_PORT` | `11381` | Bind port for `run_mcp` |
 | `NADIR_MCP_PATH` | `/mcp` | URL path |
 | `NADIR_MCP_API_KEY` | — | Auth for MCP (falls back to gateway key) |
-| `NADIR_MCP_ENABLED` | `true` | Mount MCP on Django ASGI when using uvicorn |
-| `NADIR_MCP_ALLOWED_HOSTS` | — | Extra Host values for MCP DNS-rebinding protection |
+| `NADIR_MCP_ENABLED` | `false` | Opt-in mount of `/mcp` on Django ASGI (`uvicorn`) |
+| `NADIR_MCP_ALLOWED_HOSTS` | — | Extra Host values (loopback always allowed) |
+| `NADIR_MCP_CORS_ORIGINS` | — | Allowed browser `Origin` values; empty rejects any `Origin` |
 
 ## Combined ASGI (optional)
 
-Instead of `runserver` + `run_mcp`, serve Django and MCP on one port:
+Instead of `runserver` + `run_mcp`, serve Django and MCP on one port (loopback):
 
 ```bash
+export NADIR_MCP_ENABLED=true
 uvicorn mlx_orchestrator.asgi:application --host 127.0.0.1 --port 8000
 ```
 
-MCP is then at `http://127.0.0.1:8000/mcp`.
+MCP is then at `http://127.0.0.1:8000/mcp`. Do **not** enable this on a LAN bind without `NADIR_MCP_API_KEY`.
 
 ## Security
 
-- Prefer loopback bind.
-- Non-loopback `run_mcp` refuses to start without an API key.
+- Prefer loopback bind (`manage.py run_mcp` default).
+- DNS-rebinding protection is **always on**: `Host` must be loopback (or `NADIR_MCP_ALLOWED_HOSTS`); any `Origin` not in `NADIR_MCP_CORS_ORIGINS` is rejected (403).
+- Non-loopback bind without an API key is refused (`run_mcp` at startup; ASGI middleware returns 401).
 - Start/stop are powerful — treat the MCP key like a local admin credential.
 
 ## Related

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 import uuid
 from collections.abc import Sequence
 from urllib.parse import urlparse
@@ -103,7 +105,14 @@ def cors_allow_credentials(origins: Sequence[str]) -> bool:
 
 def gateway_allowed_hosts() -> list[str]:
     """Hosts accepted by TrustedHostMiddleware (anti DNS rebinding)."""
-    hosts: list[str] = ["localhost", "127.0.0.1", "[::1]", "testserver"]
+    hosts: list[str] = ["localhost", "127.0.0.1", "[::1]"]
+    # Django/Starlette TestClient uses Host: testserver — never in production.
+    if (
+        "pytest" in sys.modules
+        or os.environ.get("PYTEST_CURRENT_TEST")
+        or env_str("NADIR_TESTING", "").lower() in {"1", "true", "yes", "on"}
+    ):
+        hosts.append("testserver")
     extra = env_str(
         "NADIR_GATEWAY_ALLOWED_HOSTS",
         getattr(settings, "NADIR_GATEWAY_ALLOWED_HOSTS", ""),
