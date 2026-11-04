@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: November 2026 — Ollama `/api/chat` streaming (MLX-108).
+Last updated: November 2026 — Responses tools + stream events for Codex/Agents SDK (MLX-109).
 
 ## Cross-cutting (all modes)
 
@@ -20,7 +20,7 @@ Last updated: November 2026 — Ollama `/api/chat` streaming (MLX-108).
 | `X-Request-Id` on responses | ✅ |
 | CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
 | Shared upstream httpx client | ✅ |
-| `POST /v1/responses` (stateless façade) | ✅ MVP (no `previous_response_id` / store) |
+| `POST /v1/responses` (stateless façade) | ✅ tools/`tool_choice`, stream lifecycle events; no `previous_response_id` / store |
 | `POST /v1/messages` (Anthropic) | ✅ JSON + SSE stream (chat completions upstream) |
 | Ollama `/api/tags`, `/api/chat`, `/api/embed` | ✅ (`/api/chat` JSON + NDJSON stream) |
 | Multi-worker uvicorn | ❌ single process by default |
