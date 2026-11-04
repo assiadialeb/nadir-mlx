@@ -71,7 +71,7 @@ These are **not** part of `advanced`; use the main form.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `host` | `127.0.0.1` \| `0.0.0.0` | `127.0.0.1` | Bind address. **Prefer `127.0.0.1`** and expose clients only through the Nadir gateway. `0.0.0.0` makes the inference port reachable on the LAN; mlx-lm / mlx-vlm have **no auth**. |
+| `host` | `127.0.0.1` \| `0.0.0.0` | `127.0.0.1` | Bind address. **Prefer `127.0.0.1`** and expose clients only through the Nadir gateway. `0.0.0.0` makes the inference port reachable on the LAN; mlx-lm / mlx-vlm have **no auth**. Migration `0015` rebinds existing `0.0.0.0` rows to `127.0.0.1`; the Servers page flags any non-loopback host with a **LAN-exposed · no auth** badge. |
 | `model_id` | string | model folder name | **Gateway alias** — value clients send in the OpenAI `model` field (TEXT instances are rewritten to `default_model` upstream). |
 
 ### TEXT & MULTIMODAL

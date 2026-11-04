@@ -35,6 +35,8 @@ SQLite is used when no PostgreSQL host is configured.
 | `MLX_INSTANCE_WATCHDOG_ENABLED` | `true` | Auto-restart crashed instances |
 | `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED` | `true` | Restore `always_on` instances after process/host restart |
 | `MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS` | `12` | Max wait for port release after stop |
+| `MLX_INSTANCE_READY_TIMEOUT_SECONDS` | `300` | Max wait for `/health` after spawn before the start is marked `FAILED` |
+| `NADIR_RUNTIME_STATE_DIR` | `data/runtime` | Cross-process slot locks and route-cache generation stamp (share it between UI, gateway and MCP) |
 | `MLX_DISABLE_INSTANCE_WATCHDOG` | — | Set `1` to disable watchdog (tests) |
 
 ## Nadir Gateway

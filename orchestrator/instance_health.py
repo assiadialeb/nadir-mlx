@@ -10,13 +10,14 @@ import httpx
 from django.utils import timezone
 
 from orchestrator.env_utils import env_int, env_str
+from orchestrator.instance_locks import is_slot_lock_held_elsewhere
 from orchestrator.models import InferenceInstance
 from orchestrator.security_utils import build_validated_http_url, validate_server_bind_host
 from orchestrator.server_manager import (
     _find_listener_pids,
-    _is_process_alive,
     check_instance_status,
-    is_manual_stop_in_progress,
+    is_instance_process,
+    is_stop_in_progress,
 )
 
 HealthStatus = Literal["HEALTHY", "DEGRADED", "DOWN", "UNKNOWN"]
@@ -122,11 +123,11 @@ def evaluate_instance_health(instance: InferenceInstance) -> HealthStatus:
         return "DOWN" if instance.status == "FAILED" else "UNKNOWN"
 
     if instance.status == "LOADING":
-        if instance.pid and _is_process_alive(instance.pid):
+        if is_instance_process(instance.pid, instance.port):
             return "DEGRADED"
         return "DOWN"
 
-    pid_alive = bool(instance.pid and _is_process_alive(instance.pid))
+    pid_alive = is_instance_process(instance.pid, instance.port)
     port_listening = bool(_find_listener_pids(instance.port))
 
     if not pid_alive and not port_listening:
@@ -142,7 +143,8 @@ def evaluate_instance_health(instance: InferenceInstance) -> HealthStatus:
 
 def refresh_instance_health(instance: InferenceInstance) -> HealthStatus:
     """Sync runtime status, update health fields, and persist."""
-    if is_manual_stop_in_progress(instance):
+    # The actor holding the slot owns the row; observing mid-start would mark it FAILED.
+    if is_stop_in_progress(instance) or is_slot_lock_held_elsewhere(instance.port):
         return instance.health_status or "UNKNOWN"
 
     check_instance_status(instance)

@@ -16,12 +16,12 @@ from orchestrator.gateway.router import GatewayRouteError, GatewayTarget
 from orchestrator.gateway.route_cache import clear_gateway_route_cache
 from orchestrator.gateway_aliases import find_instance_by_gateway_alias, normalize_gateway_alias
 from orchestrator.instance_health import probe_http_health
-from orchestrator.instance_warmup import maybe_run_load_warmup
+from orchestrator.instance_locks import is_slot_lock_held_elsewhere
 from orchestrator.lifecycle_selectors import (
     is_on_demand_lifecycle,
     speculative_wake_enabled,
 )
-from orchestrator.server_manager import start_instance
+from orchestrator.server_manager import is_instance_process, start_instance
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -114,24 +114,13 @@ def _route_error_wake_timeout(alias: str) -> GatewayRouteError:
     )
 
 
-def _mark_wake_timed_out(instance: InferenceInstance) -> None:
-    instance.refresh_from_db()
-    if instance.status != "LOADING":
-        return
-    instance.status = "STOPPED"
-    instance.pid = None
-    instance.stopped_at = timezone.now()
-    instance.save(update_fields=["status", "pid", "stopped_at"])
-    clear_gateway_route_cache()
-
-
-def _ready_target_after_warmup(instance: InferenceInstance) -> GatewayTarget:
-    maybe_run_load_warmup(instance)
+def _ready_target(instance: InferenceInstance) -> GatewayTarget:
     clear_gateway_route_cache()
     return _gateway_target_from_instance(instance)
 
 
 def _wait_until_ready(instance: InferenceInstance, alias: str) -> GatewayTarget:
+    """Wait for another actor's start; the starter owns the row, we only observe it."""
     deadline = time.monotonic() + gateway_wake_timeout_seconds()
     poll_seconds = gateway_wake_poll_interval_seconds()
 
@@ -142,11 +131,19 @@ def _wait_until_ready(instance: InferenceInstance, alias: str) -> GatewayTarget:
         if instance.status == "STOPPED":
             raise _route_error_unavailable(alias, detail="Instance stopped during wake.")
         if _instance_is_ready(instance):
-            return _ready_target_after_warmup(instance)
+            return _ready_target(instance)
         time.sleep(poll_seconds)
 
-    _mark_wake_timed_out(instance)
     raise _route_error_wake_timeout(alias)
+
+
+def _is_loading_elsewhere(instance: InferenceInstance) -> bool:
+    """True when a live start is in flight (lock held or orphan process still loading)."""
+    if instance.status != "LOADING":
+        return False
+    return is_slot_lock_held_elsewhere(instance.port) or is_instance_process(
+        instance.pid, instance.port
+    )
 
 
 def _wake_on_demand_instance(instance: InferenceInstance, alias: str) -> GatewayTarget:
@@ -178,7 +175,7 @@ def _wake_on_demand_instance(instance: InferenceInstance, alias: str) -> Gateway
     instance.refresh_from_db()
     clear_gateway_route_cache()
     if _instance_is_ready(instance):
-        return _ready_target_after_warmup(instance)
+        return _ready_target(instance)
     return _wait_until_ready(instance, alias)
 
 
@@ -197,10 +194,11 @@ def _ensure_under_wake_lock(instance: InferenceInstance, alias: str) -> GatewayT
     except Exception:
         pass
 
-    if instance.status == "LOADING":
+    if _is_loading_elsewhere(instance):
         return _wait_until_ready(instance, alias)
 
-    if instance.status in ("STOPPED", "FAILED"):
+    # STOPPED / FAILED, or a stale LOADING row whose starter died before spawning.
+    if instance.status in ("STOPPED", "FAILED", "LOADING"):
         return _wake_on_demand_instance(instance, alias)
 
     raise _route_error_unavailable(alias, detail=f"Status is {instance.status.lower()}.")
@@ -269,6 +267,8 @@ def maybe_speculative_wake(alias: str) -> None:
     if not is_on_demand_lifecycle(instance.server_config):
         return
     if instance.status == "RUNNING" and probe_http_health(instance):
+        # A discovery probe announces imminent use: keep idle offload away.
+        touch_instance_last_used_at(instance.pk)
         return
     if instance.status not in ("STOPPED", "FAILED", "LOADING"):
         return

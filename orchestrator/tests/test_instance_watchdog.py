@@ -131,35 +131,74 @@ class InstanceWatchdogAutoRestartTests(TestCase):
         self.instance.refresh_from_db()
         self.assertIn("restart_frozen_until", self.instance.server_config["ops"])
 
-    @patch("orchestrator.instance_watchdog.is_manual_stop_in_progress", return_value=True)
     @patch("orchestrator.instance_watchdog.restart_instance")
-    def test_attempt_auto_restart_skips_manual_stop(
+    def test_attempt_auto_restart_skips_stop_in_progress(
         self,
         mock_restart: MagicMock,
-        _mock_manual: MagicMock,
     ) -> None:
+        self.instance.stopping_since = timezone.now()
         _attempt_auto_restart(self.instance)
         mock_restart.assert_not_called()
 
+    @patch("orchestrator.instance_watchdog.restart_instance")
+    def test_attempt_auto_restart_never_undoes_user_stop(
+        self,
+        mock_restart: MagicMock,
+    ) -> None:
+        self.instance.desired_state = InferenceInstance.DESIRED_STATE_STOPPED
+        _attempt_auto_restart(self.instance)
+        mock_restart.assert_not_called()
+
+    @patch("orchestrator.instance_watchdog.restart_instance")
+    def test_attempt_auto_restart_uses_automatic_non_blocking_restart(
+        self,
+        mock_restart: MagicMock,
+    ) -> None:
+        _attempt_auto_restart(self.instance)
+        mock_restart.assert_called_once_with(
+            self.instance,
+            automatic=True,
+            wait_for_slot=False,
+        )
+
 
 class InstanceWatchdogCycleTests(TestCase):
+    @patch("orchestrator.instance_watchdog._fail_orphaned_benchmarks")
     @patch("orchestrator.instance_watchdog._attempt_auto_restart")
     @patch("orchestrator.instance_watchdog.refresh_all_instance_health")
-    def test_run_watchdog_cycle_refreshes_health_and_restarts(
+    def test_run_watchdog_cycle_restarts_only_failed_rows_meant_to_run(
         self,
         mock_refresh: MagicMock,
         mock_restart: MagicMock,
+        mock_orphans: MagicMock,
     ) -> None:
-        InferenceInstance.objects.create(
-            model_name="stopped-model",
+        failed = InferenceInstance.objects.create(
+            model_name="failed-model",
             port=11456,
             launch_mode="TEXT",
-            server_config={"model_id": "stopped"},
+            server_config={"model_id": "failed"},
+            status="FAILED",
+        )
+        InferenceInstance.objects.create(
+            model_name="user-stopped-model",
+            port=11457,
+            launch_mode="TEXT",
+            server_config={"model_id": "user-stopped"},
+            status="FAILED",
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+        )
+        InferenceInstance.objects.create(
+            model_name="sleeping-model",
+            port=11458,
+            launch_mode="TEXT",
+            server_config={"model_id": "sleeping"},
             status="STOPPED",
         )
         run_watchdog_cycle()
         mock_refresh.assert_called_once()
         mock_restart.assert_called_once()
+        self.assertEqual(mock_restart.call_args.args[0].pk, failed.pk)
+        mock_orphans.assert_called_once()
 
 
 class InstanceWatchdogStartupTests(TestCase):

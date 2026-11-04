@@ -16,13 +16,13 @@ from .model_lifecycle import delete_installed_model
 from .model_utils import reconcile_stale_downloads, sync_model_download_status, validate_model_folder_name
 from .server_manager import (
     parse_launch_mode,
-    start_instance,
-    stop_instance,
+    request_instance_stop,
     delete_instance,
-    restart_instance,
     update_stopped_instance,
     get_instance_logs,
 )
+from .instance_background import restart_instance_in_background, start_instance_in_background
+from .instance_locks import InstanceSlotBusy
 from .instance_health import refresh_instance_health
 from .server_types import SERVER_TYPES
 from .model_registry import (
@@ -341,7 +341,7 @@ def start_instance_view(request):
                 launch_mode,
                 model_name,
             )
-            instance = start_instance(model_name, port, launch_mode, server_config)
+            plan = start_instance_in_background(model_name, port, launch_mode, server_config)
             mode_labels = {
                 "MULTIMODAL": "Multimodal (mlx_vlm)",
                 "EMBEDDING": "Embeddings (mlx-embeddings)",
@@ -350,12 +350,16 @@ def start_instance_view(request):
                 "TTS": "TTS (mlx-audio / Kokoro)",
                 "STT": "STT (mlx-audio / Whisper)",
             }
-            mode_label = mode_labels.get(instance.launch_mode, "Text (mlx_lm)")
-            messages.success(
-                request,
-                f"{mode_label} instance started on port {instance.port} (PID: {instance.pid}).",
-            )
-        except ValueError as e:
+            mode_label = mode_labels.get(plan.launch_mode, "Text (mlx_lm)")
+            if plan.already_active:
+                messages.info(request, f"{mode_label} instance is already active on port {plan.port}.")
+            else:
+                messages.info(
+                    request,
+                    f"{mode_label} instance loading on port {plan.port}. "
+                    "Status turns Running once /health answers and warmup completes.",
+                )
+        except (ValueError, InstanceSlotBusy) as e:
             messages.error(request, str(e))
         except Exception as e:
             messages.error(request, f"Failed to start instance: {str(e)}")
@@ -369,8 +373,14 @@ def stop_instance_view(request, instance_id):
     if request.method == 'POST':
         instance = get_object_or_404(InferenceInstance, id=instance_id)
         try:
-            stop_instance(instance)
-            messages.success(request, f"Instance on port {instance.port} stopped.")
+            if request_instance_stop(instance):
+                messages.success(request, f"Instance on port {instance.port} stopped.")
+            else:
+                messages.info(
+                    request,
+                    f"Stop queued for port {instance.port}: it will stop as soon as "
+                    "the current start/stop operation finishes.",
+                )
         except RuntimeError as exc:
             messages.error(request, str(exc))
         except Exception as e:
@@ -406,17 +416,17 @@ def edit_instance_view(request, instance_id):
         instance.refresh_from_db()
 
         if restart_after:
-            restart_instance(instance)
-            messages.success(
+            restart_instance_in_background(instance)
+            messages.info(
                 request,
-                f"Instance {instance.model_name} updated and restarted on port {instance.port}.",
+                f"Instance {instance.model_name} updated; restarting on port {instance.port}.",
             )
         else:
             messages.success(
                 request,
                 f"Configuration updated for {instance.model_name} (port {instance.port}).",
             )
-    except ValueError as exc:
+    except (ValueError, InstanceSlotBusy) as exc:
         messages.error(request, str(exc))
     except Exception as exc:
         messages.error(request, f"Failed to update instance: {exc}")
@@ -431,12 +441,12 @@ def restart_instance_view(request, instance_id):
 
     instance = get_object_or_404(InferenceInstance, id=instance_id)
     try:
-        restarted = restart_instance(instance)
-        messages.success(
+        restart_instance_in_background(instance)
+        messages.info(
             request,
-            f"Instance {restarted.model_name} restarted on port {restarted.port} (PID: {restarted.pid}).",
+            f"Restarting {instance.model_name} on port {instance.port}.",
         )
-    except ValueError as exc:
+    except (ValueError, InstanceSlotBusy) as exc:
         messages.error(request, str(exc))
     except Exception as exc:
         messages.error(request, f"Failed to restart instance: {exc}")
@@ -451,7 +461,7 @@ def delete_instance_view(request, instance_id):
         model_name = instance.model_name
         port = instance.port
         try:
-            delete_instance(instance)
+            delete_instance(instance, blocking=False)
             messages.success(
                 request,
                 f"Instance {model_name} (port {port}) deleted.",

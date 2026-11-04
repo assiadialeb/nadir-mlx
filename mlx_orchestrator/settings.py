@@ -226,6 +226,14 @@ INSTANCE_STARTUP_RECONCILE_ENABLED = _env_bool(
 MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS = float(
     os.environ.get("MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS", "12")
 )
+# Max wait for /health after spawn before a start is declared FAILED.
+MLX_INSTANCE_READY_TIMEOUT_SECONDS = float(
+    os.environ.get("MLX_INSTANCE_READY_TIMEOUT_SECONDS", "300")
+)
+# Cross-process lock files and route-cache generation stamp (UI / gateway / MCP).
+NADIR_RUNTIME_STATE_DIR = Path(
+    os.environ.get("NADIR_RUNTIME_STATE_DIR", str(BASE_DIR / "data" / "runtime"))
+)
 
 # MLX inference instance ports (auto-assigned by server_manager.get_free_port)
 INSTANCE_PORT_RANGE_START = 11400

@@ -16,10 +16,15 @@ from orchestrator.server_manager import (
     _force_stop_pids,
     _is_process_alive,
     _resolve_server_config,
-    is_manual_stop_in_progress,
+    is_instance_process,
+    is_stop_in_progress,
     stop_instance,
 )
 from orchestrator.models import InferenceInstance
+
+
+def _descendants(root: int) -> set[int]:
+    return {root, root + 1}
 
 
 class ServerManagerStopTests(TestCase):
@@ -31,20 +36,56 @@ class ServerManagerStopTests(TestCase):
     def test_is_process_alive_returns_false_when_missing(self, _mock_kill: MagicMock) -> None:
         self.assertFalse(_is_process_alive(4242))
 
-    @patch("orchestrator.server_manager._find_listener_pids", return_value=[200])
+    @patch("orchestrator.server_manager.is_instance_process", return_value=True)
+    @patch("orchestrator.server_manager._find_listener_pids", return_value=[51])
     @patch("orchestrator.server_manager._find_orchestrator_launcher_pids", return_value=[100])
-    def test_collect_stop_targets_includes_port_and_pid_tree(
+    def test_collect_stop_targets_includes_launcher_and_pid_trees(
         self,
         _mock_launchers: MagicMock,
         _mock_listeners: MagicMock,
+        _mock_identity: MagicMock,
     ) -> None:
         instance = MagicMock(pid=50, port=11400)
         with patch(
             "orchestrator.server_manager._collect_descendant_pids",
-            return_value={50, 51},
+            side_effect=_descendants,
         ):
             targets = _collect_stop_targets(instance)
-        self.assertEqual(targets, {50, 51, 100, 200})
+        self.assertEqual(targets, {50, 51, 100, 101})
+
+    @patch("orchestrator.server_manager.is_instance_process", return_value=False)
+    @patch("orchestrator.server_manager._find_listener_pids", return_value=[777])
+    @patch("orchestrator.server_manager._find_orchestrator_launcher_pids", return_value=[])
+    def test_collect_stop_targets_ignores_recycled_pid_and_foreign_listener(
+        self,
+        _mock_launchers: MagicMock,
+        _mock_listeners: MagicMock,
+        _mock_identity: MagicMock,
+    ) -> None:
+        instance = MagicMock(pid=50, port=11400)
+        self.assertEqual(_collect_stop_targets(instance), set())
+
+    @patch("orchestrator.server_manager._is_process_alive", return_value=True)
+    @patch(
+        "orchestrator.server_manager._process_command",
+        return_value="python -m orchestrator.mlx_launcher --model /m --port 11400 --model-id x",
+    )
+    def test_is_instance_process_matches_launcher_on_exact_port(
+        self,
+        _mock_command: MagicMock,
+        _mock_alive: MagicMock,
+    ) -> None:
+        self.assertTrue(is_instance_process(42, 11400))
+        self.assertFalse(is_instance_process(42, 1140))
+
+    @patch("orchestrator.server_manager._is_process_alive", return_value=True)
+    @patch("orchestrator.server_manager._process_command", return_value="/usr/sbin/sshd -D")
+    def test_is_instance_process_rejects_unrelated_program(
+        self,
+        _mock_command: MagicMock,
+        _mock_alive: MagicMock,
+    ) -> None:
+        self.assertFalse(is_instance_process(42, 11400))
 
     @patch("orchestrator.server_manager._is_process_alive", return_value=False)
     @patch("orchestrator.server_manager._terminate_pid")
@@ -57,27 +98,27 @@ class ServerManagerStopTests(TestCase):
         self.assertEqual(survivors, set())
         mock_terminate.assert_called_once_with(123, signal.SIGTERM)
 
+    @patch("orchestrator.server_manager.clear_gateway_route_cache")
     @patch("orchestrator.server_manager._ensure_port_released", return_value=[])
     @patch("orchestrator.server_manager._force_stop_pids", return_value=set())
     @patch("orchestrator.server_manager._collect_stop_targets", return_value={999})
-    @patch("orchestrator.server_manager._set_manual_stop_in_progress")
     def test_stop_instance_marks_instance_stopped_when_cleanup_succeeds(
         self,
-        mock_stop_flag: MagicMock,
         _mock_targets: MagicMock,
         _mock_force_stop: MagicMock,
         _mock_ensure_port: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
         instance = MagicMock(pid=999, port=11400, status="RUNNING", server_config={"ops": {}})
-        stop_instance(instance)
+        stop_instance(instance, desired_state=InferenceInstance.DESIRED_STATE_STOPPED)
         self.assertIsNone(instance.pid)
         self.assertEqual(instance.status, "STOPPED")
-        instance.save.assert_called_once()
-        mock_stop_flag.assert_any_call(instance, active=True)
-        self.assertFalse(is_manual_stop_in_progress(instance))
+        self.assertEqual(instance.desired_state, InferenceInstance.DESIRED_STATE_STOPPED)
+        self.assertIsNone(instance.stopping_since)
+        self.assertFalse(is_stop_in_progress(instance))
 
     @patch("orchestrator.server_manager.is_port_free", side_effect=[False, False, True])
-    @patch("orchestrator.server_manager._port_blocker_pids", return_value=[])
+    @patch("orchestrator.server_manager._owned_port_pids", return_value=set())
     @patch("orchestrator.server_manager.time.sleep")
     @patch("orchestrator.server_manager.time.time")
     def test_ensure_port_released_waits_for_kernel_delay(
@@ -91,23 +132,34 @@ class ServerManagerStopTests(TestCase):
         remaining = _ensure_port_released(11446, timeout_seconds=2.0)
         self.assertEqual(remaining, [])
 
+    @patch("orchestrator.server_manager.clear_gateway_route_cache")
     @patch("orchestrator.server_manager._ensure_port_released", return_value=[4242])
     @patch("orchestrator.server_manager._force_stop_pids", return_value=set())
     @patch("orchestrator.server_manager._collect_stop_targets", return_value=set())
-    @patch("orchestrator.server_manager._set_manual_stop_in_progress")
-    def test_stop_instance_clears_manual_stop_flag_on_failure(
+    def test_stop_instance_clears_stopping_marker_on_failure(
         self,
-        mock_stop_flag: MagicMock,
         _mock_targets: MagicMock,
         _mock_force_stop: MagicMock,
         _mock_ensure_port: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
         instance = MagicMock(pid=999, port=11446, status="RUNNING", server_config={"ops": {}})
         with self.assertRaises(RuntimeError):
             stop_instance(instance)
-        mock_stop_flag.assert_any_call(instance, active=False)
         self.assertEqual(instance.status, "FAILED")
         self.assertIsNone(instance.pid)
+        self.assertIsNone(instance.stopping_since)
+
+    def test_is_stop_in_progress_expires_after_timeout(self) -> None:
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        fresh = MagicMock(stopping_since=timezone.now())
+        stale = MagicMock(stopping_since=timezone.now() - timedelta(minutes=5))
+        self.assertTrue(is_stop_in_progress(fresh))
+        self.assertFalse(is_stop_in_progress(stale))
+        self.assertFalse(is_stop_in_progress(MagicMock(stopping_since=None)))
 
 
 class ServerManagerLogFailureTests(TestCase):

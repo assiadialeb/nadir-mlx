@@ -92,81 +92,219 @@ class GetDownloadedModelsTests(DjangoTestCase):
             self.assertEqual(models, ["ready-model"])
 
 
+def _create_instance(**overrides: object) -> InferenceInstance:
+    fields: dict[str, object] = {
+        "model_name": "demo-model",
+        "port": 11450,
+        "launch_mode": "TEXT",
+        "status": "RUNNING",
+        "pid": 4242,
+    }
+    fields.update(overrides)
+    return InferenceInstance.objects.create(**fields)
+
+
+@patch("orchestrator.server_manager.clear_gateway_route_cache")
 class CheckInstanceStatusTests(DjangoTestCase):
-    def test_check_instance_status_stops_when_pid_missing(self) -> None:
-        instance = InferenceInstance.objects.create(
-            model_name="demo-model",
-            port=11450,
-            launch_mode="TEXT",
-            status="RUNNING",
-            pid=None,
-        )
+    def test_check_instance_status_stops_when_pid_missing(self, _mock_cache: MagicMock) -> None:
+        instance = _create_instance(pid=None, server_config={"ops": {"lifecycle_mode": "on_demand"}})
         status = check_instance_status(instance)
         instance.refresh_from_db()
         self.assertEqual(status, "STOPPED")
-        self.assertEqual(instance.status, "STOPPED")
+        self.assertEqual(instance.desired_state, InferenceInstance.DESIRED_STATE_STOPPED)
 
-    @patch("orchestrator.server_manager.os.kill", side_effect=ProcessLookupError)
+    @patch("orchestrator.server_manager.is_instance_process", return_value=False)
     @patch("orchestrator.server_manager._detect_log_failure", return_value=None)
-    def test_check_instance_status_marks_stopped_when_process_gone(
+    def test_check_instance_status_fails_always_on_exit_so_watchdog_restarts(
         self,
         _mock_failure: MagicMock,
-        _mock_kill: MagicMock,
+        _mock_identity: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
-        instance = InferenceInstance.objects.create(
-            model_name="demo-model",
-            port=11451,
-            launch_mode="TEXT",
-            status="RUNNING",
-            pid=4242,
-        )
+        instance = _create_instance(port=11451)
         status = check_instance_status(instance)
         instance.refresh_from_db()
-        self.assertEqual(status, "STOPPED")
+        self.assertEqual(status, "FAILED")
         self.assertIsNone(instance.pid)
+        self.assertEqual(instance.desired_state, InferenceInstance.DESIRED_STATE_RUNNING)
 
-    @patch("orchestrator.server_manager.os.kill")
+    @patch("orchestrator.server_manager.is_instance_process", return_value=False)
+    @patch("orchestrator.server_manager._detect_log_failure", return_value=None)
+    def test_check_instance_status_stops_when_recycled_pid_is_unrelated(
+        self,
+        _mock_failure: MagicMock,
+        _mock_identity: MagicMock,
+        _mock_cache: MagicMock,
+    ) -> None:
+        instance = _create_instance(port=11451, server_config={"ops": {"lifecycle_mode": "manual"}})
+        self.assertEqual(check_instance_status(instance), "STOPPED")
+
+    @patch("orchestrator.server_manager.is_instance_process", return_value=True)
     @patch("orchestrator.server_manager._detect_log_failure", return_value="CUDA OOM")
-    def test_check_instance_status_promotes_loading_to_running(
+    def test_check_instance_status_fails_orphan_loading_on_log_failure(
         self,
         mock_failure: MagicMock,
-        _mock_kill: MagicMock,
+        _mock_identity: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
-        instance = InferenceInstance.objects.create(
-            model_name="demo-model",
-            port=11452,
-            launch_mode="TEXT",
-            status="LOADING",
-            pid=4243,
-        )
+        instance = _create_instance(port=11452, status="LOADING", pid=4243)
         with patch("orchestrator.server_manager.stop_instance") as mock_stop:
             status = check_instance_status(instance)
             mock_stop.assert_called_once()
-        instance.refresh_from_db()
         self.assertEqual(status, "FAILED")
         mock_failure.assert_called_once()
 
-    @patch("orchestrator.server_manager.os.kill")
+    @patch("orchestrator.instance_health.probe_http_health", return_value=True)
+    @patch("orchestrator.server_manager.is_instance_process", return_value=True)
     @patch("orchestrator.server_manager._detect_log_failure", return_value=None)
-    def test_check_instance_status_promotes_loading_without_log_failure(
+    def test_check_instance_status_promotes_orphan_loading_once_healthy(
         self,
         _mock_failure: MagicMock,
-        _mock_kill: MagicMock,
+        _mock_identity: MagicMock,
+        _mock_health: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
-        instance = InferenceInstance.objects.create(
-            model_name="demo-model",
-            port=11453,
-            launch_mode="TEXT",
-            status="LOADING",
-            pid=4244,
-        )
+        instance = _create_instance(port=11453, status="LOADING", pid=4244)
         status = check_instance_status(instance)
         instance.refresh_from_db()
         self.assertEqual(status, "RUNNING")
-        self.assertEqual(instance.status, "RUNNING")
+        self.assertIsNotNone(instance.last_used_at)
+
+    @patch("orchestrator.instance_health.probe_http_health", return_value=False)
+    @patch("orchestrator.server_manager.is_instance_process", return_value=True)
+    @patch("orchestrator.server_manager._detect_log_failure", return_value=None)
+    def test_check_instance_status_keeps_loading_until_health_answers(
+        self,
+        _mock_failure: MagicMock,
+        _mock_identity: MagicMock,
+        _mock_health: MagicMock,
+        _mock_cache: MagicMock,
+    ) -> None:
+        instance = _create_instance(port=11453, status="LOADING", pid=4244)
+        self.assertEqual(check_instance_status(instance), "LOADING")
+
+    @patch("orchestrator.server_manager.is_slot_lock_held_elsewhere", return_value=True)
+    @patch("orchestrator.server_manager.is_instance_process", return_value=False)
+    def test_check_instance_status_ignores_slot_mid_transition(
+        self,
+        mock_identity: MagicMock,
+        _mock_lock: MagicMock,
+        _mock_cache: MagicMock,
+    ) -> None:
+        instance = _create_instance(port=11454, status="LOADING")
+        self.assertEqual(check_instance_status(instance), "LOADING")
+        mock_identity.assert_not_called()
+
+
+_LAUNCH_PATCHES = (
+    patch("orchestrator.server_manager.clear_gateway_route_cache"),
+    patch("orchestrator.instance_warmup.maybe_run_load_warmup", return_value=None),
+    patch("orchestrator.instance_health.probe_http_health", return_value=True),
+    patch("orchestrator.instance_eviction.ensure_headroom_for_load"),
+    patch("orchestrator.server_manager.time.sleep"),
+    patch("orchestrator.server_manager._detect_log_failure", return_value=None),
+    patch("orchestrator.server_manager.is_port_free", return_value=True),
+    patch("orchestrator.server_manager._terminate_launchers_on_port"),
+    patch("orchestrator.server_manager._build_launch_command", return_value=["python", "-m", "mlx"]),
+    patch("orchestrator.server_manager._prepare_model_for_launch"),
+    patch("orchestrator.server_manager.is_model_complete", return_value=True),
+)
+
+
+class LaunchLifecycleTests(DjangoTestCase):
+    """Two-phase start, intent (desired_state) and idempotency."""
+
+    def setUp(self) -> None:
+        self._model_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._model_dir.cleanup)
+        for patcher in _LAUNCH_PATCHES:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        resolve = patch(
+            "orchestrator.server_manager.resolve_model_dir",
+            return_value=Path(self._model_dir.name),
+        )
+        resolve.start()
+        self.addCleanup(resolve.stop)
+        popen = patch("orchestrator.server_manager.subprocess.Popen")
+        self.mock_popen = popen.start()
+        self.addCleanup(popen.stop)
+        self.mock_popen.return_value = MagicMock(pid=9001, poll=MagicMock(return_value=None))
+
+    def test_launch_prepared_instance_cancels_when_stop_requested(self) -> None:
+        from orchestrator.server_manager import (
+            InstanceStartCancelled,
+            launch_prepared_instance,
+            prepare_instance_launch,
+        )
+
+        plan = prepare_instance_launch("demo-model", port=11470)
+        InferenceInstance.objects.filter(pk=plan.instance_id).update(
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+        )
+        with self.assertRaises(InstanceStartCancelled):
+            launch_prepared_instance(plan)
+        row = InferenceInstance.objects.get(pk=plan.instance_id)
+        self.assertEqual(row.status, "STOPPED")
+        self.assertIsNone(row.pid)
+
+    @patch("orchestrator.server_manager.is_instance_process", return_value=True)
+    def test_prepare_instance_launch_is_idempotent_when_already_active(
+        self,
+        _mock_identity: MagicMock,
+    ) -> None:
+        from orchestrator.server_manager import prepare_instance_launch
+
+        existing = _create_instance(port=11471, pid=77)
+        plan = prepare_instance_launch("demo-model", port=11471)
+        self.assertTrue(plan.already_active)
+        self.assertEqual(plan.instance_id, existing.pk)
+
+    def test_prepare_instance_launch_marks_desired_running(self) -> None:
+        from orchestrator.server_manager import prepare_instance_launch
+
+        stopped = _create_instance(
+            port=11472,
+            status="STOPPED",
+            pid=None,
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+        )
+        prepare_instance_launch("demo-model", port=11472)
+        stopped.refresh_from_db()
+        self.assertEqual(stopped.status, "LOADING")
+        self.assertEqual(stopped.desired_state, InferenceInstance.DESIRED_STATE_RUNNING)
+
+    def test_restart_instance_automatic_respects_user_stop(self) -> None:
+        instance = _create_instance(
+            port=11473,
+            status="FAILED",
+            pid=None,
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+        )
+        result = restart_instance(instance, automatic=True)
+        self.assertEqual(result.status, "FAILED")
+        self.mock_popen.assert_not_called()
+
+    def test_request_instance_stop_queues_when_slot_busy(self) -> None:
+        from orchestrator.instance_locks import SlotLockHandoff
+        from orchestrator.server_manager import request_instance_stop
+
+        instance = _create_instance(port=11474, status="LOADING")
+        handoff = SlotLockHandoff(11474)
+        try:
+            self.assertFalse(request_instance_stop(instance))
+        finally:
+            handoff.release()
+        instance.refresh_from_db()
+        self.assertEqual(instance.desired_state, InferenceInstance.DESIRED_STATE_STOPPED)
+        self.assertEqual(instance.status, "LOADING")
 
 
 class StartInstanceTests(DjangoTestCase):
+    @patch("orchestrator.server_manager.clear_gateway_route_cache")
+    @patch("orchestrator.instance_warmup.maybe_run_load_warmup", return_value=None)
+    @patch("orchestrator.instance_health.probe_http_health", return_value=True)
+    @patch("orchestrator.instance_eviction.ensure_headroom_for_load")
     @patch("orchestrator.server_manager.time.sleep")
     @patch("orchestrator.server_manager.subprocess.Popen")
     @patch("orchestrator.server_manager._detect_log_failure", return_value=None)
@@ -187,6 +325,10 @@ class StartInstanceTests(DjangoTestCase):
         _mock_failure: MagicMock,
         mock_popen: MagicMock,
         _mock_sleep: MagicMock,
+        _mock_headroom: MagicMock,
+        mock_health: MagicMock,
+        mock_warmup: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
         with tempfile.TemporaryDirectory() as model_dir:
             mock_resolve.return_value = Path(model_dir)
@@ -198,6 +340,38 @@ class StartInstanceTests(DjangoTestCase):
         self.assertEqual(instance.status, "RUNNING")
         self.assertEqual(instance.pid, 9001)
         self.assertEqual(instance.port, 11454)
+        self.assertEqual(instance.desired_state, InferenceInstance.DESIRED_STATE_RUNNING)
+        mock_health.assert_called()
+        mock_warmup.assert_called_once()
+
+    @patch("orchestrator.server_manager.instance_ready_timeout_seconds", return_value=0.0)
+    @patch("orchestrator.server_manager.clear_gateway_route_cache")
+    @patch("orchestrator.server_manager._collect_stop_targets", return_value=set())
+    @patch("orchestrator.server_manager._ensure_port_released", return_value=[])
+    @patch("orchestrator.instance_health.probe_http_health", return_value=False)
+    @patch("orchestrator.instance_eviction.ensure_headroom_for_load")
+    @patch("orchestrator.server_manager.subprocess.Popen")
+    @patch("orchestrator.server_manager._detect_log_failure", return_value=None)
+    @patch("orchestrator.server_manager.is_port_free", return_value=True)
+    @patch("orchestrator.server_manager._terminate_launchers_on_port")
+    @patch("orchestrator.server_manager._build_launch_command", return_value=["python", "-m", "mlx"])
+    @patch("orchestrator.server_manager._prepare_model_for_launch")
+    @patch("orchestrator.server_manager.is_model_complete", return_value=True)
+    @patch("orchestrator.server_manager.resolve_model_dir")
+    def test_start_instance_fails_when_health_never_answers(
+        self,
+        mock_resolve: MagicMock,
+        *mocks: MagicMock,
+    ) -> None:
+        mock_popen = mocks[6]
+        mock_popen.return_value = MagicMock(pid=9002, poll=MagicMock(return_value=None))
+        with tempfile.TemporaryDirectory() as model_dir:
+            mock_resolve.return_value = Path(model_dir)
+            with self.assertRaises(RuntimeError):
+                start_instance("demo-model", port=11458, launch_mode="TEXT")
+        row = InferenceInstance.objects.get(model_name="demo-model", port=11458)
+        self.assertEqual(row.status, "FAILED")
+        self.assertIsNone(row.pid)
 
     @patch("orchestrator.server_manager.resolve_model_dir")
     def test_start_instance_rejects_missing_model_folder(self, mock_resolve: MagicMock) -> None:
@@ -248,12 +422,14 @@ class DeleteAndRestartTests(DjangoTestCase):
         mock_stop.assert_called_once()
         self.assertFalse(InferenceInstance.objects.filter(pk=instance.pk).exists())
 
-    @patch("orchestrator.server_manager.start_instance")
-    @patch("orchestrator.server_manager.stop_instance")
+    @patch("orchestrator.server_manager.launch_prepared_instance")
+    @patch("orchestrator.server_manager.prepare_instance_launch")
+    @patch("orchestrator.server_manager._stop_instance_locked")
     def test_restart_instance_stops_then_starts(
         self,
         mock_stop: MagicMock,
-        mock_start: MagicMock,
+        mock_prepare: MagicMock,
+        mock_launch: MagicMock,
     ) -> None:
         instance = InferenceInstance.objects.create(
             model_name="demo-model",
@@ -262,18 +438,12 @@ class DeleteAndRestartTests(DjangoTestCase):
             status="RUNNING",
             pid=101,
         )
-        relaunched = InferenceInstance.objects.create(
-            model_name="demo-model",
-            port=11457,
-            launch_mode="TEXT",
-            status="RUNNING",
-            pid=202,
-        )
-        mock_start.return_value = relaunched
+        mock_launch.return_value = instance
         result = restart_instance(instance)
-        mock_stop.assert_called_once_with(instance)
-        mock_start.assert_called_once()
-        self.assertEqual(result.pk, relaunched.pk)
+        mock_stop.assert_called_once_with(instance, desired_state=None)
+        self.assertTrue(mock_prepare.call_args.kwargs["mark_desired_running"])
+        mock_launch.assert_called_once_with(mock_prepare.return_value)
+        self.assertEqual(result.pk, instance.pk)
 
 
 class PortAndLogTests(TestCase):

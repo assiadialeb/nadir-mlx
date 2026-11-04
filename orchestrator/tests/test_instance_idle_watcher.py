@@ -141,11 +141,11 @@ class IdleOffloadAttemptTests(TestCase):
                 "ops": {
                     "lifecycle_mode": LIFECYCLE_MODE_ON_DEMAND,
                     "idle_minutes": 5,
-                    "manual_stop_in_progress": True,
                 },
             },
             status="RUNNING",
             last_used_at=timezone.now() - timedelta(minutes=10),
+            stopping_since=timezone.now(),
         )
         _attempt_idle_offload(instance)
         mock_stop.assert_not_called()

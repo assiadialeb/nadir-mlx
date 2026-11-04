@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -33,6 +34,7 @@ LLMBENCH_SCRIPT = Path(__file__).resolve().parent / "vendor" / "llmbench.py"
 BENCHMARK_TIMEOUT_SECONDS = 3600
 BENCHMARK_MAX_REQUESTS_PER_SCENARIO = 500
 VALID_BENCHMARK_KINDS = frozenset({"PERF", "QUALITY", "COMPLETE"})
+_RUNNER_PID_PARAM = "runner_pid"
 
 
 def _benchmark_output_path(run_id: int) -> Path:
@@ -127,6 +129,31 @@ def _mark_failed(run: BenchmarkRun, message: str) -> None:
     run.error_message = message[:2000]
     run.completed_at = timezone.now()
     run.save(update_fields=["status", "error_message", "completed_at"])
+
+
+def _is_runner_alive(runner_pid: object) -> bool:
+    if not isinstance(runner_pid, int) or runner_pid <= 0:
+        return False
+    try:
+        os.kill(runner_pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def fail_orphaned_benchmark_runs() -> int:
+    """Fail PENDING/RUNNING runs whose runner process exited (restart, crash).
+
+    Benchmarks run in a daemon thread of the process that started them; when
+    that process dies nothing else would ever finish the row.
+    """
+    interrupted = 0
+    for run in BenchmarkRun.objects.filter(status__in=("PENDING", "RUNNING")):
+        if _is_runner_alive((run.params or {}).get(_RUNNER_PID_PARAM)):
+            continue
+        _mark_failed(run, "Interrupted: the process running this benchmark exited.")
+        interrupted += 1
+    return interrupted
 
 
 def execute_perf_benchmark(run: BenchmarkRun) -> None:
@@ -361,6 +388,7 @@ def start_benchmark(
         **params,
         "host": resolved_host,
         "port": resolved_port,
+        _RUNNER_PID_PARAM: os.getpid(),
     }
     if instance is not None:
         full_params["draft_profile"] = draft_profile_from_server_config(

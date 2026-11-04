@@ -132,11 +132,27 @@ def lifecycle_policy_summary(server_config: dict[str, Any] | None) -> str:
     return "Always on"
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def is_exposed_beyond_loopback(server_config: dict[str, Any] | None) -> bool:
+    """True when the inference server binds a non-loopback address (no auth upstream)."""
+    host = str((server_config or {}).get("host") or "127.0.0.1").strip()
+    return host not in _LOOPBACK_HOSTS
+
+
 def enrich_instance_lifecycle_ui(instance: InferenceInstance) -> None:
     """Attach lifecycle display attributes for templates (MLX-44)."""
+    from orchestrator.instance_locks import is_slot_lock_held_elsewhere
+
     instance.lifecycle_on_demand = is_on_demand_lifecycle(instance.server_config)
     instance.lifecycle_pinned = is_pinned_lifecycle(instance.server_config)
-    label, variant = instance_status_badge(instance)
+    instance.transition_in_progress = is_slot_lock_held_elsewhere(instance.port)
+    instance.exposed_beyond_loopback = is_exposed_beyond_loopback(instance.server_config)
+    if instance.transition_in_progress and instance.status != "LOADING":
+        label, variant = "Working…", "loading"
+    else:
+        label, variant = instance_status_badge(instance)
     instance.status_badge_label = label
     instance.status_badge_variant = variant
     instance.lifecycle_policy_label = lifecycle_policy_summary(instance.server_config)

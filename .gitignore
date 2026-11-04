@@ -72,6 +72,7 @@ logs/benchmarks/*
 # Ephemeral generated image PNGs (response_format=url)
 data/generated_images/
 data/django_secret_key
+data/runtime/
 
 # macOS
 .DS_Store

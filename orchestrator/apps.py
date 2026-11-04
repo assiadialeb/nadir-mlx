@@ -11,9 +11,12 @@ class OrchestratorConfig(AppConfig):
         # Orphaned serve children exit when the parent is SIGKILL'd / OOM'd.
         start_parent_death_watch_if_needed()
 
+        import sys
+
         from orchestrator.instance_health import should_skip_watchdog
 
-        if should_skip_watchdog():
+        # pytest argv has no "test" token; loops would race the test database.
+        if "pytest" in sys.modules or should_skip_watchdog():
             return
 
         from django.conf import settings

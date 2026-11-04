@@ -12,9 +12,10 @@ from django.conf import settings
 from django.utils import timezone
 
 from orchestrator.instance_health import refresh_all_instance_health, should_skip_watchdog
+from orchestrator.instance_locks import InstanceSlotBusy
 from orchestrator.lifecycle_selectors import is_manual_lifecycle
 from orchestrator.models import InferenceInstance
-from orchestrator.server_manager import is_manual_stop_in_progress, restart_instance
+from orchestrator.server_manager import is_stop_in_progress, restart_instance
 
 logger = logging.getLogger(__name__)
 
@@ -61,53 +62,55 @@ def _is_restart_frozen(instance: InferenceInstance) -> bool:
         return False
 
 
-def _persist_ops(instance: InferenceInstance, ops: dict[str, Any]) -> None:
+def _persist_restart_ops(
+    instance: InferenceInstance,
+    updates: dict[str, Any],
+    *,
+    remove: tuple[str, ...] = (),
+) -> None:
+    """Merge restart bookkeeping into the latest ``ops`` (UI edits must not be lost)."""
+    instance.refresh_from_db(fields=["server_config"])
     config = dict(instance.server_config or {})
+    ops = dict(config.get("ops") or {})
+    ops.update(updates)
+    for key in remove:
+        ops.pop(key, None)
     config["ops"] = ops
     instance.server_config = config
     instance.save(update_fields=["server_config"])
 
 
+def _is_auto_restart_candidate(instance: InferenceInstance) -> bool:
+    """Only unexpected failures of instances the operator wants running."""
+    if instance.status != "FAILED":
+        return False
+    if instance.desired_state != InferenceInstance.DESIRED_STATE_RUNNING:
+        return False
+    if is_stop_in_progress(instance) or is_manual_lifecycle(instance.server_config):
+        return False
+    return _auto_restart_enabled(instance) and not _is_restart_frozen(instance)
+
+
 def _attempt_auto_restart(instance: InferenceInstance) -> None:
-    if is_manual_stop_in_progress(instance):
-        return
-    if is_manual_lifecycle(instance.server_config):
-        return
-    if not _auto_restart_enabled(instance):
-        return
-    if instance.status not in ("FAILED", "STOPPED"):
-        return
-    if _is_restart_frozen(instance):
+    if not _is_auto_restart_candidate(instance):
         return
 
-    ops = _ops_config(instance)
-    attempts = int(ops.get("restart_attempts") or 0)
-    max_retries = _max_restart_retries(instance)
-    if attempts >= max_retries:
+    attempts = int(_ops_config(instance).get("restart_attempts") or 0)
+    if attempts >= _max_restart_retries(instance):
         logger.warning(
             "Auto-restart frozen for instance %s on port %s after %s attempts",
             instance.model_name,
             instance.port,
             attempts,
         )
-        ops["restart_frozen_until"] = (
-            timezone.now() + timedelta(hours=1)
-        ).isoformat()
-        _persist_ops(instance, ops)
+        frozen_until = timezone.now() + timedelta(hours=1)
+        _persist_restart_ops(instance, {"restart_frozen_until": frozen_until.isoformat()})
         return
 
     try:
-        restart_instance(instance)
-        ops["restart_attempts"] = attempts + 1
-        ops["last_restart_at"] = timezone.now().isoformat()
-        ops.pop("restart_frozen_until", None)
-        _persist_ops(instance, ops)
-        logger.info(
-            "Auto-restarted instance %s on port %s (attempt %s)",
-            instance.model_name,
-            instance.port,
-            attempts + 1,
-        )
+        restart_instance(instance, automatic=True, wait_for_slot=False)
+    except InstanceSlotBusy:
+        return
     except Exception as exc:
         logger.exception(
             "Auto-restart failed for instance %s on port %s: %s",
@@ -115,19 +118,51 @@ def _attempt_auto_restart(instance: InferenceInstance) -> None:
             instance.port,
             exc,
         )
-        ops["restart_attempts"] = attempts + 1
-        ops["last_restart_error"] = str(exc)
-        ops["restart_frozen_until"] = (
-            timezone.now() + timedelta(seconds=_restart_backoff_seconds(attempts + 1))
-        ).isoformat()
-        _persist_ops(instance, ops)
+        backoff = timedelta(seconds=_restart_backoff_seconds(attempts + 1))
+        _persist_restart_ops(
+            instance,
+            {
+                "restart_attempts": attempts + 1,
+                "last_restart_error": str(exc),
+                "restart_frozen_until": (timezone.now() + backoff).isoformat(),
+            },
+        )
+        return
+
+    _persist_restart_ops(
+        instance,
+        {
+            "restart_attempts": attempts + 1,
+            "last_restart_at": timezone.now().isoformat(),
+        },
+        remove=("restart_frozen_until",),
+    )
+    logger.info(
+        "Auto-restarted instance %s on port %s (attempt %s)",
+        instance.model_name,
+        instance.port,
+        attempts + 1,
+    )
+
+
+def _fail_orphaned_benchmarks() -> None:
+    from orchestrator.benchmark_service import fail_orphaned_benchmark_runs
+
+    interrupted = fail_orphaned_benchmark_runs()
+    if interrupted:
+        logger.warning("Marked %s orphaned benchmark run(s) as FAILED", interrupted)
 
 
 def run_watchdog_cycle() -> None:
     """One health pass plus auto-restart for eligible instances."""
     refresh_all_instance_health()
-    for instance in InferenceInstance.objects.filter(status__in=("FAILED", "STOPPED")):
+    candidates = InferenceInstance.objects.filter(
+        status="FAILED",
+        desired_state=InferenceInstance.DESIRED_STATE_RUNNING,
+    )
+    for instance in candidates:
         _attempt_auto_restart(instance)
+    _fail_orphaned_benchmarks()
 
 
 def _watchdog_loop() -> None:

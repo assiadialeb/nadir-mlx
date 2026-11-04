@@ -44,17 +44,21 @@ class StartupReconcilePolicyTests(TestCase):
         )
         self.assertFalse(_should_restore_on_startup(instance))
 
-    @patch(
-        "orchestrator.startup_reconcile.is_manual_stop_in_progress",
-        return_value=True,
-    )
-    def test_should_not_restore_during_manual_stop(
-        self,
-        _mock_manual: MagicMock,
-    ) -> None:
+    def test_should_not_restore_during_stop(self) -> None:
+        from django.utils import timezone
+
         instance = InferenceInstance(
             status="STOPPED",
             server_config={"ops": {"lifecycle_mode": "always_on"}},
+            stopping_since=timezone.now(),
+        )
+        self.assertFalse(_should_restore_on_startup(instance))
+
+    def test_should_not_restore_user_stopped_always_on(self) -> None:
+        instance = InferenceInstance(
+            status="STOPPED",
+            server_config={"ops": {"lifecycle_mode": "always_on"}},
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
         )
         self.assertFalse(_should_restore_on_startup(instance))
 
