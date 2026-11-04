@@ -6,8 +6,11 @@ Clients (Open WebUI, curl, OpenAI SDKs, custom scripts) send the **gateway alias
 
 !!! note "Control plane vs data plane"
     - **Django `:8000`** — download models, start/stop instances, benchmarks, UI.
-    - **Nadir Gateway `:11380`** — inference only (`/v1/*`).
+    - **Nadir Gateway `:11380`** — inference only (`/v1/*` OpenAI + `/api/*` Ollama façade).
     - **MLX instances `:11400–11500`** — not exposed to cluster clients; reached via the gateway.
+
+!!! tip "Ollama-compatible clients (Open WebUI, Continue, Raycast)"
+    Point the client **Ollama base URL** at the gateway root: `http://127.0.0.1:11380` (not native Ollama `:11434`). Use the gateway **alias** as the model name. Probes (`GET /`, `/api/version`, `/api/tags`, `/api/ps`, `/api/show`) and chat/generate/embed are served on this port.
 
 !!! note "Lifecycle modes"
     - **`always_on`** (default) — instance must be **Running** before inference; gateway returns `503 model_unavailable` if stopped.
