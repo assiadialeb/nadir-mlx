@@ -81,6 +81,75 @@ class InstanceEvictionTests(SimpleTestCase):
         ordered = list_lru_evictable_instances(exclude_id=1)
         self.assertEqual([row.model_name for row in ordered], ["ready"])
 
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_GRACE_SECONDS": "not-an-int"}, clear=False)
+    def test_eviction_grace_falls_back_on_invalid_env(self) -> None:
+        from orchestrator.instance_eviction import eviction_grace_seconds
+
+        self.assertGreaterEqual(eviction_grace_seconds(), 0)
+
+    @patch("orchestrator.instance_eviction._stop_planned_victim")
+    @patch("orchestrator.server_manager.is_manual_stop_in_progress", side_effect=[True, False])
+    @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
+    @patch("orchestrator.instance_eviction.host_available_bytes", return_value=10)
+    @patch(
+        "orchestrator.instance_eviction.estimate_instance_footprint_bytes",
+        return_value=500,
+    )
+    @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
+    def test_plan_evictions_skips_manual_stop(
+        self,
+        _mock_need: MagicMock,
+        _mock_available: MagicMock,
+        mock_list: MagicMock,
+        _mock_manual: MagicMock,
+        mock_stop: MagicMock,
+    ) -> None:
+        pending = _instance(
+            pk=20,
+            model_name="pending",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+            status="LOADING",
+        )
+        mock_list.return_value = [
+            _instance(pk=1, model_name="manual", lifecycle="on_demand", last_used_at=timezone.now()),
+            _instance(pk=2, model_name="ok", lifecycle="on_demand", last_used_at=timezone.now()),
+        ]
+        mock_stop.side_effect = lambda victim: victim
+        self.assertEqual(ensure_headroom_for_load(pending), 1)
+        self.assertEqual(mock_stop.call_args[0][0].model_name, "ok")
+
+    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=True)
+    def test_stop_planned_victim_skips_manual(self, _mock_manual: MagicMock) -> None:
+        from orchestrator.instance_eviction import _stop_planned_victim
+
+        victim = _instance(
+            pk=1,
+            model_name="manual",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+        )
+        self.assertIsNone(_stop_planned_victim(victim))
+
+    @patch("orchestrator.server_manager.stop_instance", side_effect=RuntimeError("boom"))
+    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.instance_eviction.instance_gateway_alias", return_value="x")
+    def test_stop_planned_victim_handles_failure(
+        self,
+        _mock_alias: MagicMock,
+        _mock_manual: MagicMock,
+        _mock_stop: MagicMock,
+    ) -> None:
+        from orchestrator.instance_eviction import _stop_planned_victim
+
+        victim = _instance(
+            pk=1,
+            model_name="fail",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+        )
+        self.assertIsNone(_stop_planned_victim(victim))
+
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_GRACE_SECONDS": "120"}, clear=False)
     @patch("orchestrator.instance_eviction.is_wake_in_progress", return_value=False)
     @patch("orchestrator.instance_eviction.instance_gateway_alias", side_effect=lambda i: i.model_name)

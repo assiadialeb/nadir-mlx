@@ -270,3 +270,22 @@ class ResponsesSseTranslateAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn(b'"q\\":1', joined)
         # Tool-only streams must not emit an empty assistant message item.
         self.assertNotIn(b'"type":"message"', joined)
+
+    async def test_translate_chat_sse_emits_reasoning_deltas(self) -> None:
+        async def chunks():
+            yield b'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n'
+            yield b'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n'
+
+        joined = b"".join(
+            [
+                chunk
+                async for chunk in _translate_chat_sse_to_responses(
+                    chunks(),
+                    client_model_alias="demo",
+                )
+            ]
+        )
+        self.assertIn(b"response.reasoning_summary_text.delta", joined)
+        self.assertIn(b"think", joined)
+        self.assertIn(b'"type":"reasoning"', joined)
+        self.assertIn(b"response.output_text.delta", joined)

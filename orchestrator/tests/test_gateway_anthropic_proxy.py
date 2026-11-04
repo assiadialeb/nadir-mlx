@@ -229,6 +229,39 @@ class GatewayAnthropicProxyTests(SimpleTestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["type"], "error")
+        self.assertEqual(payload["error"]["message"], "bad")
+        self.assertEqual(payload["error"]["type"], "invalid_request_error")
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_messages_rewrites_upstream_server_error(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        upstream = httpx.Response(
+            502,
+            json={"error": {"message": "down", "type": "server_error"}},
+            headers={"content-type": "application/json"},
+        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
+        response = self.client.post(
+            "/v1/messages",
+            json={
+                "model": "demo-chat",
+                "max_tokens": 8,
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+        self.assertEqual(response.status_code, 502)
+        payload = response.json()
+        self.assertEqual(payload["type"], "error")
+        self.assertEqual(payload["error"]["message"], "down")
 
 
 class AnthropicStreamTranslateAsyncTests(IsolatedAsyncioTestCase):
@@ -306,3 +339,35 @@ class AnthropicStreamTranslateAsyncTests(IsolatedAsyncioTestCase):
         tool_start = joined.find(b'"type":"tool_use"')
         self.assertGreater(text_stop, text_start)
         self.assertGreater(tool_start, text_stop)
+
+    async def test_translate_chat_sse_emits_thinking_and_midstream_error(self) -> None:
+        async def thinking_chunks():
+            yield b'data: {"choices":[{"delta":{"reasoning":"plan"}}]}\n'
+            yield b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n'
+
+        joined = b"".join(
+            [
+                chunk
+                async for chunk in _translate_chat_sse_to_anthropic(
+                    thinking_chunks(),
+                    client_model_alias="demo",
+                )
+            ]
+        )
+        self.assertIn(b"thinking_delta", joined)
+        self.assertIn(b"text_delta", joined)
+
+        async def error_chunks():
+            yield b'data: {"error":{"message":"boom"}}\n'
+
+        err_joined = b"".join(
+            [
+                chunk
+                async for chunk in _translate_chat_sse_to_anthropic(
+                    error_chunks(),
+                    client_model_alias="demo",
+                )
+            ]
+        )
+        self.assertIn(b"event: error", err_joined)
+        self.assertIn(b"boom", err_joined)

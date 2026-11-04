@@ -81,28 +81,39 @@ async def proxy_anthropic_messages(body: dict[str, Any], headers: Any) -> Respon
 
 def _as_anthropic_error(upstream: Response) -> JSONResponse:
     """Rewrite OpenAI/gateway error envelopes into Anthropic Messages shape."""
-    message = "Upstream request failed"
-    error_type = "api_error"
-    payload: Any = None
-    body = getattr(upstream, "body", None)
-    if isinstance(body, (bytes, bytearray)) and body:
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            message = body.decode("utf-8", errors="replace") or message
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict):
-            message = str(error.get("message") or message)
-            raw_type = error.get("type")
-            if isinstance(raw_type, str) and raw_type:
-                error_type = raw_type if raw_type.endswith("_error") else "api_error"
-        elif isinstance(payload.get("type"), str) and payload.get("type") == "error":
-            return JSONResponse(status_code=upstream.status_code, content=payload)
+    payload, raw_message = _decode_error_body(getattr(upstream, "body", None))
+    if isinstance(payload, dict) and payload.get("type") == "error":
+        return JSONResponse(status_code=upstream.status_code, content=payload)
+    message, error_type = _openai_error_fields(payload, raw_message)
     return JSONResponse(
         status_code=upstream.status_code,
         content=anthropic_error_envelope(message, error_type),
     )
+
+
+def _decode_error_body(body: Any) -> tuple[Any, str]:
+    fallback = "Upstream request failed"
+    if not isinstance(body, (bytes, bytearray)) or not body:
+        return None, fallback
+    try:
+        return json.loads(body), fallback
+    except json.JSONDecodeError:
+        return None, body.decode("utf-8", errors="replace") or fallback
+
+
+def _openai_error_fields(payload: Any, fallback_message: str) -> tuple[str, str]:
+    message = fallback_message
+    error_type = "api_error"
+    if not isinstance(payload, dict):
+        return message, error_type
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return message, error_type
+    message = str(error.get("message") or message)
+    raw_type = error.get("type")
+    if isinstance(raw_type, str) and raw_type.endswith("_error"):
+        error_type = raw_type
+    return message, error_type
 
 
 async def _translate_chat_sse_to_anthropic(

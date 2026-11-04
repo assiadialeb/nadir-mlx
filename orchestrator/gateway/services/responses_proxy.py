@@ -27,6 +27,9 @@ from orchestrator.gateway.services.http_proxy import (
     validate_target_launch_mode,
 )
 
+EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added"
+EVENT_OUTPUT_ITEM_DONE = "response.output_item.done"
+
 
 async def proxy_responses_create(body: dict[str, Any], headers: Any) -> Response:
     """Translate Responses → chat completions, then map the result back."""
@@ -142,9 +145,9 @@ def _ensure_message_opened(meta: dict[str, Any]) -> list[bytes]:
     meta["next_output_index"] = int(meta["output_index"]) + 1
     return [
         _sse_event(
-            "response.output_item.added",
+            EVENT_OUTPUT_ITEM_ADDED,
             {
-                "type": "response.output_item.added",
+                "type": EVENT_OUTPUT_ITEM_ADDED,
                 "sequence_number": next_sequence(meta),
                 "output_index": meta["output_index"],
                 "item": {
@@ -178,9 +181,9 @@ def _ensure_reasoning_opened(meta: dict[str, Any]) -> list[bytes]:
     meta["next_output_index"] = int(meta["reasoning_output_index"]) + 1
     return [
         _sse_event(
-            "response.output_item.added",
+            EVENT_OUTPUT_ITEM_ADDED,
             {
-                "type": "response.output_item.added",
+                "type": EVENT_OUTPUT_ITEM_ADDED,
                 "sequence_number": next_sequence(meta),
                 "output_index": meta["reasoning_output_index"],
                 "item": {
@@ -225,9 +228,9 @@ def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[
                     },
                 ),
                 _sse_event(
-                    "response.output_item.done",
+                    EVENT_OUTPUT_ITEM_DONE,
                     {
-                        "type": "response.output_item.done",
+                        "type": EVENT_OUTPUT_ITEM_DONE,
                         "sequence_number": next_sequence(meta),
                         "output_index": meta["output_index"],
                         "item": {
@@ -305,9 +308,9 @@ def _close_reasoning_events(meta: dict[str, Any]) -> list[bytes]:
             },
         ),
         _sse_event(
-            "response.output_item.done",
+            EVENT_OUTPUT_ITEM_DONE,
             {
-                "type": "response.output_item.done",
+                "type": EVENT_OUTPUT_ITEM_DONE,
                 "sequence_number": next_sequence(meta),
                 "output_index": meta["reasoning_output_index"],
                 "item": {
@@ -348,9 +351,9 @@ def _close_tool_call_events(meta: dict[str, Any]) -> list[bytes]:
         )
         events.append(
             _sse_event(
-                "response.output_item.done",
+                EVENT_OUTPUT_ITEM_DONE,
                 {
-                    "type": "response.output_item.done",
+                    "type": EVENT_OUTPUT_ITEM_DONE,
                     "sequence_number": next_sequence(meta),
                     "output_index": output_index,
                     "item": {
@@ -477,9 +480,9 @@ def _map_tool_call_deltas(
             meta["tool_call_ids"][call.index] = call.id or f"call_{call.index}"
             events.append(
                 _sse_event(
-                    "response.output_item.added",
+                    EVENT_OUTPUT_ITEM_ADDED,
                     {
-                        "type": "response.output_item.added",
+                        "type": EVENT_OUTPUT_ITEM_ADDED,
                         "sequence_number": next_sequence(meta),
                         "output_index": output_index,
                         "item": {

@@ -72,19 +72,11 @@ class ToolCallAccumulator:
 
 def parse_chat_sse_line(line: bytes) -> ChatSseEvent | None:
     """Parse one SSE line into a :class:`ChatSseEvent`, or ``None`` if noise."""
-    if not line.startswith(b"data:"):
+    payload = _load_sse_payload(line)
+    if payload is None:
         return None
-    raw = line[5:].strip()
-    if not raw:
-        return None
-    if raw == b"[DONE]":
+    if payload is _DONE:
         return ChatSseEvent(done=True)
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
 
     event = ChatSseEvent()
     error = payload.get("error")
@@ -95,38 +87,70 @@ def parse_chat_sse_line(line: bytes) -> ChatSseEvent | None:
     if isinstance(usage, dict):
         event.usage = usage
 
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        return event if event.usage is not None else None
+    _fill_choice_fields(event, payload.get("choices"))
+    if _event_is_empty(event):
+        return None
+    return event
 
+
+_DONE = object()
+
+
+def _load_sse_payload(line: bytes) -> dict[str, Any] | object | None:
+    if not line.startswith(b"data:"):
+        return None
+    raw = line[5:].strip()
+    if not raw:
+        return None
+    if raw == b"[DONE]":
+        return _DONE
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _fill_choice_fields(event: ChatSseEvent, choices: Any) -> None:
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return
     first = choices[0]
     finish = first.get("finish_reason")
     if isinstance(finish, str) and finish:
         event.finish_reason = finish
-
     delta = first.get("delta")
-    if isinstance(delta, dict):
-        text = delta.get("content")
-        if isinstance(text, str) and text:
-            event.text = text
-        reasoning = delta.get("reasoning_content")
-        if not isinstance(reasoning, str) or not reasoning:
-            reasoning = delta.get("reasoning")
-        if isinstance(reasoning, str) and reasoning:
-            event.reasoning = reasoning
-        tool_calls = delta.get("tool_calls")
-        if isinstance(tool_calls, list):
-            event.tool_call_deltas = [item for item in tool_calls if isinstance(item, dict)]
+    if not isinstance(delta, dict):
+        return
+    text = delta.get("content")
+    if isinstance(text, str) and text:
+        event.text = text
+    event.reasoning = _delta_reasoning(delta)
+    tool_calls = delta.get("tool_calls")
+    if isinstance(tool_calls, list):
+        event.tool_call_deltas = [item for item in tool_calls if isinstance(item, dict)]
 
-    if (
+
+def _delta_reasoning(delta: dict[str, Any]) -> str | None:
+    reasoning = delta.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning:
+        return reasoning
+    reasoning = delta.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        return reasoning
+    return None
+
+
+def _event_is_empty(event: ChatSseEvent) -> bool:
+    return (
         event.text is None
         and event.reasoning is None
         and not event.tool_call_deltas
         and event.finish_reason is None
         and event.usage is None
-    ):
-        return None
-    return event
+        and event.error is None
+    )
 
 
 def chat_sse_delta_text(line: bytes) -> str | None:
@@ -149,21 +173,32 @@ def tool_calls_as_ollama(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any
     """Convert OpenAI tool_calls into Ollama objects (arguments as JSON objects)."""
     converted: list[dict[str, Any]] = []
     for call in tool_calls:
-        function = call.get("function") if isinstance(call.get("function"), dict) else {}
-        name = function.get("name")
-        if not isinstance(name, str) or not name:
+        if not isinstance(call, dict):
             continue
-        arguments = function.get("arguments")
-        if isinstance(arguments, str):
-            try:
-                parsed = json.loads(arguments) if arguments else {}
-            except json.JSONDecodeError:
-                parsed = {}
-            arguments = parsed if isinstance(parsed, dict) else {}
-        elif not isinstance(arguments, dict):
-            arguments = {}
-        converted.append({"function": {"name": name, "arguments": arguments}})
+        converted_call = _openai_tool_call_to_ollama(call)
+        if converted_call is not None:
+            converted.append(converted_call)
     return converted
+
+
+def _openai_tool_call_to_ollama(call: dict[str, Any]) -> dict[str, Any] | None:
+    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    return {"function": {"name": name, "arguments": _coerce_ollama_arguments(function.get("arguments"))}}
+
+
+def _coerce_ollama_arguments(arguments: Any) -> dict[str, Any]:
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments) if arguments else {}
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    if isinstance(arguments, dict):
+        return arguments
+    return {}
 
 
 def _merge_tool_call_delta(call: AccumulatedToolCall, delta: dict[str, Any]) -> str:

@@ -302,20 +302,29 @@ def _normalize_ollama_messages(messages_in: list[Any]) -> list[dict[str, Any]]:
             continue
         normalized = _normalize_ollama_message(item, pending_tool_ids=pending_tool_ids)
         messages.append(normalized)
-        if normalized.get("role") == "assistant" and isinstance(
-            normalized.get("tool_calls"),
-            list,
-        ):
-            pending_tool_ids = {}
-            for call in normalized["tool_calls"]:
-                if not isinstance(call, dict):
-                    continue
-                function = call.get("function") if isinstance(call.get("function"), dict) else {}
-                name = function.get("name")
-                call_id = call.get("id")
-                if isinstance(name, str) and name and isinstance(call_id, str):
-                    pending_tool_ids.setdefault(name, []).append(call_id)
+        pending_tool_ids = _pending_ids_after_message(normalized, pending_tool_ids)
     return messages
+
+
+def _pending_ids_after_message(
+    normalized: dict[str, Any],
+    pending_tool_ids: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    if normalized.get("role") != "assistant":
+        return pending_tool_ids
+    tool_calls = normalized.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return pending_tool_ids
+    refreshed: dict[str, list[str]] = {}
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        name = function.get("name")
+        call_id = call.get("id")
+        if isinstance(name, str) and name and isinstance(call_id, str):
+            refreshed.setdefault(name, []).append(call_id)
+    return refreshed
 
 
 def _normalize_ollama_message(
@@ -327,34 +336,40 @@ def _normalize_ollama_message(
     if role == "tool":
         return _normalize_ollama_tool_message(item, pending_tool_ids=pending_tool_ids or {})
 
-    content = item.get("content")
-    images = item.get("images")
-    if isinstance(images, list) and images:
-        parts: list[dict[str, Any]] = []
-        if isinstance(content, str) and content:
-            parts.append({"type": "text", "text": content})
-        for image in images:
-            if not isinstance(image, str) or not image:
-                continue
-            url = image if image.startswith("data:") else f"data:image/png;base64,{image}"
-            parts.append({"type": "image_url", "image_url": {"url": url}})
-        message: dict[str, Any] = {
-            "role": role,
-            "content": parts or (content if content is not None else ""),
-        }
-    else:
-        message = {"role": role, "content": content if content is not None else ""}
-
+    message = _base_role_content_message(role, item.get("content"), item.get("images"))
     if role == "assistant":
-        tool_calls = _ollama_tool_calls_to_openai(item.get("tool_calls"))
-        if tool_calls:
-            message["tool_calls"] = tool_calls
-            if not message.get("content"):
-                message["content"] = None
-        thinking = item.get("thinking")
-        if isinstance(thinking, str) and thinking:
-            message["reasoning_content"] = thinking
+        _attach_assistant_extras(message, item)
     return message
+
+
+def _base_role_content_message(role: str, content: Any, images: Any) -> dict[str, Any]:
+    if isinstance(images, list) and images:
+        parts = _image_content_parts(content, images)
+        return {"role": role, "content": parts or (content if content is not None else "")}
+    return {"role": role, "content": content if content is not None else ""}
+
+
+def _image_content_parts(content: Any, images: list[Any]) -> list[dict[str, Any]]:
+    parts: list[dict[str, Any]] = []
+    if isinstance(content, str) and content:
+        parts.append({"type": "text", "text": content})
+    for image in images:
+        if not isinstance(image, str) or not image:
+            continue
+        url = image if image.startswith("data:") else f"data:image/png;base64,{image}"
+        parts.append({"type": "image_url", "image_url": {"url": url}})
+    return parts
+
+
+def _attach_assistant_extras(message: dict[str, Any], item: dict[str, Any]) -> None:
+    tool_calls = _ollama_tool_calls_to_openai(item.get("tool_calls"))
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+        if not message.get("content"):
+            message["content"] = None
+    thinking = item.get("thinking")
+    if isinstance(thinking, str) and thinking:
+        message["reasoning_content"] = thinking
 
 
 def _normalize_ollama_tool_message(
@@ -363,21 +378,27 @@ def _normalize_ollama_tool_message(
     pending_tool_ids: dict[str, list[str]],
 ) -> dict[str, Any]:
     content = item.get("content")
-    tool_call_id = item.get("tool_call_id")
-    if not isinstance(tool_call_id, str) or not tool_call_id:
-        tool_name = item.get("tool_name") or item.get("name")
-        if isinstance(tool_name, str) and tool_name in pending_tool_ids:
-            ids = pending_tool_ids[tool_name]
-            tool_call_id = ids.pop(0) if ids else f"call_{tool_name}"
-        elif isinstance(tool_name, str) and tool_name:
-            tool_call_id = f"call_{tool_name}"
-        else:
-            tool_call_id = "call_0"
     return {
         "role": "tool",
-        "tool_call_id": tool_call_id,
+        "tool_call_id": _resolve_tool_call_id(item, pending_tool_ids),
         "content": content if isinstance(content, str) else json.dumps(content or ""),
     }
+
+
+def _resolve_tool_call_id(
+    item: dict[str, Any],
+    pending_tool_ids: dict[str, list[str]],
+) -> str:
+    tool_call_id = item.get("tool_call_id")
+    if isinstance(tool_call_id, str) and tool_call_id:
+        return tool_call_id
+    tool_name = item.get("tool_name") or item.get("name")
+    if isinstance(tool_name, str) and tool_name in pending_tool_ids:
+        ids = pending_tool_ids[tool_name]
+        return ids.pop(0) if ids else f"call_{tool_name}"
+    if isinstance(tool_name, str) and tool_name:
+        return f"call_{tool_name}"
+    return "call_0"
 
 
 def _ollama_tool_calls_to_openai(tool_calls: Any) -> list[dict[str, Any]]:
@@ -386,28 +407,34 @@ def _ollama_tool_calls_to_openai(tool_calls: Any) -> list[dict[str, Any]]:
         return []
     converted: list[dict[str, Any]] = []
     for index, call in enumerate(tool_calls):
-        if not isinstance(call, dict):
-            continue
-        function = call.get("function") if isinstance(call.get("function"), dict) else call
-        name = function.get("name") if isinstance(function, dict) else None
-        if not isinstance(name, str) or not name:
-            continue
-        arguments = function.get("arguments") if isinstance(function, dict) else {}
-        if isinstance(arguments, dict):
-            arguments = json.dumps(arguments, separators=(",", ":"))
-        elif not isinstance(arguments, str):
-            arguments = "{}"
-        call_id = call.get("id")
-        if not isinstance(call_id, str) or not call_id:
-            call_id = f"call_{index}"
-        converted.append(
-            {
-                "id": call_id,
-                "type": "function",
-                "function": {"name": name, "arguments": arguments},
-            }
-        )
+        converted_call = _one_ollama_tool_call_to_openai(call, index)
+        if converted_call is not None:
+            converted.append(converted_call)
     return converted
+
+
+def _one_ollama_tool_call_to_openai(call: Any, index: int) -> dict[str, Any] | None:
+    if not isinstance(call, dict):
+        return None
+    function = call.get("function") if isinstance(call.get("function"), dict) else call
+    if not isinstance(function, dict):
+        return None
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    arguments = function.get("arguments")
+    if isinstance(arguments, dict):
+        arguments = json.dumps(arguments, separators=(",", ":"))
+    elif not isinstance(arguments, str):
+        arguments = "{}"
+    call_id = call.get("id")
+    if not isinstance(call_id, str) or not call_id:
+        call_id = f"call_{index}"
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": arguments},
+    }
 
 
 def _apply_ollama_options(chat: dict[str, Any], options: Any) -> None:

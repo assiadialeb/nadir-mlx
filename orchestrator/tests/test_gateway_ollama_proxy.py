@@ -10,7 +10,12 @@ from django.test import SimpleTestCase
 from fastapi.testclient import TestClient
 
 from orchestrator.gateway.app import create_app
-from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, EMBEDDINGS_PATH, GatewayTarget
+from orchestrator.gateway.router import (
+    CHAT_COMPLETIONS_PATH,
+    EMBEDDINGS_PATH,
+    GatewayRouteError,
+    GatewayTarget,
+)
 
 TEXT_TARGET = GatewayTarget(
     alias="demo-chat",
@@ -227,6 +232,50 @@ class GatewayOllamaProxyTests(SimpleTestCase):
         tool = final["message"]["tool_calls"][0]
         self.assertEqual(tool["function"]["name"], "get_weather")
         self.assertEqual(tool["function"]["arguments"], {"city": "Paris"})
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_chat_stream_emits_thinking(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        async def chunk_stream():
+            yield (
+                b'data: {"choices":[{"delta":{"reasoning":"plan"}}]}\n'
+                b'data: {"choices":[{"delta":{"content":"ok"}}]}\n'
+                b"data: [DONE]\n\n"
+            )
+
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.aiter_bytes = chunk_stream
+        upstream.aclose = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
+        response = self.client.post(
+            "/api/chat",
+            json={
+                "model": "demo-chat",
+                "stream": True,
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        lines = [json.loads(line) for line in response.content.splitlines() if line]
+        self.assertEqual(lines[0]["message"]["thinking"], "plan")
+        self.assertEqual(lines[1]["message"]["content"], "ok")
+
+    @patch(
+        "orchestrator.gateway.services.ollama_proxy.get_gateway_model",
+        side_effect=GatewayRouteError(status_code=404, code="model_not_found", message="missing"),
+    )
+    def test_show_unknown_model_returns_404(self, _mock_model: MagicMock) -> None:
+        response = self.client.post("/api/show", json={"name": "missing"})
+        self.assertEqual(response.status_code, 404)
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")
