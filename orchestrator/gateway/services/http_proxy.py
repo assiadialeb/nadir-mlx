@@ -121,6 +121,28 @@ def rewrite_sse_line_model(line: bytes, client_model_alias: str) -> bytes:
     return b"data: " + encoded
 
 
+def is_usage_only_sse_line(line: bytes) -> bool:
+    """Return True for mlx-lm usage-only chunks (``choices: []`` + ``usage``).
+
+    OpenAI SDKs that index ``chunk.choices[0]`` crash on these lines when the
+    client did not opt into ``stream_options.include_usage`` (regression C1).
+    """
+    if not line.startswith(b"data:"):
+        return False
+    raw = line[5:].strip()
+    if not raw or raw == b"[DONE]":
+        return False
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    choices = payload.get("choices")
+    usage = payload.get("usage")
+    return isinstance(choices, list) and len(choices) == 0 and isinstance(usage, dict)
+
+
 async def iter_sse_with_restored_model(
     chunks: AsyncIterator[bytes],
     client_model_alias: str,
@@ -129,6 +151,9 @@ async def iter_sse_with_restored_model(
     from orchestrator.gateway.request_timing import get_active_collector
 
     collector = get_active_collector()
+    strip_usage_only = bool(
+        collector is not None and getattr(collector, "strip_usage_only", False)
+    )
     buffer = b""
     async for chunk in chunks:
         buffer += chunk
@@ -137,12 +162,15 @@ async def iter_sse_with_restored_model(
             restored = rewrite_sse_line_model(line, client_model_alias)
             if collector is not None:
                 collector.observe_sse_line(restored)
+            if strip_usage_only and is_usage_only_sse_line(restored):
+                continue
             yield restored + b"\n"
     if buffer:
         restored = rewrite_sse_line_model(buffer, client_model_alias)
         if collector is not None:
             collector.observe_sse_line(restored)
-        yield restored
+        if not (strip_usage_only and is_usage_only_sse_line(restored)):
+            yield restored
 
 
 def upstream_url_for_path(target: GatewayTarget, path: str) -> str:

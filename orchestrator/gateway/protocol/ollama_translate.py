@@ -9,6 +9,11 @@ from orchestrator.gateway.protocol.chat_sse import (  # noqa: F401 — re-export
     chat_sse_delta_text,
     tool_calls_as_ollama,
 )
+from orchestrator.gateway.protocol.stable_json import (
+    stable_json_dumps,
+    stable_tool_arguments,
+    stabilize_chat_tools,
+)
 from orchestrator.gateway.router import GatewayRouteError
 
 _FINISH_TO_DONE_REASON = {
@@ -428,9 +433,11 @@ def _one_ollama_tool_call_to_openai(call: Any, index: int) -> dict[str, Any] | N
     if not isinstance(name, str) or not name:
         return None
     arguments = function.get("arguments")
-    if isinstance(arguments, dict):
-        arguments = json.dumps(arguments, separators=(",", ":"))
-    elif not isinstance(arguments, str):
+    if isinstance(arguments, (dict, list)):
+        arguments = stable_json_dumps(arguments)
+    elif isinstance(arguments, str):
+        arguments = stable_tool_arguments(arguments)
+    else:
         arguments = "{}"
     call_id = call.get("id")
     if not isinstance(call_id, str) or not call_id:
@@ -472,7 +479,7 @@ def _apply_ollama_format(chat: dict[str, Any], fmt: Any) -> None:
 def _copy_tools(chat: dict[str, Any], body: dict[str, Any]) -> None:
     tools = body.get("tools")
     if isinstance(tools, list) and tools:
-        chat["tools"] = tools
+        chat["tools"] = stabilize_chat_tools(tools)
     if "tool_choice" in body:
         chat["tool_choice"] = body["tool_choice"]
 

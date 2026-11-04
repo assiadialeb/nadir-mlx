@@ -10,6 +10,11 @@ from orchestrator.gateway.protocol.chat_sse import (  # noqa: F401 — re-export
     chat_sse_delta_text,
     chat_sse_finish_reason,
 )
+from orchestrator.gateway.protocol.stable_json import (
+    canonicalize_json_value,
+    stable_json_dumps,
+    stabilize_chat_tools,
+)
 from orchestrator.gateway.router import GatewayRouteError
 
 
@@ -139,7 +144,7 @@ def _token_parts_from_message_content(content: Any) -> list[str]:
         if not isinstance(block, dict):
             continue
         if block.get("type") == "tool_use":
-            parts.append(json.dumps(block.get("input") or {}, separators=(",", ":")))
+            parts.append(stable_json_dumps(block.get("input") or {}))
         elif block.get("type") == "tool_result":
             parts.append(str(block.get("content") or ""))
     return parts
@@ -232,20 +237,25 @@ def _copy_optional_sampling_fields(chat: dict[str, Any], body: dict[str, Any]) -
 def _copy_tools(chat: dict[str, Any], body: dict[str, Any]) -> None:
     tools = body.get("tools")
     if isinstance(tools, list) and tools:
-        chat["tools"] = [_anthropic_tool_to_openai(tool) for tool in tools if isinstance(tool, dict)]
+        chat["tools"] = stabilize_chat_tools(
+            [_anthropic_tool_to_openai(tool) for tool in tools if isinstance(tool, dict)]
+        )
     if "tool_choice" in body:
         chat["tool_choice"] = _anthropic_tool_choice_to_openai(body.get("tool_choice"))
 
 
 def _anthropic_tool_to_openai(tool: dict[str, Any]) -> dict[str, Any]:
+    parameters = (
+        tool.get("input_schema")
+        if isinstance(tool.get("input_schema"), dict)
+        else {}
+    )
     return {
         "type": "function",
         "function": {
             "name": tool.get("name"),
             "description": tool.get("description") or "",
-            "parameters": tool.get("input_schema")
-            if isinstance(tool.get("input_schema"), dict)
-            else {},
+            "parameters": canonicalize_json_value(parameters),
         },
     }
 
@@ -325,7 +335,7 @@ def _assistant_tool_use_message(
                 "type": "function",
                 "function": {
                     "name": str(block.get("name") or ""),
-                    "arguments": json.dumps(block.get("input") or {}, separators=(",", ":")),
+                    "arguments": stable_json_dumps(block.get("input") or {}),
                 },
             }
             for block in tool_uses
@@ -355,7 +365,7 @@ def _tool_result_content(content: Any) -> str:
         return _blocks_to_text(content)
     if content is None:
         return ""
-    return json.dumps(content, separators=(",", ":"))
+    return stable_json_dumps(content)
 
 
 def _normalize_content_blocks(content: list[Any]) -> Any:

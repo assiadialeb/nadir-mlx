@@ -7,6 +7,12 @@ import time
 import uuid
 from typing import Any
 
+from orchestrator.gateway.protocol.stable_json import (
+    canonicalize_json_value,
+    stable_json_dumps,
+    stable_tool_arguments,
+    stabilize_chat_tools,
+)
 from orchestrator.gateway.router import GatewayRouteError
 
 UNSUPPORTED_RESPONSE_FIELDS = frozenset(
@@ -85,7 +91,7 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
             if isinstance(tool, dict) and _is_function_tool(tool)
         ]
         if chat_tools:
-            chat["tools"] = chat_tools
+            chat["tools"] = stabilize_chat_tools(chat_tools)
 
     if "tool_choice" in body:
         chat["tool_choice"] = _responses_tool_choice_to_chat(body.get("tool_choice"))
@@ -124,14 +130,20 @@ def _is_function_tool(tool: dict[str, Any]) -> bool:
 
 def _responses_tool_to_chat(tool: dict[str, Any]) -> dict[str, Any]:
     if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
-        return tool
+        fn = dict(tool["function"])
+        if isinstance(fn.get("parameters"), dict):
+            fn["parameters"] = canonicalize_json_value(fn["parameters"])
+        out = dict(tool)
+        out["function"] = fn
+        return out
     name = tool.get("name")
+    parameters = tool.get("parameters") if isinstance(tool.get("parameters"), dict) else {}
     return {
         "type": "function",
         "function": {
             "name": name,
             "description": tool.get("description") or "",
-            "parameters": tool.get("parameters") if isinstance(tool.get("parameters"), dict) else {},
+            "parameters": canonicalize_json_value(parameters),
         },
     }
 
@@ -234,9 +246,7 @@ def _function_call_to_tool_call(item: dict[str, Any]) -> dict[str, Any] | None:
     if not name:
         return None
     call_id = str(item.get("call_id") or item.get("id") or _new_id("call"))
-    arguments = item.get("arguments")
-    if not isinstance(arguments, str):
-        arguments = json.dumps(arguments or {}, separators=(",", ":"))
+    arguments = stable_tool_arguments(item.get("arguments"))
     return {
         "id": call_id,
         "type": "function",
@@ -248,7 +258,7 @@ def _function_call_output_to_tool_message(item: dict[str, Any]) -> dict[str, Any
     call_id = str(item.get("call_id") or "")
     output = item.get("output")
     if not isinstance(output, str):
-        output = json.dumps(output, separators=(",", ":")) if output is not None else ""
+        output = stable_json_dumps(output) if output is not None else ""
     return {"role": "tool", "tool_call_id": call_id, "content": output}
 
 
@@ -356,9 +366,7 @@ def _tool_call_to_function_call_item(call: Any) -> dict[str, Any] | None:
     name = function.get("name")
     if not isinstance(name, str) or not name:
         return None
-    arguments = function.get("arguments")
-    if not isinstance(arguments, str):
-        arguments = json.dumps(arguments or {}, separators=(",", ":"))
+    arguments = stable_tool_arguments(function.get("arguments"))
     return {
         "id": str(call.get("id") or _new_id("fc")),
         "type": "function_call",

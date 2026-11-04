@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.responses import Response
 
 from orchestrator.gateway.chat_extensions import prepare_chat_upstream_body
+from orchestrator.gateway.request_timing import reset_request_timing, start_request_timing
 from orchestrator.gateway.protocol.chat_sse import (
     ToolCallAccumulator,
     parse_chat_sse_line,
@@ -158,44 +159,52 @@ async def _proxy_chat_like(
     route_label: str,
 ) -> Response:
     chat_body = translate_request(body)
-    thinking_enabled = _ollama_thinking_enabled(body)
-    target = await resolve_target_from_body(chat_body)
-    validate_target_launch_mode(target, CHAT_LAUNCH_MODES, route_label)
-    request_headers = forward_request_headers(headers)
-    url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
-    from orchestrator.gateway.thinking_control import kwargs_from_ollama
+    stream = bool(chat_body.get("stream"))
+    endpoint = "/api/chat" if route_label.endswith("chat") else "/api/generate"
+    collector = start_request_timing(endpoint=endpoint, stream=stream)
+    try:
+        thinking_enabled = _ollama_thinking_enabled(body)
+        target = await resolve_target_from_body(chat_body)
+        validate_target_launch_mode(target, CHAT_LAUNCH_MODES, route_label)
+        request_headers = forward_request_headers(headers)
+        url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
+        from orchestrator.gateway.thinking_control import kwargs_from_ollama
 
-    upstream_body = prepare_chat_upstream_body(
-        chat_body,
-        target.upstream_model,
-        force_include_usage=True,
-        chat_template_kwargs=kwargs_from_ollama(body),
-    )
-
-    if chat_body.get("stream"):
-        upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
-        if upstream.status_code >= 400:
-            return upstream
-        return StreamingResponse(
-            _translate_chat_sse(
-                upstream.body_iterator,
-                client_model_alias=target.alias,
-                stream_chunk=stream_chunk,
-                thinking_enabled=thinking_enabled,
-            ),
-            media_type="application/x-ndjson",
-            status_code=200,
+        upstream_body = prepare_chat_upstream_body(
+            chat_body,
+            target.upstream_model,
+            force_include_usage=True,
+            chat_template_kwargs=kwargs_from_ollama(body),
         )
 
-    upstream = await proxy_json_post(target, url, upstream_body, request_headers)
-    if upstream.status_code >= 400:
-        return upstream
-    kwargs: dict[str, Any] = {"client_model_alias": target.alias}
-    if translate_response is openai_chat_to_ollama:
-        kwargs["include_thinking"] = thinking_enabled
-    return JSONResponse(
-        content=translate_response(json.loads(upstream.body), **kwargs)
-    )
+        if stream:
+            upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
+            if upstream.status_code >= 400:
+                reset_request_timing(collector)
+                return upstream
+            return StreamingResponse(
+                _translate_chat_sse(
+                    upstream.body_iterator,
+                    client_model_alias=target.alias,
+                    stream_chunk=stream_chunk,
+                    thinking_enabled=thinking_enabled,
+                ),
+                media_type="application/x-ndjson",
+                status_code=200,
+            )
+
+        upstream = await proxy_json_post(target, url, upstream_body, request_headers)
+        if upstream.status_code >= 400:
+            return upstream
+        kwargs: dict[str, Any] = {"client_model_alias": target.alias}
+        if translate_response is openai_chat_to_ollama:
+            kwargs["include_thinking"] = thinking_enabled
+        return JSONResponse(
+            content=translate_response(json.loads(upstream.body), **kwargs)
+        )
+    finally:
+        if not stream:
+            reset_request_timing(collector)
 
 
 async def _translate_chat_sse(

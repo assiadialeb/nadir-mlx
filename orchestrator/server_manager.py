@@ -530,6 +530,9 @@ def _build_launch_command(
         "top-k": advanced.get("top_k"),
         "min-p": advanced.get("min_p"),
     })
+    from orchestrator.prompt_cache import resolve_prompt_cache_cli_flags
+
+    _append_cli_args(command, resolve_prompt_cache_cli_flags(advanced))
     if text_mtp_preview_enabled():
         _append_cli_args(command, {
             "draft-kind": advanced.get("draft_kind"),

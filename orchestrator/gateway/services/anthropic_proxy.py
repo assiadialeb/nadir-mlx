@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from orchestrator.gateway.chat_extensions import prepare_chat_upstream_body
+from orchestrator.gateway.request_timing import reset_request_timing, start_request_timing
 from orchestrator.gateway.protocol.anthropic_translate import (
     anthropic_error_envelope,
     anthropic_request_to_chat,
@@ -44,44 +45,51 @@ from orchestrator.gateway.thinking_control import kwargs_from_anthropic
 async def proxy_anthropic_messages(body: dict[str, Any], headers: Any) -> Response:
     """Handle Anthropic ``/v1/messages`` (JSON or SSE when ``stream`` is true)."""
     chat_body = anthropic_request_to_chat(body)
-    thinking_enabled = _anthropic_thinking_enabled(body)
-    target = await resolve_target_from_body(chat_body)
-    validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "anthropic messages")
-    request_headers = forward_request_headers(headers)
-    url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
-    upstream_body = prepare_chat_upstream_body(
-        chat_body,
-        target.upstream_model,
-        force_include_usage=True,
-        chat_template_kwargs=kwargs_from_anthropic(body),
-    )
-
-    if chat_body.get("stream"):
-        upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
-        if upstream.status_code >= 400:
-            return _as_anthropic_error(upstream)
-        return StreamingResponse(
-            _translate_chat_sse_to_anthropic(
-                upstream.body_iterator,
-                client_model_alias=target.alias,
-                thinking_enabled=thinking_enabled,
-            ),
-            media_type="text/event-stream",
-            status_code=200,
+    stream = bool(chat_body.get("stream"))
+    collector = start_request_timing(endpoint="/v1/messages", stream=stream)
+    try:
+        thinking_enabled = _anthropic_thinking_enabled(body)
+        target = await resolve_target_from_body(chat_body)
+        validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "anthropic messages")
+        request_headers = forward_request_headers(headers)
+        url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
+        upstream_body = prepare_chat_upstream_body(
+            chat_body,
+            target.upstream_model,
+            force_include_usage=True,
+            chat_template_kwargs=kwargs_from_anthropic(body),
         )
 
-    upstream = await proxy_json_post(target, url, upstream_body, request_headers)
-    if upstream.status_code >= 400:
-        return _as_anthropic_error(upstream)
-    chat_payload = json.loads(upstream.body)
-    return JSONResponse(
-        status_code=200,
-        content=chat_completion_to_anthropic(
-            chat_payload,
-            client_model_alias=target.alias,
-            include_thinking=thinking_enabled,
-        ),
-    )
+        if stream:
+            upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
+            if upstream.status_code >= 400:
+                reset_request_timing(collector)
+                return _as_anthropic_error(upstream)
+            return StreamingResponse(
+                _translate_chat_sse_to_anthropic(
+                    upstream.body_iterator,
+                    client_model_alias=target.alias,
+                    thinking_enabled=thinking_enabled,
+                ),
+                media_type="text/event-stream",
+                status_code=200,
+            )
+
+        upstream = await proxy_json_post(target, url, upstream_body, request_headers)
+        if upstream.status_code >= 400:
+            return _as_anthropic_error(upstream)
+        chat_payload = json.loads(upstream.body)
+        return JSONResponse(
+            status_code=200,
+            content=chat_completion_to_anthropic(
+                chat_payload,
+                client_model_alias=target.alias,
+                include_thinking=thinking_enabled,
+            ),
+        )
+    finally:
+        if not stream:
+            reset_request_timing(collector)
 
 
 def _anthropic_thinking_enabled(body: dict[str, Any]) -> bool:

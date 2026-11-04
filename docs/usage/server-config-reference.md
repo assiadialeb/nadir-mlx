@@ -5,7 +5,7 @@ Reference for Nadir inference instance `server_config`: standard form fields, li
 !!! note "Living document"
     Keys and wiring follow `orchestrator/server_config_schema.py` and `orchestrator/server_manager.py`. Update this page when the whitelist or launch commands change.
 
-Last updated: June 2026 (advanced key wiring audit, lifecycle modes).
+Last updated: November 2026 (prompt-cache knobs, lifecycle modes).
 
 ## Where to configure
 
@@ -53,7 +53,7 @@ All whitelisted `advanced` keys are forwarded at instance **Start** via `server_
 
 | Launch mode | Allowed keys | Wired |
 |-------------|--------------|-------|
-| TEXT | `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p` | Yes → `mlx_lm.server` CLI |
+| TEXT | `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`, `prompt_cache_size`, `prompt_cache_bytes` | Yes → `mlx_lm.server` CLI |
 | MULTIMODAL | `adapter_path`, `draft_model`, `draft_kind`, `draft_block_size`, `kv_bits`, `kv_quant_scheme`, `kv_group_size`, `enable_thinking`, `thinking_budget` | Yes → `mlx_vlm.server` CLI |
 | IMAGE | `quantize_override` | Yes → `image_server` (`apply_quantize_override`) |
 | TTS | `response_format` | Yes → `tts_server` default codec |
@@ -130,7 +130,7 @@ See [instance-lifecycle.md](instance-lifecycle.md) for gateway wake behaviour.
 
 ## Advanced JSON — TEXT (`mlx-lm`)
 
-Allowed keys: `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`.
+Allowed keys: `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`, `prompt_cache_size`, `prompt_cache_bytes`.
 
 Each key maps to a `--kebab-case` CLI flag on `mlx_lm.server` at instance start.
 
@@ -144,9 +144,14 @@ Each key maps to a `--kebab-case` CLI flag on `mlx_lm.server` at instance start.
 | `top_p` | `--top-p` | float | Nucleus sampling (default 1.0). |
 | `top_k` | `--top-k` | int | Top-k sampling (0 = disabled). |
 | `min_p` | `--min-p` | float | Min-p sampling (0 = disabled). |
+| `prompt_cache_size` | `--prompt-cache-size` | int (1–128) | Max distinct prefix KV caches in the mlx-lm LRU. New TEXT configs default from host unified memory (10–32). |
+| `prompt_cache_bytes` | `--prompt-cache-bytes` | int (≥1e6) | Byte budget for prompt KV caches. New TEXT configs default to ~2% of unified RAM (clamped 512 MiB–8 GiB). |
 
 !!! tip "Thinking on TEXT models"
     There is **no** `enable_thinking` key for TEXT in Nadir. Use `chat_template_args` when the mlx-lm chat template supports it, or rely on model-native thinking tokens in the stream (`delta.reasoning`).
+
+!!! tip "Prompt cache for agents"
+    Multi-turn agents that reuse the same system prompt + tools across turns get lower TTFT when the shared prefix hits the mlx-lm prompt cache. Keep tool **order** stable client-side; Nadir façades canonicalize JSON object key order so Anthropic / OpenAI / Responses / Ollama do not silently break prefix equality. Hit rate is shown on the Servers page (cached / prompt tokens from MLX-123 telemetry).
 
 **Example — Qwen with adapter and sampling:**
 
@@ -166,6 +171,15 @@ Each key maps to a `--kebab-case` CLI flag on `mlx_lm.server` at instance start.
   "chat_template_args": {
     "enable_thinking": false
   }
+}
+```
+
+**Example — raise prompt-cache capacity on a 48 GB Mac:**
+
+```json
+{
+  "prompt_cache_size": 24,
+  "prompt_cache_bytes": 2147483648
 }
 ```
 

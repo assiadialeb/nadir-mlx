@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from orchestrator.gateway.request_timing import (
     RequestTimingCollector,
@@ -13,6 +14,7 @@ from orchestrator.gateway.request_timing import (
     start_request_timing,
 )
 from orchestrator.gateway_telemetry_services import (
+    flush_gateway_timing_writes,
     list_recent_gateway_timings,
     record_gateway_request_timing,
 )
@@ -23,7 +25,7 @@ def _sse_data(payload: dict) -> bytes:
     return b"data: " + json.dumps(payload).encode() + b"\n"
 
 
-class RequestTimingCollectorTests(TestCase):
+class RequestTimingCollectorTests(SimpleTestCase):
     def test_visible_ttft_ignores_reasoning_then_tracks_text(self) -> None:
         collector = RequestTimingCollector(endpoint="/v1/chat/completions", stream=True)
         collector.mark_upstream_open()
@@ -96,7 +98,7 @@ class RequestTimingPersistenceTests(TestCase):
         self.assertEqual(len(recent), 2)
 
 
-class RequestTimingContextTests(TestCase):
+class RequestTimingContextTests(SimpleTestCase):
     @override_settings(NADIR_GATEWAY_TELEMETRY_ENABLED=True)
     def test_start_and_reset_collector(self) -> None:
         with patch(
@@ -132,3 +134,25 @@ class RequestTimingContextTests(TestCase):
             # Idempotent: second finalize is a no-op.
             reset_request_timing(collector)
             mock_record.assert_called_once()
+
+
+class RequestTimingAsyncPersistTests(IsolatedAsyncioTestCase, SimpleTestCase):
+    """T1: finalize from an async context must not hit sync ORM on the event loop."""
+
+    @override_settings(NADIR_GATEWAY_TELEMETRY_ENABLED=True)
+    async def test_finalize_from_async_persists_via_writer_queue(self) -> None:
+        with patch(
+            "orchestrator.gateway_telemetry_services.record_gateway_request_timing"
+        ) as mock_record:
+            collector = start_request_timing(
+                endpoint="/v1/chat/completions", stream=True
+            )
+            assert collector is not None
+            collector.mark_json_complete(
+                {"usage": {"prompt_tokens": 10, "completion_tokens": 2}}
+            )
+            reset_request_timing(collector)
+            flush_gateway_timing_writes()
+            mock_record.assert_called_once()
+            snap = mock_record.call_args.args[0]
+            self.assertEqual(snap.prompt_tokens, 10)

@@ -267,6 +267,20 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 !!! note "Input formats"
     WAV and MP3 decode in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on the MLX host. Realtime WebSocket STT is not supported in v1.
 
+## Prompt cache (prefix KV / TTFT)
+
+mlx-lm keeps an LRU of **prefix KV caches** (`--prompt-cache-size` / `--prompt-cache-bytes`). Agent loops that send the same system prompt + tool definitions every turn reuse that prefix and cut **TTFT**.
+
+| Concern | Guidance |
+|---------|----------|
+| Instance knobs | TEXT Advanced JSON: `prompt_cache_size`, `prompt_cache_bytes` (RAM-aware defaults on new servers). See [server-config-reference](server-config-reference.md). |
+| Tool order | Clients must keep the **tools array order** identical across turns. |
+| Façades | Anthropic / OpenAI / Responses / Ollama canonicalize nested JSON object keys (schemas + tool arguments) so translation does not reshuffle the shared prefix. |
+| Observability | mlx-lm reports `usage.prompt_tokens_details.cached_tokens`. Gateway telemetry (MLX-123) stores it; Servers UI shows per-request Cache and a recent **hit rate**. |
+
+!!! warning "What breaks the cache"
+    Per-turn noise in the shared prefix (timestamps in the system prompt, reordered tools, unstable JSON key order in tool schemas) forces a full prefill. Keep system+tools byte-stable; put turn-specific context only in user/assistant messages.
+
 ## Thinking / reasoning control (TTFT)
 
 mlx-lm accepts per-request `chat_template_kwargs` (notably `enable_thinking`). Nadir maps client fields so agents can disable long “thinking” traces that inflate **visible TTFT**:
@@ -278,7 +292,8 @@ mlx-lm accepts per-request `chat_template_kwargs` (notably `enable_thinking`). N
 | Responses `/v1/responses` | `reasoning.effort` or `reasoning_effort` | same mapping |
 | Anthropic `/v1/messages` | `thinking` absent or `type: disabled` | `enable_thinking: false` |
 | Anthropic | `thinking.type: enabled` (+ optional `budget_tokens`) | `enable_thinking: true` (+ budget) |
-| Ollama `/api/chat` | `think: false` / `true` | `enable_thinking: false` / `true` (only when set) |
+| Ollama `/api/chat` | `think` absent or `false` | `enable_thinking: false` |
+| Ollama `/api/chat` | `think: true` | `enable_thinking: true` (façade also emits `thinking`) |
 
 Clients may still send `chat_template_kwargs` directly; façade mappings override colliding keys.
 
@@ -321,9 +336,9 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
 | `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
 | `NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS` | `15` | Mid-request `last_used_at` refresh (SSE + long JSON) |
-| `NADIR_GATEWAY_TELEMETRY_ENABLED` | `true` | Per-request TTFT / prefill / cache metrics (logs + Servers UI) |
-| `NADIR_GATEWAY_TELEMETRY_FORCE_USAGE` | `true` | Force `stream_options.include_usage` on chat proxies for token/cache counts |
-| `NADIR_GATEWAY_TELEMETRY_RETAIN` | `100` | Max recent timing rows kept in the local DB |
+| `NADIR_GATEWAY_TELEMETRY_ENABLED` | `true` | Per-request TTFT / prefill / cache metrics (logs + Servers UI) for OpenAI chat, Anthropic, Responses, and Ollama |
+| `NADIR_GATEWAY_TELEMETRY_FORCE_USAGE` | `true` | Force upstream `stream_options.include_usage` for token/cache counts; usage-only SSE chunks are **stripped** from OpenAI clients that did not opt in (regression C1) |
+| `NADIR_GATEWAY_TELEMETRY_RETAIN` | `100` | Max recent timing rows kept in the local DB (pruned in batches) |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Stop idle `on_demand` instances in background |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | Idle watcher evaluation interval |
 | `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` under memory pressure before load |

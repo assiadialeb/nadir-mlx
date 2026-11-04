@@ -52,8 +52,8 @@ def test_anthropic_enabled_with_budget() -> None:
     ) == {"enable_thinking": True, "thinking_budget": 2048}
 
 
-def test_ollama_think_explicit_only() -> None:
-    assert kwargs_from_ollama({}) == {}
+def test_ollama_think_absent_defaults_off() -> None:
+    assert kwargs_from_ollama({}) == {"enable_thinking": False}
     assert kwargs_from_ollama({"think": False}) == {"enable_thinking": False}
     assert kwargs_from_ollama({"think": True}) == {"enable_thinking": True}
 

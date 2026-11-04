@@ -10,13 +10,15 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, GatewayRouteError, GatewayTarget
 from orchestrator.gateway.services.http_proxy import (
     forward_request_headers,
     gateway_error,
+    is_usage_only_sse_line,
+    iter_sse_with_restored_model,
     passthrough_response_headers,
     prepare_upstream_body,
     proxy_binary_post,
@@ -136,7 +138,7 @@ class HttpProxyJsonPostTests(IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 503)
 
 
-class HttpProxyUtilityTests(TestCase):
+class HttpProxyUtilityTests(SimpleTestCase):
     def test_forward_request_headers_adds_json_content_type(self) -> None:
         headers = forward_request_headers({"Accept": "application/json"})
         self.assertEqual(headers["content-type"], "application/json")
@@ -166,6 +168,13 @@ class HttpProxyUtilityTests(TestCase):
     def test_rewrite_sse_line_model_keeps_done_marker(self) -> None:
         self.assertEqual(rewrite_sse_line_model(b"data: [DONE]", "demo"), b"data: [DONE]")
 
+    def test_is_usage_only_sse_line(self) -> None:
+        usage_only = b'data: {"choices":[],"usage":{"prompt_tokens":1}}'
+        self.assertTrue(is_usage_only_sse_line(usage_only))
+        content = b'data: {"choices":[{"delta":{"content":"hi"}}],"usage":null}'
+        self.assertFalse(is_usage_only_sse_line(content))
+        self.assertFalse(is_usage_only_sse_line(b"data: [DONE]"))
+
     def test_upstream_url_for_path_joins_base(self) -> None:
         url = upstream_url_for_path(TARGET, "/v1/chat/completions")
         self.assertTrue(url.endswith("/v1/chat/completions"))
@@ -183,6 +192,42 @@ class HttpProxyUtilityTests(TestCase):
         )
         with self.assertRaises(GatewayRouteError):
             validate_target_launch_mode(image_target, frozenset({"TEXT"}), "chat completions")
+
+
+class UsageOnlySseStripTests(IsolatedAsyncioTestCase):
+    """Regression C1: strip usage-only chunks when client did not opt in."""
+
+    @override_settings(NADIR_GATEWAY_TELEMETRY_ENABLED=True)
+    async def test_strip_usage_only_but_collector_still_sees_tokens(self) -> None:
+        from orchestrator.gateway.request_timing import (
+            reset_request_timing,
+            start_request_timing,
+        )
+
+        async def upstream_chunks():
+            yield (
+                b'data: {"model":"default_model","choices":[{"delta":{"content":"hi"}}]}\n'
+                b'data: {"model":"default_model","choices":[],"usage":'
+                b'{"prompt_tokens":9,"completion_tokens":1}}\n'
+                b"data: [DONE]\n"
+            )
+
+        collector = start_request_timing(endpoint="/v1/chat/completions", stream=True)
+        assert collector is not None
+        collector.strip_usage_only = True
+        try:
+            lines: list[bytes] = []
+            async for chunk in iter_sse_with_restored_model(upstream_chunks(), "demo"):
+                lines.append(chunk)
+        finally:
+            reset_request_timing(collector)
+
+        joined = b"".join(lines)
+        self.assertIn(b'"content":"hi"', joined)
+        self.assertIn(b"[DONE]", joined)
+        self.assertNotIn(b'"choices":[]', joined)
+        self.assertEqual(collector.prompt_tokens, 9)
+        self.assertEqual(collector.completion_tokens, 1)
 
 
 class HttpProxyBinaryPostTests(IsolatedAsyncioTestCase):
