@@ -24,9 +24,12 @@ django_application = get_asgi_application()
 
 @asynccontextmanager
 async def _mcp_lifespan() -> AsyncIterator[None]:
-    """Start MCP session manager for the lifetime of the ASGI worker."""
-    from orchestrator.mcp.server import mcp_session_lifespan
+    """Start MCP session manager only when Django ASGI mounts ``/mcp``."""
+    from orchestrator.mcp.server import mcp_django_mount_enabled, mcp_session_lifespan
 
+    if not mcp_django_mount_enabled():
+        yield
+        return
     async with mcp_session_lifespan():
         yield
 
@@ -57,11 +60,11 @@ async def _route_application(scope: dict[str, Any], receive: Any, send: Any) -> 
     if scope.get("type") == "http":
         from orchestrator.mcp.server import (
             get_mcp_http_application,
-            mcp_http_enabled,
+            mcp_django_mount_enabled,
             mcp_http_mount_path,
         )
 
-        if mcp_http_enabled():
+        if mcp_django_mount_enabled():
             path = scope.get("path", "")
             prefix = mcp_http_mount_path()
             if path == prefix or path.startswith(f"{prefix}/"):

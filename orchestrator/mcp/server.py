@@ -73,12 +73,15 @@ _mcp_http_application: Any | None = None
 _session_manager_ready = False
 
 
-def mcp_http_enabled() -> bool:
-    """Return True when the integrated HTTP MCP endpoint should be mounted.
+def mcp_django_mount_enabled() -> bool:
+    """Return True when ``/mcp`` should be mounted on Django ASGI.
 
-    Defaults to **false**: ``/mcp`` on Django ASGI is opt-in. Prefer
-    ``manage.py run_mcp`` on loopback. Set ``NADIR_MCP_ENABLED=true`` only when
-    the ASGI bind is intentional and auth/Host rules are configured.
+    Defaults to **false** (opt-in). Prefer ``manage.py run_mcp`` on loopback.
+    Set ``NADIR_MCP_ENABLED=true`` only when the ASGI bind is intentional and
+    auth/Host rules are configured.
+
+    This flag does **not** control ``mcp_session_lifespan`` — ``run_mcp`` always
+    needs the session manager regardless of Django mount.
     """
     return os.environ.get("NADIR_MCP_ENABLED", "false").strip().lower() in {
         "1",
@@ -86,6 +89,11 @@ def mcp_http_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+def mcp_http_enabled() -> bool:
+    """Alias for :func:`mcp_django_mount_enabled` (backward compatible name)."""
+    return mcp_django_mount_enabled()
 
 
 def mcp_http_mount_path() -> str:
@@ -105,10 +113,11 @@ def ensure_mcp_session_manager() -> None:
 
 @asynccontextmanager
 async def mcp_session_lifespan() -> AsyncIterator[None]:
-    """Keep the MCP session manager task group alive for the ASGI process."""
-    if not mcp_http_enabled():
-        yield
-        return
+    """Keep the MCP session manager task group alive for the ASGI process.
+
+    Always starts the session manager. Django ASGI mount is gated separately by
+    :func:`mcp_django_mount_enabled`.
+    """
     ensure_mcp_session_manager()
     async with mcp.session_manager.run():
         yield

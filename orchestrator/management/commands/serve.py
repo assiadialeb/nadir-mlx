@@ -9,8 +9,10 @@ from typing import Any
 from django.core.management.base import BaseCommand
 
 from orchestrator.serve_supervisor import (
+    assert_serve_ports_free,
     build_child_commands,
     default_serve_spec,
+    gateway_bind_from_env,
     start_children,
     stop_children,
     wait_for_exit,
@@ -48,10 +50,12 @@ class Command(BaseCommand):
         if options["ui_port"] is not None:
             spec = replace(spec, ui_port=int(options["ui_port"]))
 
+        assert_serve_ports_free(spec)
         commands = build_child_commands(spec)
+        gateway_host, gateway_port = gateway_bind_from_env()
         self.stdout.write(self.style.SUCCESS("Starting Nadir stack…"))
         self.stdout.write(f"  UI:      http://{spec.ui_host}:{spec.ui_port}/")
-        self.stdout.write("  Gateway: manage.py run_gateway (see NADIR_GATEWAY_HOST/PORT)")
+        self.stdout.write(f"  Gateway: http://{gateway_host}:{gateway_port}/v1")
         if spec.with_mcp:
             self.stdout.write(
                 f"  MCP:     http://{spec.mcp_host}:{spec.mcp_port}/mcp"

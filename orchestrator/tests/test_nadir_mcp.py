@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from mcp.server.transport_security import TransportSecurityMiddleware
 from starlette.requests import Request
@@ -17,8 +18,11 @@ from orchestrator.mcp.auth_middleware import (
 from orchestrator.mcp.server import (
     _mcp_transport_security,
     mcp_allowed_hosts,
+    mcp_django_mount_enabled,
     mcp_http_enabled,
     mcp_http_mount_path,
+    mcp_session_lifespan,
+    reset_mcp_http_application_cache,
 )
 from orchestrator.mcp.services import _serialize_instance, gateway_base_url
 from orchestrator.models import InferenceInstance
@@ -59,8 +63,93 @@ def test_configured_mcp_api_key_falls_back_to_gateway(monkeypatch) -> None:
 def test_mcp_http_enabled_defaults_false(monkeypatch) -> None:
     monkeypatch.delenv("NADIR_MCP_ENABLED", raising=False)
     assert mcp_http_enabled() is False
+    assert mcp_django_mount_enabled() is False
     monkeypatch.setenv("NADIR_MCP_ENABLED", "true")
     assert mcp_http_enabled() is True
+    assert mcp_django_mount_enabled() is True
+
+
+def test_mcp_session_lifespan_starts_without_django_mount(monkeypatch) -> None:
+    """run_mcp must start the session manager even when NADIR_MCP_ENABLED is unset."""
+    monkeypatch.delenv("NADIR_MCP_ENABLED", raising=False)
+    reset_mcp_http_application_cache()
+    entered = {"value": False}
+
+    @asynccontextmanager
+    async def _fake_run():
+        entered["value"] = True
+        yield
+
+    fake_manager = MagicMock()
+    fake_manager.run = _fake_run
+
+    async def _run() -> None:
+        with patch("orchestrator.mcp.server.ensure_mcp_session_manager"):
+            with patch("orchestrator.mcp.server.mcp") as mock_mcp:
+                mock_mcp.session_manager = fake_manager
+                async with mcp_session_lifespan():
+                    assert entered["value"] is True
+
+    asyncio.run(_run())
+    assert entered["value"] is True
+
+
+def test_run_mcp_app_tools_list_without_nadir_mcp_enabled(monkeypatch) -> None:
+    """ASGI app from run_mcp answers tools/list without NADIR_MCP_ENABLED=true."""
+    monkeypatch.delenv("NADIR_MCP_ENABLED", raising=False)
+    monkeypatch.setenv("MLX_DISABLE_INSTANCE_WATCHDOG", "1")
+    # TestClient binds as "testserver" (non-loopback) — key required by auth middleware.
+    monkeypatch.setenv("NADIR_MCP_API_KEY", "test-mcp-key")
+    reset_mcp_http_application_cache()
+
+    from starlette.testclient import TestClient
+
+    from orchestrator.management.commands.run_mcp import _build_asgi_app
+
+    app = _build_asgi_app()
+    auth_headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer test-mcp-key",
+    }
+    with TestClient(app, base_url="http://127.0.0.1:11381") as client:
+        init = client.post(
+            "/mcp",
+            headers=auth_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "0"},
+                },
+            },
+        )
+        assert init.status_code == 200, init.text
+        session_id = init.headers.get("mcp-session-id")
+        headers = dict(auth_headers)
+        if session_id:
+            headers["mcp-session-id"] = session_id
+        client.post(
+            "/mcp",
+            headers=headers,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        )
+        response = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert "Task group is not initialized" not in response.text
 
 
 def test_mcp_http_mount_path_default() -> None:

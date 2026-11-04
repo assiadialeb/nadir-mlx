@@ -176,10 +176,30 @@ def refresh_all_instance_health() -> dict[str, int]:
 
 
 def should_skip_watchdog() -> bool:
-    """Avoid background health loops during tests or management commands."""
+    """Avoid background health loops during tests or non-owner processes.
+
+    Under ``manage.py serve``, only the gateway child owns reconcile / watchdog /
+    idle-offload (via ``NADIR_BACKGROUND_OWNER=gateway``). Standalone
+    ``runserver`` / ``run_gateway`` keep the previous autonomous behaviour when
+    that env var is unset.
+    """
     import sys
 
     if os.environ.get("MLX_DISABLE_INSTANCE_WATCHDOG") == "1":
         return True
-    blocked = {"test", "migrate", "makemigrations", "shell", "collectstatic"}
-    return any(arg in sys.argv for arg in blocked)
+    # Parent supervisor and dedicated MCP must never start background loops.
+    blocked = {
+        "test",
+        "migrate",
+        "makemigrations",
+        "shell",
+        "collectstatic",
+        "serve",
+        "run_mcp",
+    }
+    if any(arg in sys.argv for arg in blocked):
+        return True
+    owner = (os.environ.get("NADIR_BACKGROUND_OWNER") or "").strip().lower()
+    if owner == "gateway":
+        return "run_gateway" not in sys.argv
+    return False
