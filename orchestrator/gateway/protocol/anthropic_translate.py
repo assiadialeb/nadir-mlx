@@ -10,40 +10,12 @@ from orchestrator.gateway.router import GatewayRouteError
 
 def anthropic_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     """Translate Anthropic ``/v1/messages`` body to chat.completions."""
-    model = body.get("model")
-    if not isinstance(model, str) or not model.strip():
-        raise GatewayRouteError(
-            status_code=400,
-            code="invalid_model",
-            message="The model field is required.",
-            param="model",
-        )
-    max_tokens = body.get("max_tokens")
-    if not isinstance(max_tokens, int) or max_tokens <= 0:
-        raise GatewayRouteError(
-            status_code=400,
-            code="invalid_request",
-            message="max_tokens is required and must be a positive integer.",
-            param="max_tokens",
-        )
-    messages_in = body.get("messages")
-    if not isinstance(messages_in, list) or not messages_in:
-        raise GatewayRouteError(
-            status_code=400,
-            code="invalid_request",
-            message="messages must be a non-empty array.",
-            param="messages",
-        )
+    model = _require_model(body)
+    max_tokens = _require_max_tokens(body)
+    messages_in = _require_messages(body)
 
     messages: list[dict[str, Any]] = []
-    system = body.get("system")
-    if isinstance(system, str) and system.strip():
-        messages.append({"role": "system", "content": system})
-    elif isinstance(system, list):
-        text = _blocks_to_text(system)
-        if text:
-            messages.append({"role": "system", "content": text})
-
+    _append_system_message(messages, body.get("system"))
     for item in messages_in:
         if not isinstance(item, dict):
             continue
@@ -51,18 +23,11 @@ def anthropic_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         messages.append({"role": role, "content": _normalize_content(item.get("content"))})
 
     chat: dict[str, Any] = {
-        "model": model.strip(),
+        "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
     }
-    if "temperature" in body:
-        chat["temperature"] = body["temperature"]
-    if "top_p" in body:
-        chat["top_p"] = body["top_p"]
-    if "stop_sequences" in body:
-        chat["stop"] = body["stop_sequences"]
-    if body.get("stream"):
-        chat["stream"] = True
+    _copy_optional_sampling_fields(chat, body)
     return chat
 
 
@@ -100,29 +65,95 @@ def chat_completion_to_anthropic(
     }
 
 
+def _require_model(body: dict[str, Any]) -> str:
+    model = body.get("model")
+    if not isinstance(model, str) or not model.strip():
+        raise GatewayRouteError(
+            status_code=400,
+            code="invalid_model",
+            message="The model field is required.",
+            param="model",
+        )
+    return model.strip()
+
+
+def _require_max_tokens(body: dict[str, Any]) -> int:
+    max_tokens = body.get("max_tokens")
+    if not isinstance(max_tokens, int) or max_tokens <= 0:
+        raise GatewayRouteError(
+            status_code=400,
+            code="invalid_request",
+            message="max_tokens is required and must be a positive integer.",
+            param="max_tokens",
+        )
+    return max_tokens
+
+
+def _require_messages(body: dict[str, Any]) -> list[Any]:
+    messages_in = body.get("messages")
+    if not isinstance(messages_in, list) or not messages_in:
+        raise GatewayRouteError(
+            status_code=400,
+            code="invalid_request",
+            message="messages must be a non-empty array.",
+            param="messages",
+        )
+    return messages_in
+
+
+def _append_system_message(messages: list[dict[str, Any]], system: Any) -> None:
+    if isinstance(system, str) and system.strip():
+        messages.append({"role": "system", "content": system})
+        return
+    if isinstance(system, list):
+        text = _blocks_to_text(system)
+        if text:
+            messages.append({"role": "system", "content": text})
+
+
+def _copy_optional_sampling_fields(chat: dict[str, Any], body: dict[str, Any]) -> None:
+    if "temperature" in body:
+        chat["temperature"] = body["temperature"]
+    if "top_p" in body:
+        chat["top_p"] = body["top_p"]
+    if "stop_sequences" in body:
+        chat["stop"] = body["stop_sequences"]
+    if body.get("stream"):
+        chat["stream"] = True
+
+
 def _normalize_content(content: Any) -> Any:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        text = _blocks_to_text(content)
-        images = [part for part in content if isinstance(part, dict) and part.get("type") == "image"]
-        if images:
-            parts: list[dict[str, Any]] = [{"type": "text", "text": text}] if text else []
-            for image in images:
-                source = image.get("source") if isinstance(image.get("source"), dict) else {}
-                if source.get("type") == "base64" and "data" in source:
-                    media = source.get("media_type") or "image/png"
-                    parts.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{media};base64,{source['data']}",
-                            },
-                        }
-                    )
-            return parts or text
-        return text
+        return _normalize_content_blocks(content)
     return ""
+
+
+def _normalize_content_blocks(content: list[Any]) -> Any:
+    text = _blocks_to_text(content)
+    images = [part for part in content if isinstance(part, dict) and part.get("type") == "image"]
+    if not images:
+        return text
+    parts: list[dict[str, Any]] = [{"type": "text", "text": text}] if text else []
+    for image in images:
+        converted = _image_block_to_openai(image)
+        if converted is not None:
+            parts.append(converted)
+    return parts or text
+
+
+def _image_block_to_openai(image: dict[str, Any]) -> dict[str, Any] | None:
+    source = image.get("source") if isinstance(image.get("source"), dict) else {}
+    if source.get("type") != "base64" or "data" not in source:
+        return None
+    media = source.get("media_type") or "image/png"
+    return {
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:{media};base64,{source['data']}",
+        },
+    }
 
 
 def _blocks_to_text(blocks: list[Any]) -> str:
