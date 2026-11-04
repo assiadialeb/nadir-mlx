@@ -5,13 +5,19 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from orchestrator.gateway.protocol.chat_sse import (  # noqa: F401 — re-export
+    chat_sse_delta_text,
+    tool_calls_as_ollama,
+)
 from orchestrator.gateway.router import GatewayRouteError
 
 _FINISH_TO_DONE_REASON = {
     "stop": "stop",
     "length": "length",
-    "tool_calls": "tool_calls",
+    "tool_calls": "stop",
 }
+
+_DEFAULT_OLLAMA_VERSION = "0.6.0"
 
 
 def ollama_chat_to_openai(body: dict[str, Any]) -> dict[str, Any]:
@@ -25,11 +31,7 @@ def ollama_chat_to_openai(body: dict[str, Any]) -> dict[str, Any]:
             message="messages must be a non-empty array.",
             param="messages",
         )
-    messages = [
-        _normalize_ollama_message(item)
-        for item in messages_in
-        if isinstance(item, dict)
-    ]
+    messages = _normalize_ollama_messages(messages_in)
     if not messages:
         raise GatewayRouteError(
             status_code=400,
@@ -168,7 +170,12 @@ def models_list_to_ollama_ps(models_payload: dict[str, Any]) -> dict[str, Any]:
     return {"models": _models_from_list_payload(models_payload)}
 
 
-def ollama_show_stub(name: str) -> dict[str, Any]:
+def ollama_show_stub(
+    name: str,
+    *,
+    launch_mode: str = "TEXT",
+    tool_parser_type: str = "",
+) -> dict[str, Any]:
     """Minimal ``/api/show`` payload so Open WebUI bootstrap probes succeed."""
     return {
         "modelfile": "",
@@ -183,14 +190,33 @@ def ollama_show_stub(name: str) -> dict[str, Any]:
             "quantization_level": "",
         },
         "model_info": {"general.architecture": "nadir"},
-        "capabilities": ["completion"],
+        "capabilities": ollama_capabilities_for_mode(
+            launch_mode,
+            tool_parser_type=tool_parser_type,
+        ),
         "modified_at": "",
         "name": name,
         "model": name,
     }
 
 
-def ollama_version_payload(version: str = "0.1.0") -> dict[str, str]:
+def ollama_capabilities_for_mode(
+    launch_mode: str,
+    *,
+    tool_parser_type: str = "",
+) -> list[str]:
+    mode = (launch_mode or "TEXT").upper()
+    if mode == "EMBEDDING":
+        return ["embedding"]
+    capabilities = ["completion"]
+    if mode == "MULTIMODAL":
+        capabilities.append("vision")
+    if tool_parser_type:
+        capabilities.append("tools")
+    return capabilities
+
+
+def ollama_version_payload(version: str = _DEFAULT_OLLAMA_VERSION) -> dict[str, str]:
     return {"version": version}
 
 
@@ -201,6 +227,7 @@ def ollama_chat_stream_chunk(
     done: bool,
     done_reason: str | None = None,
     tool_calls: list[dict[str, Any]] | None = None,
+    thinking: str | None = None,
     prompt_eval_count: int | None = None,
     eval_count: int | None = None,
     error: str | None = None,
@@ -211,6 +238,8 @@ def ollama_chat_stream_chunk(
         "message": {"role": "assistant", "content": content},
         "done": done,
     }
+    if thinking:
+        payload["message"]["thinking"] = thinking
     if tool_calls:
         payload["message"]["tool_calls"] = tool_calls
     if done and done_reason is not None:
@@ -252,13 +281,6 @@ def ollama_generate_stream_chunk(
     return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
 
 
-def chat_sse_delta_text(line: bytes) -> str | None:
-    """Extract assistant text delta from one OpenAI chat SSE ``data:`` line."""
-    from orchestrator.gateway.protocol.chat_sse import chat_sse_delta_text as _impl
-
-    return _impl(line)
-
-
 def _require_model(body: dict[str, Any]) -> str:
     model = body.get("model")
     if not isinstance(model, str) or not model.strip():
@@ -271,21 +293,121 @@ def _require_model(body: dict[str, Any]) -> str:
     return model.strip()
 
 
-def _normalize_ollama_message(item: dict[str, Any]) -> dict[str, Any]:
+def _normalize_ollama_messages(messages_in: list[Any]) -> list[dict[str, Any]]:
+    """Normalize Ollama chat history, preserving assistant tool_calls for mlx-lm."""
+    messages: list[dict[str, Any]] = []
+    pending_tool_ids: dict[str, list[str]] = {}
+    for item in messages_in:
+        if not isinstance(item, dict):
+            continue
+        normalized = _normalize_ollama_message(item, pending_tool_ids=pending_tool_ids)
+        messages.append(normalized)
+        if normalized.get("role") == "assistant" and isinstance(
+            normalized.get("tool_calls"),
+            list,
+        ):
+            pending_tool_ids = {}
+            for call in normalized["tool_calls"]:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                name = function.get("name")
+                call_id = call.get("id")
+                if isinstance(name, str) and name and isinstance(call_id, str):
+                    pending_tool_ids.setdefault(name, []).append(call_id)
+    return messages
+
+
+def _normalize_ollama_message(
+    item: dict[str, Any],
+    *,
+    pending_tool_ids: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
     role = str(item.get("role") or "user")
+    if role == "tool":
+        return _normalize_ollama_tool_message(item, pending_tool_ids=pending_tool_ids or {})
+
     content = item.get("content")
     images = item.get("images")
-    if not isinstance(images, list) or not images:
-        return {"role": role, "content": content if content is not None else ""}
-    parts: list[dict[str, Any]] = []
-    if isinstance(content, str) and content:
-        parts.append({"type": "text", "text": content})
-    for image in images:
-        if not isinstance(image, str) or not image:
+    if isinstance(images, list) and images:
+        parts: list[dict[str, Any]] = []
+        if isinstance(content, str) and content:
+            parts.append({"type": "text", "text": content})
+        for image in images:
+            if not isinstance(image, str) or not image:
+                continue
+            url = image if image.startswith("data:") else f"data:image/png;base64,{image}"
+            parts.append({"type": "image_url", "image_url": {"url": url}})
+        message: dict[str, Any] = {
+            "role": role,
+            "content": parts or (content if content is not None else ""),
+        }
+    else:
+        message = {"role": role, "content": content if content is not None else ""}
+
+    if role == "assistant":
+        tool_calls = _ollama_tool_calls_to_openai(item.get("tool_calls"))
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+            if not message.get("content"):
+                message["content"] = None
+        thinking = item.get("thinking")
+        if isinstance(thinking, str) and thinking:
+            message["reasoning_content"] = thinking
+    return message
+
+
+def _normalize_ollama_tool_message(
+    item: dict[str, Any],
+    *,
+    pending_tool_ids: dict[str, list[str]],
+) -> dict[str, Any]:
+    content = item.get("content")
+    tool_call_id = item.get("tool_call_id")
+    if not isinstance(tool_call_id, str) or not tool_call_id:
+        tool_name = item.get("tool_name") or item.get("name")
+        if isinstance(tool_name, str) and tool_name in pending_tool_ids:
+            ids = pending_tool_ids[tool_name]
+            tool_call_id = ids.pop(0) if ids else f"call_{tool_name}"
+        elif isinstance(tool_name, str) and tool_name:
+            tool_call_id = f"call_{tool_name}"
+        else:
+            tool_call_id = "call_0"
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "content": content if isinstance(content, str) else json.dumps(content or ""),
+    }
+
+
+def _ollama_tool_calls_to_openai(tool_calls: Any) -> list[dict[str, Any]]:
+    """Convert Ollama tool_calls (args as objects) into OpenAI chat tool_calls (args as JSON strings)."""
+    if not isinstance(tool_calls, list):
+        return []
+    converted: list[dict[str, Any]] = []
+    for index, call in enumerate(tool_calls):
+        if not isinstance(call, dict):
             continue
-        url = image if image.startswith("data:") else f"data:image/png;base64,{image}"
-        parts.append({"type": "image_url", "image_url": {"url": url}})
-    return {"role": role, "content": parts or (content if content is not None else "")}
+        function = call.get("function") if isinstance(call.get("function"), dict) else call
+        name = function.get("name") if isinstance(function, dict) else None
+        if not isinstance(name, str) or not name:
+            continue
+        arguments = function.get("arguments") if isinstance(function, dict) else {}
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments, separators=(",", ":"))
+        elif not isinstance(arguments, str):
+            arguments = "{}"
+        call_id = call.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            call_id = f"call_{index}"
+        converted.append(
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": arguments},
+            }
+        )
+    return converted
 
 
 def _apply_ollama_options(chat: dict[str, Any], options: Any) -> None:
@@ -341,8 +463,6 @@ def _extract_chat_fields(
 
 
 def _extract_tool_calls(chat_payload: dict[str, Any]) -> list[Any] | None:
-    from orchestrator.gateway.protocol.chat_sse import tool_calls_as_ollama
-
     choices = chat_payload.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         return None

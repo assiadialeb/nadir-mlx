@@ -46,6 +46,45 @@ class OllamaTranslateTests(SimpleTestCase):
         self.assertTrue(chat["stream"])
         self.assertNotIn("num_ctx", chat)
 
+    def test_ollama_chat_preserves_tool_call_history(self) -> None:
+        chat = ollama_chat_to_openai(
+            {
+                "model": "demo",
+                "stream": False,
+                "messages": [
+                    {"role": "user", "content": "Paris?"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": {"city": "Paris"},
+                                }
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_name": "get_weather",
+                        "content": "sunny",
+                    },
+                ],
+            }
+        )
+        assistant = chat["messages"][1]
+        self.assertEqual(assistant["role"], "assistant")
+        self.assertEqual(assistant["tool_calls"][0]["function"]["name"], "get_weather")
+        self.assertEqual(
+            assistant["tool_calls"][0]["function"]["arguments"],
+            '{"city":"Paris"}',
+        )
+        tool = chat["messages"][2]
+        self.assertEqual(tool["role"], "tool")
+        self.assertEqual(tool["tool_call_id"], assistant["tool_calls"][0]["id"])
+        self.assertEqual(tool["content"], "sunny")
+
     def test_ollama_chat_images_and_format_schema(self) -> None:
         chat = ollama_chat_to_openai(
             {

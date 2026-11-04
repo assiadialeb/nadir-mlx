@@ -19,6 +19,7 @@ from orchestrator.gateway.routes.chat import router as chat_router
 from orchestrator.gateway.routes.image_files import router as image_files_router
 from orchestrator.gateway.routes.models import router as models_router
 from orchestrator.gateway.routes.modes import router as modes_router
+from orchestrator.gateway.routes.ollama import public_router as ollama_public_router
 from orchestrator.gateway.routes.ollama import router as ollama_router
 from orchestrator.gateway.routes.responses import router as responses_router
 
@@ -124,5 +125,6 @@ def create_app() -> FastAPI:
     app.include_router(modes_router, dependencies=[Depends(verify_gateway_api_key)])
     app.include_router(responses_router, dependencies=[Depends(verify_gateway_api_key)])
     app.include_router(anthropic_router, dependencies=[Depends(verify_gateway_api_key)])
+    app.include_router(ollama_public_router)
     app.include_router(ollama_router, dependencies=[Depends(verify_gateway_api_key)])
     return app

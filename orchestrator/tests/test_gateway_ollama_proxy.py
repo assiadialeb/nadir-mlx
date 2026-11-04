@@ -89,20 +89,32 @@ class GatewayOllamaProxyTests(SimpleTestCase):
 
         version = self.client.get("/api/version")
         self.assertEqual(version.status_code, 200)
-        self.assertIn("version", version.json())
+        self.assertEqual(version.json()["version"], "0.6.0")
 
-        show = self.client.post("/api/show", json={"name": "demo-chat"})
-        self.assertEqual(show.status_code, 200)
-        self.assertEqual(show.json()["name"], "demo-chat")
-
-    @patch(
-        "orchestrator.gateway.services.ollama_proxy.list_running_gateway_models",
-        return_value={"object": "list", "data": [{"id": "demo-chat"}]},
-    )
-    def test_ps_lists_running_models(self, _mock_models: MagicMock) -> None:
+    @patch("orchestrator.gateway.services.ollama_proxy.get_route_snapshot")
+    def test_ps_lists_running_models(self, mock_snapshot: MagicMock) -> None:
+        snapshot = MagicMock()
+        snapshot.running_targets = {"demo-chat": TEXT_TARGET}
+        mock_snapshot.return_value = snapshot
         response = self.client.get("/api/ps")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["models"][0]["name"], "demo-chat")
+
+    @patch(
+        "orchestrator.gateway.services.ollama_proxy.get_gateway_model",
+        return_value={
+            "id": "demo-chat",
+            "metadata": {"launch_mode": "MULTIMODAL", "tool_parser_type": "json"},
+        },
+    )
+    def test_show_reports_capabilities(self, _mock_model: MagicMock) -> None:
+        response = self.client.post("/api/show", json={"name": "demo-chat"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["name"], "demo-chat")
+        self.assertEqual(
+            response.json()["capabilities"],
+            ["completion", "vision", "tools"],
+        )
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")
@@ -210,7 +222,7 @@ class GatewayOllamaProxyTests(SimpleTestCase):
         lines = [json.loads(line) for line in response.content.splitlines() if line]
         final = lines[-1]
         self.assertTrue(final["done"])
-        self.assertEqual(final["done_reason"], "tool_calls")
+        self.assertEqual(final["done_reason"], "stop")
         self.assertEqual(final["eval_count"], 2)
         tool = final["message"]["tool_calls"][0]
         self.assertEqual(tool["function"]["name"], "get_weather")

@@ -9,11 +9,21 @@ STRUCTURED_OUTPUT_TYPES: Final[frozenset[str]] = frozenset({"json_object", "json
 VISION_IMAGE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({"image_url", "input_image"})
 
 
-def prepare_chat_upstream_body(body: dict[str, Any], upstream_model: str) -> dict[str, Any]:
-    """Clone the client payload and rewrite only the model field for mlx-lm / mlx-vlm."""
+def prepare_chat_upstream_body(
+    body: dict[str, Any],
+    upstream_model: str,
+    *,
+    force_include_usage: bool = False,
+) -> dict[str, Any]:
+    """Clone the client payload and rewrite only the model field for mlx-lm / mlx-vlm.
+
+    ``force_include_usage`` is for protocol façades that need token counts.
+    Native ``/v1/chat/completions`` must leave the client's ``stream_options`` alone
+    so mlx-lm does not emit a usage-only ``choices: []`` chunk to unaware clients.
+    """
     upstream = deepcopy(body)
     upstream["model"] = upstream_model
-    if upstream.get("stream"):
+    if force_include_usage and upstream.get("stream"):
         options = upstream.get("stream_options")
         if not isinstance(options, dict):
             options = {}

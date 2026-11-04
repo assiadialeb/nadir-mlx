@@ -278,3 +278,31 @@ class AnthropicStreamTranslateAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn(b"Paris", joined)
         self.assertIn(b'"stop_reason":"tool_use"', joined)
         self.assertIn(b'"output_tokens":5', joined)
+        self.assertIn(b'"input_tokens":2', joined)
+        first_start = joined.find(b"content_block_start")
+        first_stop = joined.find(b"content_block_stop")
+        self.assertGreater(first_stop, first_start)
+
+    async def test_translate_chat_sse_closes_text_before_tool_block(self) -> None:
+        async def chunks():
+            yield b'data: {"choices":[{"delta":{"content":"hi"}}]}\n'
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                b'"type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}\n'
+            )
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n'
+
+        joined = b"".join(
+            [
+                chunk
+                async for chunk in _translate_chat_sse_to_anthropic(
+                    chunks(),
+                    client_model_alias="demo",
+                )
+            ]
+        )
+        text_start = joined.find(b'"type":"text"')
+        text_stop = joined.find(b"content_block_stop")
+        tool_start = joined.find(b'"type":"tool_use"')
+        self.assertGreater(text_stop, text_start)
+        self.assertGreater(tool_start, text_stop)

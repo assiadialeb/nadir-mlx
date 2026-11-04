@@ -12,6 +12,7 @@ class ChatSseEvent:
     """Parsed fields from one ``data:`` SSE line."""
 
     text: str | None = None
+    reasoning: str | None = None
     tool_call_deltas: list[dict[str, Any]] = field(default_factory=list)
     finish_reason: str | None = None
     usage: dict[str, Any] | None = None
@@ -53,9 +54,10 @@ class ToolCallAccumulator:
         return updates
 
     def completed_calls(self) -> list[dict[str, Any]]:
-        """Return OpenAI chat ``tool_calls`` payloads in index order."""
+        """Return OpenAI chat ``tool_calls`` payloads in index order (includes ``index``)."""
         return [
             {
+                "index": call.index,
                 "id": call.id or f"call_{call.index}",
                 "type": "function",
                 "function": {"name": call.name, "arguments": call.arguments},
@@ -107,12 +109,18 @@ def parse_chat_sse_line(line: bytes) -> ChatSseEvent | None:
         text = delta.get("content")
         if isinstance(text, str) and text:
             event.text = text
+        reasoning = delta.get("reasoning_content")
+        if not isinstance(reasoning, str) or not reasoning:
+            reasoning = delta.get("reasoning")
+        if isinstance(reasoning, str) and reasoning:
+            event.reasoning = reasoning
         tool_calls = delta.get("tool_calls")
         if isinstance(tool_calls, list):
             event.tool_call_deltas = [item for item in tool_calls if isinstance(item, dict)]
 
     if (
         event.text is None
+        and event.reasoning is None
         and not event.tool_call_deltas
         and event.finish_reason is None
         and event.usage is None

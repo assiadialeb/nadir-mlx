@@ -165,17 +165,18 @@ class InstanceEvictionTests(SimpleTestCase):
         mock_cache.assert_not_called()
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
-    @patch("orchestrator.instance_eviction.host_available_bytes", return_value=100)
-    @patch(
-        "orchestrator.instance_eviction.estimate_instance_footprint_bytes",
-        return_value=500,
-    )
-    @patch("orchestrator.instance_eviction.evict_one_lru_instance")
+    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.instance_eviction._stop_planned_victim")
+    @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
+    @patch("orchestrator.instance_eviction.host_available_bytes")
+    @patch("orchestrator.instance_eviction.estimate_instance_footprint_bytes")
     def test_ensure_headroom_evicts_until_fit(
         self,
-        mock_evict: MagicMock,
-        _mock_need: MagicMock,
+        mock_footprint: MagicMock,
         mock_available: MagicMock,
+        mock_list: MagicMock,
+        mock_stop: MagicMock,
+        _mock_manual: MagicMock,
     ) -> None:
         pending = _instance(
             pk=9,
@@ -184,12 +185,20 @@ class InstanceEvictionTests(SimpleTestCase):
             last_used_at=timezone.now(),
             status="LOADING",
         )
-        mock_evict.side_effect = [MagicMock(model_name="a"), MagicMock(model_name="b")]
-        mock_available.side_effect = [100, 100, 1000]
+        victims = [
+            _instance(pk=1, model_name="a", lifecycle="on_demand", last_used_at=timezone.now()),
+            _instance(pk=2, model_name="b", lifecycle="on_demand", last_used_at=timezone.now()),
+        ]
+        mock_list.return_value = victims
+        mock_stop.side_effect = lambda victim: victim
+        mock_footprint.side_effect = lambda model_name, *_a, **_k: (
+            1200 if model_name == "pending" else 600
+        )
+        mock_available.side_effect = [100, 1300]
 
         stopped = ensure_headroom_for_load(pending)
         self.assertEqual(stopped, 2)
-        self.assertEqual(mock_evict.call_count, 2)
+        self.assertEqual(mock_stop.call_count, 2)
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
     @patch("orchestrator.instance_eviction.host_available_bytes", return_value=None)
@@ -212,17 +221,21 @@ class InstanceEvictionTests(SimpleTestCase):
         self.assertEqual(ensure_headroom_for_load(pending), 0)
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
-    @patch("orchestrator.instance_eviction.host_available_bytes")
+    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.instance_eviction._stop_planned_victim")
+    @patch("orchestrator.instance_eviction.list_lru_evictable_instances", return_value=[])
+    @patch("orchestrator.instance_eviction.host_available_bytes", return_value=10)
     @patch(
         "orchestrator.instance_eviction.estimate_instance_footprint_bytes",
         return_value=500,
     )
-    @patch("orchestrator.instance_eviction.evict_one_lru_instance", return_value=None)
     def test_ensure_headroom_stops_when_no_victim(
         self,
-        mock_evict: MagicMock,
         _mock_need: MagicMock,
-        mock_available: MagicMock,
+        _mock_available: MagicMock,
+        mock_list: MagicMock,
+        mock_stop: MagicMock,
+        _mock_manual: MagicMock,
     ) -> None:
         pending = _instance(
             pk=12,
@@ -231,22 +244,26 @@ class InstanceEvictionTests(SimpleTestCase):
             last_used_at=timezone.now(),
             status="LOADING",
         )
-        mock_available.return_value = 10
         self.assertEqual(ensure_headroom_for_load(pending), 0)
-        mock_evict.assert_called_once_with(exclude_id=12)
+        mock_list.assert_called_once_with(exclude_id=12)
+        mock_stop.assert_not_called()
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
+    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.instance_eviction._stop_planned_victim")
+    @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
     @patch("orchestrator.instance_eviction.host_available_bytes")
     @patch(
         "orchestrator.instance_eviction.estimate_instance_footprint_bytes",
         return_value=500,
     )
-    @patch("orchestrator.instance_eviction.evict_one_lru_instance")
-    def test_ensure_headroom_breaks_when_available_becomes_unknown(
+    def test_ensure_headroom_warns_when_still_short(
         self,
-        mock_evict: MagicMock,
         _mock_need: MagicMock,
         mock_available: MagicMock,
+        mock_list: MagicMock,
+        mock_stop: MagicMock,
+        _mock_manual: MagicMock,
     ) -> None:
         pending = _instance(
             pk=13,
@@ -255,8 +272,15 @@ class InstanceEvictionTests(SimpleTestCase):
             last_used_at=timezone.now(),
             status="LOADING",
         )
-        mock_evict.return_value = MagicMock(model_name="victim")
-        mock_available.side_effect = [10, None]
+        victim = _instance(
+            pk=1,
+            model_name="victim",
+            lifecycle="on_demand",
+            last_used_at=timezone.now(),
+        )
+        mock_list.return_value = [victim]
+        mock_stop.return_value = victim
+        mock_available.side_effect = [10, 50]
         self.assertEqual(ensure_headroom_for_load(pending), 1)
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "false"}, clear=False)

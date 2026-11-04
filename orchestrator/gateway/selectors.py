@@ -65,8 +65,10 @@ def _gateway_target_from_instance(instance: InferenceInstance) -> GatewayTarget:
 
 
 def _nadir_model_metadata(instance: InferenceInstance) -> dict[str, object]:
+    config = instance.server_config or {}
     return {
         "launch_mode": instance.launch_mode,
+        "tool_parser_type": str(config.get("tool_parser_type") or ""),
         "nadir": {
             "lifecycle_mode": get_lifecycle_mode(instance.server_config),
             "status": instance.status.lower(),
