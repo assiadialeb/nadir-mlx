@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: November 2026 — Ollama `/api/chat` streaming (MLX-108).
+Last updated: November 2026 — Ollama bootstrap + legacy embeddings (MLX-119).
 
 ## Cross-cutting (all modes)
 
@@ -22,7 +22,7 @@ Last updated: November 2026 — Ollama `/api/chat` streaming (MLX-108).
 | Shared upstream httpx client | ✅ |
 | `POST /v1/responses` (stateless façade) | ✅ MVP (no `previous_response_id` / store) |
 | `POST /v1/messages` (Anthropic) | ✅ MVP non-stream (stream → 501) |
-| Ollama `/api/tags`, `/api/chat`, `/api/embed` | ✅ (`/api/chat` JSON + NDJSON stream) |
+| Ollama façade | ✅ `/`, `/api/version`, `/api/tags`, `/api/ps`, `/api/show`, `/api/chat`, `/api/generate`, `/api/embed` + legacy `/api/embeddings` |
 | Multi-worker uvicorn | ❌ single process by default |
 
 ## TEXT

@@ -76,6 +76,57 @@ class GatewayOllamaProxyTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["message"]["content"], "Hello")
         self.assertTrue(response.json()["done"])
+        self.assertEqual(response.json()["done_reason"], "stop")
+
+    def test_bootstrap_probes(self) -> None:
+        root = self.client.get("/")
+        self.assertEqual(root.status_code, 200)
+        self.assertEqual(root.text, "Ollama is running")
+
+        version = self.client.get("/api/version")
+        self.assertEqual(version.status_code, 200)
+        self.assertIn("version", version.json())
+
+        show = self.client.post("/api/show", json={"name": "demo-chat"})
+        self.assertEqual(show.status_code, 200)
+        self.assertEqual(show.json()["name"], "demo-chat")
+
+    @patch(
+        "orchestrator.gateway.services.ollama_proxy.list_running_gateway_models",
+        return_value={"object": "list", "data": [{"id": "demo-chat"}]},
+    )
+    def test_ps_lists_running_models(self, _mock_models: MagicMock) -> None:
+        response = self.client.get("/api/ps")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["models"][0]["name"], "demo-chat")
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_generate_non_stream(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        upstream = httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "World"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+            headers={"content-type": "application/json"},
+        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
+        response = self.client.post(
+            "/api/generate",
+            json={"model": "demo-chat", "prompt": "Hello"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["response"], "World")
+        self.assertTrue(response.json()["done"])
+        self.assertEqual(response.json()["eval_count"], 1)
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")
@@ -138,6 +189,30 @@ class GatewayOllamaProxyTests(SimpleTestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["embeddings"], [[0.1, 0.2]])
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_embeddings_legacy_singular(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        upstream = httpx.Response(
+            200,
+            json={"data": [{"embedding": [0.5, 0.6]}]},
+            headers={"content-type": "application/json"},
+        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
+        response = self.client.post(
+            "/api/embeddings",
+            json={"model": "demo-embed", "prompt": "hello"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["embedding"], [0.5, 0.6])
+        self.assertNotIn("embeddings", response.json())
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")
