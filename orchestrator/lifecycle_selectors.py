@@ -9,10 +9,12 @@ if TYPE_CHECKING:
 
 LIFECYCLE_MODE_ALWAYS_ON = "always_on"
 LIFECYCLE_MODE_ON_DEMAND = "on_demand"
+LIFECYCLE_MODE_MANUAL = "manual"
 
 LIFECYCLE_MODE_CHOICES: tuple[tuple[str, str], ...] = (
     (LIFECYCLE_MODE_ALWAYS_ON, "Always on"),
     (LIFECYCLE_MODE_ON_DEMAND, "On demand (idle offload)"),
+    (LIFECYCLE_MODE_MANUAL, "Manual (UI start only)"),
 )
 
 DEFAULT_IDLE_MINUTES = 30
@@ -30,7 +32,12 @@ def _ops_section(server_config: dict[str, Any] | None) -> dict[str, Any]:
 def get_lifecycle_mode(server_config: dict[str, Any] | None) -> str:
     """Return normalized lifecycle mode; missing values default to always_on."""
     raw = str(_ops_section(server_config).get("lifecycle_mode") or LIFECYCLE_MODE_ALWAYS_ON)
-    if raw not in {LIFECYCLE_MODE_ALWAYS_ON, LIFECYCLE_MODE_ON_DEMAND}:
+    allowed = {
+        LIFECYCLE_MODE_ALWAYS_ON,
+        LIFECYCLE_MODE_ON_DEMAND,
+        LIFECYCLE_MODE_MANUAL,
+    }
+    if raw not in allowed:
         return LIFECYCLE_MODE_ALWAYS_ON
     return raw
 
@@ -73,6 +80,11 @@ def is_on_demand_lifecycle(server_config: dict[str, Any] | None) -> bool:
     return get_lifecycle_mode(server_config) == LIFECYCLE_MODE_ON_DEMAND
 
 
+def is_manual_lifecycle(server_config: dict[str, Any] | None) -> bool:
+    """Manual instances are never auto-started or gateway-woken."""
+    return get_lifecycle_mode(server_config) == LIFECYCLE_MODE_MANUAL
+
+
 def instance_lifecycle_mode(instance: InferenceInstance) -> str:
     return get_lifecycle_mode(instance.server_config)
 
@@ -107,11 +119,14 @@ def instance_status_badge(instance: InferenceInstance) -> tuple[str, str]:
 
 def lifecycle_policy_summary(server_config: dict[str, Any] | None) -> str:
     """Short lifecycle policy label for the servers list."""
-    if get_lifecycle_mode(server_config) == LIFECYCLE_MODE_ON_DEMAND:
+    mode = get_lifecycle_mode(server_config)
+    if mode == LIFECYCLE_MODE_ON_DEMAND:
         parts = [f"On demand · idle {get_idle_minutes(server_config)} min"]
         if is_pinned_lifecycle(server_config):
             parts.append("pinned")
         return " · ".join(parts)
+    if mode == LIFECYCLE_MODE_MANUAL:
+        return "Manual · UI start only"
     if is_pinned_lifecycle(server_config):
         return "Always on · pinned"
     return "Always on"

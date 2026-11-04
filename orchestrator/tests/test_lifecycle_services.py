@@ -107,6 +107,27 @@ class EnsureInstanceReadyTests(TestCase):
         self.assertEqual(ctx.exception.code, "model_unavailable")
         mock_start.assert_not_called()
 
+    @patch("orchestrator.lifecycle_services.start_instance")
+    def test_manual_stopped_does_not_wake(self, mock_start: MagicMock) -> None:
+        from orchestrator.lifecycle_selectors import LIFECYCLE_MODE_MANUAL
+
+        InferenceInstance.objects.create(
+            model_name="manual-model",
+            port=11415,
+            launch_mode="TEXT",
+            server_config={
+                "model_id": "manual-chat",
+                "host": "127.0.0.1",
+                "ops": {"lifecycle_mode": LIFECYCLE_MODE_MANUAL},
+            },
+            status="STOPPED",
+        )
+        with self.assertRaises(GatewayRouteError) as ctx:
+            ensure_instance_ready("manual-chat")
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("manual", ctx.exception.message.lower())
+        mock_start.assert_not_called()
+
     @patch("orchestrator.lifecycle_services.time.sleep")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=False)
     def test_loading_timeout_marks_instance_stopped(

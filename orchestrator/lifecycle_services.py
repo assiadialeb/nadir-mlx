@@ -151,10 +151,18 @@ def _wait_until_ready(instance: InferenceInstance, alias: str) -> GatewayTarget:
 
 def _wake_on_demand_instance(instance: InferenceInstance, alias: str) -> GatewayTarget:
     if not is_on_demand_lifecycle(instance.server_config):
-        raise _route_error_unavailable(
-            alias,
-            detail="Instance is stopped and lifecycle_mode is always_on.",
+        from orchestrator.lifecycle_selectors import (
+            LIFECYCLE_MODE_MANUAL,
+            get_lifecycle_mode,
         )
+
+        mode = get_lifecycle_mode(instance.server_config)
+        detail = (
+            "Instance is stopped and lifecycle_mode is manual. Start it from the Servers UI."
+            if mode == LIFECYCLE_MODE_MANUAL
+            else "Instance is stopped and lifecycle_mode is always_on."
+        )
+        raise _route_error_unavailable(alias, detail=detail)
 
     try:
         start_instance(

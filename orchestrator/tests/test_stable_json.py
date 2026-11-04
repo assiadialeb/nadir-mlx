@@ -41,7 +41,8 @@ class StableJsonHelperTests(SimpleTestCase):
         out = stabilize_chat_tools(tools)
         self.assertEqual(out[0]["function"]["name"], "b")
         self.assertEqual(out[1]["function"]["name"], "a")
-        self.assertEqual(list(out[0]["function"]["parameters"].keys()), ["a", "z"])
+        # Schema property order must stay client-defined (not re-sorted).
+        self.assertEqual(list(out[0]["function"]["parameters"].keys()), ["z", "a"])
 
 
 class FacadePrefixStabilityTests(SimpleTestCase):
@@ -79,36 +80,24 @@ class FacadePrefixStabilityTests(SimpleTestCase):
         self.assertEqual(_tools_fingerprint(first), _tools_fingerprint(second))
         self.assertEqual(first["messages"][0], second["messages"][0])
 
-    def test_anthropic_reordered_schema_keys_canonicalize(self) -> None:
-        base_schema = {
-            "type": "object",
-            "properties": {"city": {"type": "string"}},
-            "required": ["city"],
-        }
-        reshuffled = {
+    def test_anthropic_preserves_client_schema_key_order(self) -> None:
+        schema = {
             "required": ["city"],
             "properties": {"city": {"type": "string"}},
             "type": "object",
         }
-        left = anthropic_request_to_chat(
+        chat = anthropic_request_to_chat(
             {
                 "model": "demo",
                 "max_tokens": 8,
-                "tools": [{"name": "t", "input_schema": base_schema}],
+                "tools": [{"name": "t", "input_schema": schema}],
                 "messages": [{"role": "user", "content": "a"}],
             }
         )
-        right = anthropic_request_to_chat(
-            {
-                "model": "demo",
-                "max_tokens": 8,
-                "tools": [{"name": "t", "input_schema": reshuffled}],
-                "messages": [{"role": "user", "content": "a"}],
-            }
-        )
-        self.assertEqual(_tools_fingerprint(left), _tools_fingerprint(right))
+        params = chat["tools"][0]["function"]["parameters"]
+        self.assertEqual(list(params.keys()), ["required", "properties", "type"])
 
-    def test_openai_prepare_stabilizes_tools(self) -> None:
+    def test_openai_prepare_preserves_tools_across_turns(self) -> None:
         body = {
             "model": "demo",
             "messages": [{"role": "user", "content": "hi"}],
@@ -127,7 +116,7 @@ class FacadePrefixStabilityTests(SimpleTestCase):
         self.assertEqual(_tools_fingerprint(first), _tools_fingerprint(second))
         self.assertEqual(
             list(first["tools"][0]["function"]["parameters"].keys()),
-            ["properties", "type"],
+            ["type", "properties"],
         )
 
     def test_responses_and_ollama_tools_stable(self) -> None:

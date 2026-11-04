@@ -26,7 +26,12 @@ def stable_json_dumps(value: Any) -> str:
 
 
 def stable_tool_arguments(arguments: Any) -> str:
-    """Normalize tool-call argument payloads to a byte-stable JSON string."""
+    """Normalize tool-call argument payloads to a byte-stable JSON string.
+
+    Used when re-injecting tool results / calls into history, where clients
+    may emit non-deterministic key order. Do **not** use this on tool *schemas*
+    sent to the model (property order can affect argument generation).
+    """
     if isinstance(arguments, str):
         try:
             parsed = json.loads(arguments)
@@ -37,11 +42,12 @@ def stable_tool_arguments(arguments: Any) -> str:
 
 
 def stabilize_chat_tools(tools: Any) -> list[Any] | Any:
-    """Keep tool list order; canonicalize nested schema/parameter objects.
+    """Preserve client tool list and schema key order.
 
-    mlx-lm prefix KV reuse requires the shared system+tools prefix to be
-    identical across turns. Clients must keep tool *order* stable; Nadir
-    only normalizes object key order inside each tool definition.
+    Prefix KV reuse requires the shared system+tools prefix to be identical
+    across turns. Claude Code / Codex already send stable JSON; sorting
+    ``parameters`` / ``input_schema`` keys would only change the order the
+    model sees for argument generation without helping the cache.
     """
     if not isinstance(tools, list):
         return tools
@@ -50,21 +56,14 @@ def stabilize_chat_tools(tools: Any) -> list[Any] | Any:
         if not isinstance(tool, dict):
             stabilized.append(tool)
             continue
-        stabilized.append(_stabilize_one_tool(tool))
+        stabilized.append(_copy_tool_shallow(tool))
     return stabilized
 
 
-def _stabilize_one_tool(tool: dict[str, Any]) -> dict[str, Any]:
+def _copy_tool_shallow(tool: dict[str, Any]) -> dict[str, Any]:
+    """Shallow-copy tool wrappers without reordering nested schema keys."""
     out = dict(tool)
     function = out.get("function")
     if isinstance(function, dict):
-        fn = dict(function)
-        if isinstance(fn.get("parameters"), dict):
-            fn["parameters"] = canonicalize_json_value(fn["parameters"])
-        out["function"] = fn
-        return out
-    if isinstance(out.get("parameters"), dict):
-        out["parameters"] = canonicalize_json_value(out["parameters"])
-    if isinstance(out.get("input_schema"), dict):
-        out["input_schema"] = canonicalize_json_value(out["input_schema"])
+        out["function"] = dict(function)
     return out

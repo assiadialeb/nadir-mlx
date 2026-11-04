@@ -119,7 +119,7 @@ These are **not** part of `advanced`; use the main form.
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `lifecycle_mode` | `always_on` \| `on_demand` | `on_demand` stops the process after `idle_minutes` without gateway traffic; next request triggers wake. |
+| `lifecycle_mode` | `always_on` \| `on_demand` \| `manual` | `on_demand` stops after idle and wakes on request; `manual` never auto-starts or wakes (UI only). |
 | `idle_minutes` | 5–1440 | **Per-instance** idle threshold when `lifecycle_mode` is `on_demand`. |
 | `pinned` | bool | Never selected for memory-pressure LRU eviction (idle offload still applies when on demand). |
 | `warmup_on_load` | bool | After start/wake, run a 1-token generation so Metal compile is paid before the first user request (default `true`). |
@@ -148,7 +148,7 @@ Each key maps to a `--kebab-case` CLI flag on `mlx_lm.server` at instance start.
 | `top_k` | `--top-k` | int | Top-k sampling (0 = disabled). |
 | `min_p` | `--min-p` | float | Min-p sampling (0 = disabled). |
 | `prompt_cache_size` | `--prompt-cache-size` | int (1–128) | Max distinct prefix KV caches in the mlx-lm LRU. New TEXT configs default from host unified memory (10–32). |
-| `prompt_cache_bytes` | `--prompt-cache-bytes` | int (≥1e6) | Byte budget for prompt KV caches. New TEXT configs default to ~2% of unified RAM (clamped 512 MiB–8 GiB). |
+| `prompt_cache_bytes` | `--prompt-cache-bytes` | int (≥1e6) | Optional hard byte budget. **Omitted by default** (mlx-lm unlimited) so a large agent prefix is not immediately LRU-evicted. Set explicitly only when you want a cap. |
 
 !!! tip "Thinking on TEXT models"
     There is **no** `enable_thinking` key for TEXT in Nadir. Use `chat_template_args` when the mlx-lm chat template supports it, or rely on model-native thinking tokens in the stream (`delta.reasoning`).

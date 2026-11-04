@@ -273,7 +273,7 @@ mlx-lm keeps an LRU of **prefix KV caches** (`--prompt-cache-size` / `--prompt-c
 
 | Concern | Guidance |
 |---------|----------|
-| Instance knobs | TEXT Advanced JSON: `prompt_cache_size`, `prompt_cache_bytes` (RAM-aware defaults on new servers). See [server-config-reference](server-config-reference.md). |
+| Instance knobs | TEXT Advanced JSON: `prompt_cache_size` (RAM-aware default entry count). Optional `prompt_cache_bytes` only when you want a hard cap — omit it for agent workloads. See [server-config-reference](server-config-reference.md). |
 | Tool order | Clients must keep the **tools array order** identical across turns. |
 | Façades | Anthropic / OpenAI / Responses / Ollama canonicalize nested JSON object keys (schemas + tool arguments) so translation does not reshuffle the shared prefix. |
 | Observability | mlx-lm reports `usage.prompt_tokens_details.cached_tokens`. Gateway telemetry (MLX-123) stores it; Servers UI shows per-request Cache and a recent **hit rate**. |

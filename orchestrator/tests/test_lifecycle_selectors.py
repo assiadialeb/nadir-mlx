@@ -7,11 +7,13 @@ from django.test import TestCase as DjangoTestCase
 from orchestrator.lifecycle_selectors import (
     DEFAULT_IDLE_MINUTES,
     LIFECYCLE_MODE_ALWAYS_ON,
+    LIFECYCLE_MODE_MANUAL,
     LIFECYCLE_MODE_ON_DEMAND,
     enrich_instance_lifecycle_ui,
     get_idle_minutes,
     get_lifecycle_mode,
     instance_status_badge,
+    is_manual_lifecycle,
     is_on_demand_lifecycle,
     is_pinned_lifecycle,
     lifecycle_policy_summary,
@@ -41,6 +43,13 @@ class LifecycleSelectorTests(TestCase):
     def test_invalid_lifecycle_mode_falls_back_to_always_on(self) -> None:
         config = {"ops": {"lifecycle_mode": "invalid"}}
         self.assertEqual(get_lifecycle_mode(config), LIFECYCLE_MODE_ALWAYS_ON)
+
+    def test_manual_lifecycle_mode(self) -> None:
+        config = {"ops": {"lifecycle_mode": LIFECYCLE_MODE_MANUAL}}
+        self.assertEqual(get_lifecycle_mode(config), LIFECYCLE_MODE_MANUAL)
+        self.assertTrue(is_manual_lifecycle(config))
+        self.assertFalse(is_on_demand_lifecycle(config))
+        self.assertEqual(lifecycle_policy_summary(config), "Manual · UI start only")
 
     def test_idle_minutes_clamped_to_bounds(self) -> None:
         low = {"ops": {"idle_minutes": 1}}

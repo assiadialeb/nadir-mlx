@@ -9,8 +9,9 @@ Operator guide for Ollama-like **sleep / wake** behaviour on Nadir MLX.
 
 | Term | Meaning |
 |------|---------|
-| **always_on** | Instance stays running until manually stopped (default, pre-v0.3 behaviour) |
+| **always_on** | Instance stays running until manually stopped; restored after host/app reboot (default) |
 | **on_demand** | Instance may be **stopped** when idle; gateway **wakes** it on first request |
+| **manual** | Never auto-started on boot and never gateway-woken — start/stop only from the Servers UI (large models) |
 | **Idle offload** | Background watcher stops `on_demand` instances after **per-instance** `idle_minutes` without traffic |
 | **Pinned** | Never selected as an LRU victim under memory pressure (idle offload still applies when `on_demand`) |
 | **Warmup** | After load/wake, a 1-token generation pays Metal shader compile before the first user request |
@@ -27,7 +28,7 @@ Set in the instance **server config** (UI advanced / ops section):
 
 | Key | Values | Default |
 |-----|--------|---------|
-| `lifecycle_mode` | `always_on`, `on_demand` | `always_on` |
+| `lifecycle_mode` | `always_on`, `on_demand`, `manual` | `always_on` |
 | `idle_minutes` | 5–1440 | `30` |
 | `pinned` | bool | `false` |
 | `warmup_on_load` | bool | `true` |
@@ -36,6 +37,7 @@ Set in the instance **server config** (UI advanced / ops section):
 Recommendations:
 
 - Primary chat model → `always_on` (optionally `pinned` if you also keep secondary `on_demand` models)
+- Large / rarely used chat weights → `manual` (no boot restore, no wake — start from UI when needed)
 - Frequently used secondary chat → `on_demand` + `pinned` + shorter `idle_minutes` (survives LRU, still sleeps)
 - Rare TTS / STT / image → `on_demand` with `idle_minutes` 15–60
 - Enable `speculative_wake` when clients probe `/v1/models/{id}` or Ollama `/api/show` before the first completion
@@ -66,6 +68,7 @@ After a host reboot or Nadir process restart:
 1. Health reconcile marks orphan `RUNNING` rows (dead PIDs) as `STOPPED`/`FAILED`.
 2. **Startup reconcile** restarts every **`always_on`** instance in `STOPPED`/`FAILED`.
 3. **`on_demand`** instances stay stopped until the next gateway request (wake-on-request).
+4. **`manual`** instances stay stopped until started from the Servers UI (no boot restore, no gateway wake).
 
 This is independent of `ops.auto_restart` (runtime crash recovery while the app stays up). Disable with `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED=false` if needed.
 
