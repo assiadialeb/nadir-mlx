@@ -237,6 +237,14 @@ NADIR_IDLE_OFFLOAD_ENABLED = os.environ.get("NADIR_IDLE_OFFLOAD_ENABLED", "true"
 NADIR_IDLE_CHECK_INTERVAL_SECONDS = float(
     os.environ.get("NADIR_IDLE_CHECK_INTERVAL_SECONDS", "60")
 )
+NADIR_LRU_EVICTION_ENABLED = os.environ.get("NADIR_LRU_EVICTION_ENABLED", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+# Keep this much free memory (GiB) when deciding whether to LRU-evict on_demand instances.
+NADIR_MEMORY_RESERVE_GB = float(os.environ.get("NADIR_MEMORY_RESERVE_GB", "4"))
 NADIR_GATEWAY_PUBLIC_BASE_URL = os.environ.get(
     "NADIR_GATEWAY_PUBLIC_BASE_URL",
     f"http://{NADIR_GATEWAY_HOST}:{NADIR_GATEWAY_PORT}",

@@ -84,7 +84,7 @@ class ResponsesTranslateTests(SimpleTestCase):
         self.assertEqual(chat["messages"][0]["content"], "Hi")
         self.assertEqual(chat["messages"][1]["role"], "assistant")
 
-    def test_multimodal_content_keeps_image_parts(self) -> None:
+    def test_multimodal_content_normalizes_image_url(self) -> None:
         chat = responses_request_to_chat(
             {
                 "model": "demo",
@@ -105,7 +105,83 @@ class ResponsesTranslateTests(SimpleTestCase):
         content = chat["messages"][0]["content"]
         self.assertIsInstance(content, list)
         self.assertEqual(content[0]["type"], "text")
-        self.assertEqual(content[1]["type"], "input_image")
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertEqual(content[1]["image_url"]["url"], "data:image/png;base64,abc")
+
+    def test_tools_and_tool_choice_translate(self) -> None:
+        chat = responses_request_to_chat(
+            {
+                "model": "demo",
+                "input": "Call the tool",
+                "reasoning": {"effort": "low"},
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "lookup",
+                        "description": "Lookup",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+                "tool_choice": {"type": "function", "name": "lookup"},
+            }
+        )
+        self.assertEqual(chat["tools"][0]["function"]["name"], "lookup")
+        self.assertEqual(chat["tool_choice"]["function"]["name"], "lookup")
+        self.assertNotIn("reasoning", chat)
+
+    def test_function_call_items_round_trip_shapes(self) -> None:
+        chat = responses_request_to_chat(
+            {
+                "model": "demo",
+                "input": [
+                    {"role": "developer", "content": "Systemish"},
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "lookup",
+                        "arguments": "{\"q\":\"x\"}",
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_1",
+                        "output": "result",
+                    },
+                ],
+            }
+        )
+        self.assertEqual(chat["messages"][0]["role"], "system")
+        self.assertEqual(chat["messages"][1]["tool_calls"][0]["id"], "call_1")
+        self.assertEqual(chat["messages"][2]["role"], "tool")
+        self.assertEqual(chat["messages"][2]["content"], "result")
+
+    def test_chat_tool_calls_become_function_call_output_items(self) -> None:
+        payload = chat_completion_to_response(
+            {
+                "id": "chatcmpl-1",
+                "created": 1,
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_9",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "lookup",
+                                        "arguments": "{\"q\":1}",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+            },
+            client_model_alias="demo",
+        )
+        self.assertEqual(payload["output"][0]["type"], "function_call")
+        self.assertEqual(payload["output"][0]["name"], "lookup")
 
     def test_chat_completion_to_response_shape(self) -> None:
         payload = chat_completion_to_response(
