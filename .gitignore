@@ -96,3 +96,4 @@ data/generated_images/
 
 # MLX / model caches inside project tree
 **/.cache/
+.mimosa/*
