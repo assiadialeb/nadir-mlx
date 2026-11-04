@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from orchestrator.gateway.route_cache import clear_gateway_route_cache
 from orchestrator.gateway_aliases import instance_gateway_alias
@@ -15,9 +14,6 @@ from orchestrator.memory_pressure import (
     lru_eviction_enabled,
 )
 from orchestrator.models import InferenceInstance
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

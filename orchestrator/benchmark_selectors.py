@@ -494,6 +494,18 @@ def _draft_ab_buckets(
     return buckets
 
 
+def _draft_ab_candidate_pairs(
+    runs: list[BenchmarkRun],
+) -> list[tuple[BenchmarkRun, BenchmarkRun]]:
+    pairs: list[tuple[BenchmarkRun, BenchmarkRun]] = []
+    for index, run_a in enumerate(runs):
+        for run_b in runs[index + 1 :]:
+            if draft_profile_key(run_a.params) == draft_profile_key(run_b.params):
+                continue
+            pairs.append((run_a, run_b))
+    return pairs
+
+
 def _collect_draft_ab_pairs(
     buckets: dict[tuple[str, int], dict[str, BenchmarkRun]],
     *,
@@ -505,17 +517,14 @@ def _collect_draft_ab_pairs(
         runs = list(group.values())
         if len(runs) < 2:
             continue
-        for index, run_a in enumerate(runs):
-            for run_b in runs[index + 1 :]:
-                if draft_profile_key(run_a.params) == draft_profile_key(run_b.params):
-                    continue
-                pair_ids = tuple(sorted((run_a.id, run_b.id)))
-                if pair_ids in seen_ids:
-                    continue
-                seen_ids.add(pair_ids)
-                pairs.append((run_a, run_b))
-                if len(pairs) >= max_pairs:
-                    return pairs
+        for run_a, run_b in _draft_ab_candidate_pairs(runs):
+            pair_ids = tuple(sorted((run_a.id, run_b.id)))
+            if pair_ids in seen_ids:
+                continue
+            seen_ids.add(pair_ids)
+            pairs.append((run_a, run_b))
+            if len(pairs) >= max_pairs:
+                return pairs
     return pairs
 
 

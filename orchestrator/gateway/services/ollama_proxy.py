@@ -42,11 +42,11 @@ EMBEDDING_MODES = frozenset({"EMBEDDING"})
 StreamChunkFn = Callable[..., bytes]
 
 
-async def proxy_ollama_root() -> Response:
+def proxy_ollama_root() -> Response:
     return PlainTextResponse("Ollama is running")
 
 
-async def proxy_ollama_version() -> Response:
+def proxy_ollama_version() -> Response:
     return JSONResponse(content=ollama_version_payload())
 
 
@@ -60,7 +60,7 @@ async def proxy_ollama_ps() -> Response:
     return JSONResponse(content=models_list_to_ollama_ps(payload))
 
 
-async def proxy_ollama_show(body: dict[str, Any]) -> Response:
+def proxy_ollama_show(body: dict[str, Any]) -> Response:
     name = body.get("name") or body.get("model")
     if not isinstance(name, str) or not name.strip():
         raise GatewayRouteError(
