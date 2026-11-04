@@ -64,6 +64,19 @@ SQLite is used when no PostgreSQL host is configured.
 
 Per-instance overrides (lifecycle, idle minutes, concurrency) are set in **server config** in the UI. See [Server config reference](usage/server-config-reference.md).
 
+## Nadir MCP
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NADIR_MCP_HOST` | `127.0.0.1` | Bind address for `manage.py run_mcp` |
+| `NADIR_MCP_PORT` | `11381` | Bind port for `manage.py run_mcp` |
+| `NADIR_MCP_PATH` | `/mcp` | URL path (Streamable HTTP) |
+| `NADIR_MCP_API_KEY` | — | Auth for MCP; falls back to `NADIR_GATEWAY_API_KEY` |
+| `NADIR_MCP_ENABLED` | `true` | Mount MCP on Django ASGI (`uvicorn mlx_orchestrator.asgi:application`) |
+| `NADIR_MCP_ALLOWED_HOSTS` | — | Extra Host values for MCP DNS-rebinding protection |
+
+See [MCP server](usage/mcp.md).
+
 ## Benchmarks & images
 
 | Variable | Default | Description |
