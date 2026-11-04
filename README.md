@@ -255,6 +255,8 @@ Environment variables (see `.env.example`):
 | `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Background watcher stops idle `on_demand` instances |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | How often idle candidates are evaluated |
+| `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` instances when memory is tight before a load |
+| `NADIR_MEMORY_RESERVE_GB` | `4` | Free-memory headroom (GiB) kept for LRU decisions |
 
 ### 9. Download and launch a model
 
