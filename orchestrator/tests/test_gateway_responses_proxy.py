@@ -146,19 +146,38 @@ class GatewayResponsesProxyTests(SimpleTestCase):
 
 
 class ResponsesSseTranslateUnitTests(SimpleTestCase):
+    def _stream_meta(self) -> dict:
+        return {
+            "message_id": "msg_1",
+            "output_index": 0,
+            "text": "",
+            "sequence_number": 0,
+            "next_output_index": 0,
+            "message_opened": False,
+            "reasoning_opened": False,
+            "reasoning": "",
+            "reasoning_id": "rs_1",
+            "tools": __import__(
+                "orchestrator.gateway.protocol.chat_sse",
+                fromlist=["ToolCallAccumulator"],
+            ).ToolCallAccumulator(),
+            "tool_item_ids": {},
+            "tool_output_indexes": {},
+            "tool_call_ids": {},
+        }
+
     def test_map_chat_sse_line_delta(self) -> None:
-        meta = {"message_id": "msg_1", "output_index": 0, "text": "", "sequence_number": 0}
+        meta = self._stream_meta()
         events = _map_chat_sse_line(
             b'data: {"choices":[{"delta":{"content":"ab"}}]}',
             meta,
         )
-        self.assertEqual(len(events), 1)
         self.assertEqual(meta["text"], "ab")
-        self.assertIn(b"response.output_text.delta", events[0])
-        self.assertIn(b"sequence_number", events[0])
+        self.assertTrue(any(b"response.output_text.delta" in event for event in events))
+        self.assertTrue(meta["message_opened"])
 
     def test_map_chat_sse_line_ignores_noise(self) -> None:
-        meta = {"message_id": "msg_1", "output_index": 0, "text": "", "sequence_number": 0}
+        meta = self._stream_meta()
         self.assertEqual(_map_chat_sse_line(b": comment", meta), [])
         self.assertEqual(_map_chat_sse_line(b"data: [DONE]", meta), [])
         self.assertEqual(_map_chat_sse_line(b"data: {bad", meta), [])
@@ -169,7 +188,7 @@ class ResponsesSseTranslateUnitTests(SimpleTestCase):
         )
 
     def test_map_chat_sse_line_marks_failed_on_error_payload(self) -> None:
-        meta = {"message_id": "msg_1", "output_index": 0, "text": "", "sequence_number": 0}
+        meta = self._stream_meta()
         events = _map_chat_sse_line(
             b'data: {"error":{"message":"boom","type":"server_error"}}',
             meta,
@@ -203,6 +222,10 @@ class ResponsesSseTranslateAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn(b"response.output_text.done", joined)
         self.assertIn(b"response.output_item.done", joined)
         self.assertIn(b"response.completed", joined)
+        # Message item opens only after the first text delta.
+        created_at = joined.find(b"response.created")
+        message_added_at = joined.find(b'"type":"message"')
+        self.assertGreater(message_added_at, created_at)
 
     async def test_translate_chat_sse_emits_failed(self) -> None:
         async def chunks():
@@ -245,3 +268,24 @@ class ResponsesSseTranslateAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn(b"response.function_call_arguments.done", joined)
         self.assertIn(b"lookup", joined)
         self.assertIn(b'"q\\":1', joined)
+        # Tool-only streams must not emit an empty assistant message item.
+        self.assertNotIn(b'"type":"message"', joined)
+
+    async def test_translate_chat_sse_emits_reasoning_deltas(self) -> None:
+        async def chunks():
+            yield b'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n'
+            yield b'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n'
+
+        joined = b"".join(
+            [
+                chunk
+                async for chunk in _translate_chat_sse_to_responses(
+                    chunks(),
+                    client_model_alias="demo",
+                )
+            ]
+        )
+        self.assertIn(b"response.reasoning_summary_text.delta", joined)
+        self.assertIn(b"think", joined)
+        self.assertIn(b'"type":"reasoning"', joined)
+        self.assertIn(b"response.output_text.delta", joined)

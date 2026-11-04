@@ -24,10 +24,18 @@ class ChatExtensionTests(SimpleTestCase):
         self.assertEqual(body["model"], "alias")
         self.assertEqual(len(upstream["tools"]), 1)
 
-    def test_prepare_chat_upstream_body_adds_include_usage_for_stream(self) -> None:
+    def test_prepare_chat_upstream_body_leaves_stream_options_alone_by_default(self) -> None:
         upstream = prepare_chat_upstream_body(
             {"model": "alias", "stream": True, "messages": []},
             "default_model",
+        )
+        self.assertNotIn("stream_options", upstream)
+
+    def test_prepare_chat_upstream_body_can_force_include_usage(self) -> None:
+        upstream = prepare_chat_upstream_body(
+            {"model": "alias", "stream": True, "messages": []},
+            "default_model",
+            force_include_usage=True,
         )
         self.assertEqual(upstream["stream_options"], {"include_usage": True})
 

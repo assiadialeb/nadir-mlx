@@ -46,6 +46,83 @@ class OllamaTranslateTests(SimpleTestCase):
         self.assertTrue(chat["stream"])
         self.assertNotIn("num_ctx", chat)
 
+    def test_ollama_capabilities_and_show_stub(self) -> None:
+        from orchestrator.gateway.protocol.ollama_translate import (
+            ollama_capabilities_for_mode,
+        )
+
+        self.assertEqual(ollama_capabilities_for_mode("EMBEDDING"), ["embedding"])
+        self.assertEqual(
+            ollama_capabilities_for_mode("MULTIMODAL", tool_parser_type="json"),
+            ["completion", "vision", "tools"],
+        )
+        stub = ollama_show_stub("demo", launch_mode="TEXT", tool_parser_type="")
+        self.assertEqual(stub["capabilities"], ["completion"])
+
+    def test_ollama_tool_message_fallbacks_and_thinking(self) -> None:
+        chat = ollama_chat_to_openai(
+            {
+                "model": "demo",
+                "stream": False,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "thinking": "hmm",
+                        "tool_calls": [
+                            {"function": {"name": "x", "arguments": {"a": 1}}},
+                            "skip",
+                            {"function": {"name": ""}},
+                        ],
+                    },
+                    {"role": "tool", "content": {"ok": True}},
+                    {"role": "tool", "tool_name": "unknown", "content": "n"},
+                ],
+            }
+        )
+        self.assertEqual(chat["messages"][0]["reasoning_content"], "hmm")
+        self.assertEqual(chat["messages"][1]["tool_call_id"], "call_0")
+        self.assertEqual(chat["messages"][1]["content"], '{"ok": true}')
+        self.assertEqual(chat["messages"][2]["tool_call_id"], "call_unknown")
+
+    def test_ollama_chat_preserves_tool_call_history(self) -> None:
+        chat = ollama_chat_to_openai(
+            {
+                "model": "demo",
+                "stream": False,
+                "messages": [
+                    {"role": "user", "content": "Paris?"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": {"city": "Paris"},
+                                }
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_name": "get_weather",
+                        "content": "sunny",
+                    },
+                ],
+            }
+        )
+        assistant = chat["messages"][1]
+        self.assertEqual(assistant["role"], "assistant")
+        self.assertEqual(assistant["tool_calls"][0]["function"]["name"], "get_weather")
+        self.assertEqual(
+            assistant["tool_calls"][0]["function"]["arguments"],
+            '{"city":"Paris"}',
+        )
+        tool = chat["messages"][2]
+        self.assertEqual(tool["role"], "tool")
+        self.assertEqual(tool["tool_call_id"], assistant["tool_calls"][0]["id"])
+        self.assertEqual(tool["content"], "sunny")
+
     def test_ollama_chat_images_and_format_schema(self) -> None:
         chat = ollama_chat_to_openai(
             {

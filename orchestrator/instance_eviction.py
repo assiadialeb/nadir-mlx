@@ -21,19 +21,27 @@ from orchestrator.models import InferenceInstance
 logger = logging.getLogger(__name__)
 
 _MAX_EVICTIONS_PER_LOAD = 3
-_DEFAULT_GRACE_SECONDS = 60
 _eviction_lock = threading.Lock()
 
 
 def eviction_grace_seconds() -> int:
-    """Minimum idle age before an on_demand instance may be LRU-evicted."""
+    """Minimum idle age before an on_demand instance may be LRU-evicted.
+
+    Defaults to ``NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS`` so a long generation
+    started just after ``last_used_at`` touch is not reaped mid-request.
+    """
     raw = os.environ.get("NADIR_LRU_EVICTION_GRACE_SECONDS")
-    if raw is None or not str(raw).strip():
-        return _DEFAULT_GRACE_SECONDS
+    if raw is not None and str(raw).strip():
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
     try:
-        return max(0, int(raw))
-    except ValueError:
-        return _DEFAULT_GRACE_SECONDS
+        from django.conf import settings
+
+        return max(0, int(getattr(settings, "NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS", 300)))
+    except Exception:
+        return 300
 
 
 def list_lru_evictable_instances(*, exclude_id: int | None = None) -> list[InferenceInstance]:
@@ -89,31 +97,24 @@ def ensure_headroom_for_load(pending: InferenceInstance) -> int:
     """Evict LRU on_demand instances until pending footprint fits, or give up.
 
     Returns the number of instances stopped. No-op when eviction is disabled
-    or host available memory cannot be measured.
+    or host available memory cannot be measured. Victim selection is serialized;
+    ``stop_instance`` runs outside the lock to avoid blocking other planners.
     """
     if not lru_eviction_enabled():
         return 0
 
-    with _eviction_lock:
-        return _ensure_headroom_locked(pending)
-
-
-def _ensure_headroom_locked(pending: InferenceInstance) -> int:
     needed = estimate_instance_footprint_bytes(pending.model_name, pending.server_config)
-    available = host_available_bytes()
-    if available is None:
-        logger.debug("Skipping LRU eviction: host available memory unknown")
+    with _eviction_lock:
+        plan = _plan_evictions(pending, needed=needed)
+
+    if plan is None:
         return 0
 
     stopped = 0
-    while available < needed and stopped < _MAX_EVICTIONS_PER_LOAD:
-        victim = evict_one_lru_instance(exclude_id=pending.pk)
-        if victim is None:
-            break
-        stopped += 1
-        available = host_available_bytes()
-        if available is None:
-            break
+    for victim in plan["victims"]:
+        if _stop_planned_victim(victim) is not None:
+            stopped += 1
+    available = host_available_bytes()
     if stopped:
         logger.info(
             "LRU eviction freed %s instance(s) before loading %s (need≈%s MiB)",
@@ -131,6 +132,58 @@ def _ensure_headroom_locked(pending: InferenceInstance) -> int:
             stopped,
         )
     return stopped
+
+
+def _plan_evictions(
+    pending: InferenceInstance,
+    *,
+    needed: int,
+) -> dict[str, object] | None:
+    available = host_available_bytes()
+    if available is None:
+        logger.debug("Skipping LRU eviction: host available memory unknown")
+        return None
+
+    from orchestrator.server_manager import is_manual_stop_in_progress
+
+    victims: list[InferenceInstance] = []
+    projected = available
+    for candidate in list_lru_evictable_instances(exclude_id=pending.pk):
+        if projected >= needed or len(victims) >= _MAX_EVICTIONS_PER_LOAD:
+            break
+        if is_manual_stop_in_progress(candidate):
+            continue
+        victims.append(candidate)
+        projected += estimate_instance_footprint_bytes(
+            candidate.model_name,
+            candidate.server_config,
+        )
+    return {"victims": victims, "available": available}
+
+
+def _stop_planned_victim(instance: InferenceInstance) -> InferenceInstance | None:
+    from orchestrator.server_manager import is_manual_stop_in_progress, stop_instance
+
+    if is_manual_stop_in_progress(instance):
+        return None
+    alias = instance_gateway_alias(instance)
+    try:
+        stop_instance(instance)
+        clear_gateway_route_cache()
+        logger.info(
+            "LRU-evicted instance %s (alias=%s) on port %s to free memory",
+            instance.model_name,
+            alias,
+            instance.port,
+        )
+        return instance
+    except Exception:
+        logger.exception(
+            "LRU eviction failed for instance %s (alias=%s)",
+            instance.model_name,
+            alias,
+        )
+        return None
 
 
 def _within_grace_period(

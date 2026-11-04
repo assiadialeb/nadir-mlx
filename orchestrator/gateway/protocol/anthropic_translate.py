@@ -474,6 +474,17 @@ def anthropic_stream_content_block_start(*, index: int = 0) -> bytes:
     )
 
 
+def anthropic_stream_thinking_block_start(*, index: int) -> bytes:
+    return anthropic_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {"type": "thinking", "thinking": ""},
+        },
+    )
+
+
 def anthropic_stream_tool_use_block_start(
     *,
     index: int,
@@ -506,6 +517,17 @@ def anthropic_stream_text_delta(text: str, *, index: int = 0) -> bytes:
     )
 
 
+def anthropic_stream_thinking_delta(text: str, *, index: int) -> bytes:
+    return anthropic_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "thinking_delta", "thinking": text},
+        },
+    )
+
+
 def anthropic_stream_input_json_delta(partial_json: str, *, index: int) -> bytes:
     return anthropic_sse_event(
         "content_block_delta",
@@ -528,13 +550,17 @@ def anthropic_stream_message_delta(
     stop_reason: str,
     *,
     output_tokens: int = 0,
+    input_tokens: int = 0,
 ) -> bytes:
     return anthropic_sse_event(
         "message_delta",
         {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-            "usage": {"output_tokens": output_tokens},
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
         },
     )
 

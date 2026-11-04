@@ -215,8 +215,6 @@ def _coerce_input_item(item: Any) -> dict[str, Any] | None:
     if not isinstance(item, dict):
         return None
     item_type = item.get("type")
-    if item_type == "function_call":
-        return _function_call_to_assistant_message(item)
     if item_type == "function_call_output":
         return _function_call_output_to_tool_message(item)
     if item_type in {None, "message"} and "role" in item:
@@ -243,15 +241,6 @@ def _function_call_to_tool_call(item: dict[str, Any]) -> dict[str, Any] | None:
         "id": call_id,
         "type": "function",
         "function": {"name": name, "arguments": arguments},
-    }
-
-
-def _function_call_to_assistant_message(item: dict[str, Any]) -> dict[str, Any]:
-    call = _function_call_to_tool_call(item)
-    return {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [call] if call is not None else [],
     }
 
 

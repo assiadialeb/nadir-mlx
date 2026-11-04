@@ -27,6 +27,9 @@ from orchestrator.gateway.services.http_proxy import (
     validate_target_launch_mode,
 )
 
+EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added"
+EVENT_OUTPUT_ITEM_DONE = "response.output_item.done"
+
 
 async def proxy_responses_create(body: dict[str, Any], headers: Any) -> Response:
     """Translate Responses → chat completions, then map the result back."""
@@ -35,7 +38,11 @@ async def proxy_responses_create(body: dict[str, Any], headers: Any) -> Response
     validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "responses")
     request_headers = forward_request_headers(headers)
     url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
-    upstream_body = prepare_chat_upstream_body(chat_body, target.upstream_model)
+    upstream_body = prepare_chat_upstream_body(
+        chat_body,
+        target.upstream_model,
+        force_include_usage=True,
+    )
 
     if chat_body.get("stream"):
         upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
@@ -74,9 +81,27 @@ async def _translate_chat_sse_to_responses(
     meta["tools"] = ToolCallAccumulator()
     meta["tool_item_ids"] = {}
     meta["tool_output_indexes"] = {}
-    meta["next_output_index"] = int(meta["output_index"]) + 1
-    for event in _stream_open_events(meta, client_model_alias):
-        yield event
+    meta["tool_call_ids"] = {}
+    meta["next_output_index"] = 0
+    meta["message_opened"] = False
+    meta["reasoning_opened"] = False
+    meta["reasoning"] = ""
+    meta["reasoning_id"] = f"rs_{meta['message_id'][4:]}"
+    yield _sse_event(
+        "response.created",
+        {
+            "type": "response.created",
+            "sequence_number": next_sequence(meta),
+            "response": {
+                "id": meta["response_id"],
+                "object": "response",
+                "created_at": meta["created_at"],
+                "status": "in_progress",
+                "model": client_model_alias,
+                "output": [],
+            },
+        },
+    )
 
     buffer = b""
     async for chunk in chunks:
@@ -112,27 +137,17 @@ def _drain_sse_buffer(
     return events, buffer, False
 
 
-def _stream_open_events(meta: dict[str, Any], client_model_alias: str) -> list[bytes]:
+def _ensure_message_opened(meta: dict[str, Any]) -> list[bytes]:
+    if meta.get("message_opened"):
+        return []
+    meta["message_opened"] = True
+    meta["output_index"] = int(meta["next_output_index"])
+    meta["next_output_index"] = int(meta["output_index"]) + 1
     return [
         _sse_event(
-            "response.created",
+            EVENT_OUTPUT_ITEM_ADDED,
             {
-                "type": "response.created",
-                "sequence_number": next_sequence(meta),
-                "response": {
-                    "id": meta["response_id"],
-                    "object": "response",
-                    "created_at": meta["created_at"],
-                    "status": "in_progress",
-                    "model": client_model_alias,
-                    "output": [],
-                },
-            },
-        ),
-        _sse_event(
-            "response.output_item.added",
-            {
-                "type": "response.output_item.added",
+                "type": EVENT_OUTPUT_ITEM_ADDED,
                 "sequence_number": next_sequence(meta),
                 "output_index": meta["output_index"],
                 "item": {
@@ -158,58 +173,100 @@ def _stream_open_events(meta: dict[str, Any], client_model_alias: str) -> list[b
     ]
 
 
+def _ensure_reasoning_opened(meta: dict[str, Any]) -> list[bytes]:
+    if meta.get("reasoning_opened"):
+        return []
+    meta["reasoning_opened"] = True
+    meta["reasoning_output_index"] = int(meta["next_output_index"])
+    meta["next_output_index"] = int(meta["reasoning_output_index"]) + 1
+    return [
+        _sse_event(
+            EVENT_OUTPUT_ITEM_ADDED,
+            {
+                "type": EVENT_OUTPUT_ITEM_ADDED,
+                "sequence_number": next_sequence(meta),
+                "output_index": meta["reasoning_output_index"],
+                "item": {
+                    "id": meta["reasoning_id"],
+                    "type": "reasoning",
+                    "status": "in_progress",
+                    "summary": [],
+                },
+            },
+        )
+    ]
+
+
 def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[bytes]:
     usage = meta.get("usage") if isinstance(meta.get("usage"), dict) else {}
     tools: ToolCallAccumulator = meta["tools"]
-    events = [
-        _sse_event(
-            "response.output_text.done",
-            {
-                "type": "response.output_text.done",
-                "sequence_number": next_sequence(meta),
-                "item_id": meta["message_id"],
-                "output_index": meta["output_index"],
-                "content_index": 0,
-                "text": meta.get("text", ""),
-            },
-        ),
-        _sse_event(
-            "response.content_part.done",
-            {
-                "type": "response.content_part.done",
-                "sequence_number": next_sequence(meta),
-                "item_id": meta["message_id"],
-                "output_index": meta["output_index"],
-                "content_index": 0,
-                "part": {"type": "output_text", "text": meta.get("text", "")},
-            },
-        ),
-        _sse_event(
-            "response.output_item.done",
-            {
-                "type": "response.output_item.done",
-                "sequence_number": next_sequence(meta),
-                "output_index": meta["output_index"],
-                "item": {
-                    "id": meta["message_id"],
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": [{"type": "output_text", "text": meta.get("text", "")}],
-                },
-            },
-        ),
-    ]
+    events: list[bytes] = []
+    events.extend(_close_reasoning_events(meta))
+    if meta.get("message_opened"):
+        events.extend(
+            [
+                _sse_event(
+                    "response.output_text.done",
+                    {
+                        "type": "response.output_text.done",
+                        "sequence_number": next_sequence(meta),
+                        "item_id": meta["message_id"],
+                        "output_index": meta["output_index"],
+                        "content_index": 0,
+                        "text": meta.get("text", ""),
+                    },
+                ),
+                _sse_event(
+                    "response.content_part.done",
+                    {
+                        "type": "response.content_part.done",
+                        "sequence_number": next_sequence(meta),
+                        "item_id": meta["message_id"],
+                        "output_index": meta["output_index"],
+                        "content_index": 0,
+                        "part": {"type": "output_text", "text": meta.get("text", "")},
+                    },
+                ),
+                _sse_event(
+                    EVENT_OUTPUT_ITEM_DONE,
+                    {
+                        "type": EVENT_OUTPUT_ITEM_DONE,
+                        "sequence_number": next_sequence(meta),
+                        "output_index": meta["output_index"],
+                        "item": {
+                            "id": meta["message_id"],
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "completed",
+                            "content": [
+                                {"type": "output_text", "text": meta.get("text", "")}
+                            ],
+                        },
+                    },
+                ),
+            ]
+        )
     events.extend(_close_tool_call_events(meta))
-    output_items = [
-        {
-            "id": meta["message_id"],
-            "type": "message",
-            "role": "assistant",
-            "status": "completed",
-            "content": [{"type": "output_text", "text": meta.get("text", "")}],
-        }
-    ]
+    output_items: list[dict[str, Any]] = []
+    if meta.get("reasoning_opened") and meta.get("reasoning"):
+        output_items.append(
+            {
+                "id": meta["reasoning_id"],
+                "type": "reasoning",
+                "status": "completed",
+                "summary": [{"type": "summary_text", "text": meta.get("reasoning", "")}],
+            }
+        )
+    if meta.get("message_opened"):
+        output_items.append(
+            {
+                "id": meta["message_id"],
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": meta.get("text", "")}],
+            }
+        )
     output_items.extend(_function_call_output_items(meta, tools))
     events.append(
         _sse_event(
@@ -236,11 +293,44 @@ def _stream_close_events(meta: dict[str, Any], client_model_alias: str) -> list[
     return events
 
 
+def _close_reasoning_events(meta: dict[str, Any]) -> list[bytes]:
+    if not meta.get("reasoning_opened"):
+        return []
+    return [
+        _sse_event(
+            "response.reasoning_summary_text.done",
+            {
+                "type": "response.reasoning_summary_text.done",
+                "sequence_number": next_sequence(meta),
+                "item_id": meta["reasoning_id"],
+                "output_index": meta["reasoning_output_index"],
+                "text": meta.get("reasoning", ""),
+            },
+        ),
+        _sse_event(
+            EVENT_OUTPUT_ITEM_DONE,
+            {
+                "type": EVENT_OUTPUT_ITEM_DONE,
+                "sequence_number": next_sequence(meta),
+                "output_index": meta["reasoning_output_index"],
+                "item": {
+                    "id": meta["reasoning_id"],
+                    "type": "reasoning",
+                    "status": "completed",
+                    "summary": [
+                        {"type": "summary_text", "text": meta.get("reasoning", "")}
+                    ],
+                },
+            },
+        ),
+    ]
+
+
 def _close_tool_call_events(meta: dict[str, Any]) -> list[bytes]:
     tools: ToolCallAccumulator = meta["tools"]
     events: list[bytes] = []
     for call in tools.completed_calls():
-        openai_index = _index_for_completed_call(meta, call)
+        openai_index = int(call.get("index", 0))
         item_id = meta["tool_item_ids"].get(openai_index) or call["id"]
         output_index = meta["tool_output_indexes"].get(
             openai_index,
@@ -261,9 +351,9 @@ def _close_tool_call_events(meta: dict[str, Any]) -> list[bytes]:
         )
         events.append(
             _sse_event(
-                "response.output_item.done",
+                EVENT_OUTPUT_ITEM_DONE,
                 {
-                    "type": "response.output_item.done",
+                    "type": EVENT_OUTPUT_ITEM_DONE,
                     "sequence_number": next_sequence(meta),
                     "output_index": output_index,
                     "item": {
@@ -286,7 +376,7 @@ def _function_call_output_items(
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for call in tools.completed_calls():
-        openai_index = _index_for_completed_call(meta, call)
+        openai_index = int(call.get("index", 0))
         item_id = meta["tool_item_ids"].get(openai_index) or call["id"]
         items.append(
             {
@@ -299,14 +389,6 @@ def _function_call_output_items(
             }
         )
     return items
-
-
-def _index_for_completed_call(meta: dict[str, Any], call: dict[str, Any]) -> int:
-    call_id = call["id"]
-    for index, stored_id in meta.get("tool_call_ids", {}).items():
-        if stored_id == call_id:
-            return int(index)
-    return 0
 
 
 def _failed_event(meta: dict[str, Any], client_model_alias: str) -> bytes:
@@ -343,7 +425,23 @@ def _map_chat_sse_line(line: bytes, meta: dict[str, Any]) -> list[bytes]:
         meta["usage"] = parsed.usage
 
     events: list[bytes] = []
+    if parsed.reasoning:
+        events.extend(_ensure_reasoning_opened(meta))
+        meta["reasoning"] = str(meta.get("reasoning", "")) + parsed.reasoning
+        events.append(
+            _sse_event(
+                "response.reasoning_summary_text.delta",
+                {
+                    "type": "response.reasoning_summary_text.delta",
+                    "sequence_number": next_sequence(meta),
+                    "item_id": meta["reasoning_id"],
+                    "output_index": meta["reasoning_output_index"],
+                    "delta": parsed.reasoning,
+                },
+            )
+        )
     if parsed.text:
+        events.extend(_ensure_message_opened(meta))
         meta["text"] = str(meta.get("text", "")) + parsed.text
         events.append(
             _sse_event(
@@ -369,7 +467,6 @@ def _map_tool_call_deltas(
 ) -> list[bytes]:
     tools: ToolCallAccumulator = meta["tools"]
     events: list[bytes] = []
-    meta.setdefault("tool_call_ids", {})
     for call, fragment in tools.ingest(deltas):
         item_id = meta["tool_item_ids"].get(call.index)
         if item_id is None:
@@ -383,9 +480,9 @@ def _map_tool_call_deltas(
             meta["tool_call_ids"][call.index] = call.id or f"call_{call.index}"
             events.append(
                 _sse_event(
-                    "response.output_item.added",
+                    EVENT_OUTPUT_ITEM_ADDED,
                     {
-                        "type": "response.output_item.added",
+                        "type": EVENT_OUTPUT_ITEM_ADDED,
                         "sequence_number": next_sequence(meta),
                         "output_index": output_index,
                         "item": {

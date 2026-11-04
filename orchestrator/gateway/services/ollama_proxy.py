@@ -30,7 +30,8 @@ from orchestrator.gateway.protocol.ollama_translate import (
     openai_embeddings_to_ollama,
 )
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, EMBEDDINGS_PATH, GatewayRouteError
-from orchestrator.gateway.selectors import list_running_gateway_models
+from orchestrator.gateway.route_cache import get_route_snapshot
+from orchestrator.gateway.selectors import get_gateway_model, list_running_gateway_models
 from orchestrator.gateway.services.chat_proxy import CHAT_LAUNCH_MODES
 from orchestrator.gateway.services.http_proxy import (
     forward_request_headers,
@@ -60,11 +61,19 @@ async def proxy_ollama_tags() -> Response:
 
 
 async def proxy_ollama_ps() -> Response:
-    payload = await sync_to_async(list_running_gateway_models, thread_sensitive=False)()
+    snapshot = await sync_to_async(get_route_snapshot, thread_sensitive=False)()
+    running_aliases = sorted({target.alias for target in snapshot.running_targets.values()})
+    payload = {
+        "object": "list",
+        "data": [
+            {"id": alias, "object": "model", "created": 0, "owned_by": "nadir"}
+            for alias in running_aliases
+        ],
+    }
     return JSONResponse(content=models_list_to_ollama_ps(payload))
 
 
-def proxy_ollama_show(body: dict[str, Any]) -> Response:
+async def proxy_ollama_show(body: dict[str, Any]) -> Response:
     name = body.get("name") or body.get("model")
     if not isinstance(name, str) or not name.strip():
         raise GatewayRouteError(
@@ -73,7 +82,18 @@ def proxy_ollama_show(body: dict[str, Any]) -> Response:
             message="name or model is required.",
             param="name",
         )
-    return JSONResponse(content=ollama_show_stub(name.strip()))
+    cleaned = name.strip()
+    model = await sync_to_async(get_gateway_model, thread_sensitive=False)(cleaned)
+    metadata = model.get("metadata") if isinstance(model.get("metadata"), dict) else {}
+    launch_mode = str(metadata.get("launch_mode") or "TEXT")
+    tool_parser_type = str(metadata.get("tool_parser_type") or "")
+    return JSONResponse(
+        content=ollama_show_stub(
+            cleaned,
+            launch_mode=launch_mode,
+            tool_parser_type=tool_parser_type,
+        )
+    )
 
 
 async def proxy_ollama_chat(body: dict[str, Any], headers: Any) -> Response:
@@ -138,7 +158,11 @@ async def _proxy_chat_like(
     validate_target_launch_mode(target, CHAT_LAUNCH_MODES, route_label)
     request_headers = forward_request_headers(headers)
     url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
-    upstream_body = prepare_chat_upstream_body(chat_body, target.upstream_model)
+    upstream_body = prepare_chat_upstream_body(
+        chat_body,
+        target.upstream_model,
+        force_include_usage=True,
+    )
 
     if chat_body.get("stream"):
         upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
@@ -222,20 +246,29 @@ def _events_for_ollama_line(
     if parsed.usage is not None:
         state.usage = parsed.usage
     if parsed.finish_reason:
-        state.done_reason = (
-            "tool_calls" if parsed.finish_reason == "tool_calls" else parsed.finish_reason
-        )
+        mapped = "stop" if parsed.finish_reason == "tool_calls" else parsed.finish_reason
+        state.done_reason = mapped
     if parsed.tool_call_deltas:
         state.tools.ingest(parsed.tool_call_deltas)
-    if not parsed.text:
-        return []
-    return [
-        stream_chunk(
-            client_model_alias=client_model_alias,
-            content=parsed.text,
-            done=False,
+    events: list[bytes] = []
+    if parsed.reasoning and stream_chunk is ollama_chat_stream_chunk:
+        events.append(
+            stream_chunk(
+                client_model_alias=client_model_alias,
+                content="",
+                thinking=parsed.reasoning,
+                done=False,
+            )
         )
-    ]
+    if parsed.text:
+        events.append(
+            stream_chunk(
+                client_model_alias=client_model_alias,
+                content=parsed.text,
+                done=False,
+            )
+        )
+    return events
 
 
 def _final_ollama_chunk(
@@ -244,13 +277,11 @@ def _final_ollama_chunk(
     state: _OllamaStreamState,
 ) -> bytes:
     tool_calls = tool_calls_as_ollama(state.tools.completed_calls())
-    if tool_calls and state.done_reason == "stop":
-        state.done_reason = "tool_calls"
     kwargs: dict[str, Any] = {
         "client_model_alias": client_model_alias,
         "content": "",
         "done": True,
-        "done_reason": state.done_reason,
+        "done_reason": state.done_reason or "stop",
         "prompt_eval_count": int(state.usage.get("prompt_tokens") or 0),
         "eval_count": int(state.usage.get("completion_tokens") or 0),
     }

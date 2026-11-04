@@ -19,15 +19,17 @@ from orchestrator.gateway.services.ollama_proxy import (
     proxy_ollama_version,
 )
 
+# Bootstrap probes used by Open WebUI / Continue — no API key expected.
+public_router = APIRouter()
 router = APIRouter(dependencies=[Depends(verify_gateway_api_key)])
 
 
-@router.get("/")
+@public_router.get("/")
 async def ollama_root():
     return proxy_ollama_root()
 
 
-@router.get("/api/version")
+@public_router.get("/api/version")
 async def ollama_version():
     return proxy_ollama_version()
 
@@ -48,7 +50,7 @@ async def ollama_show(request: Request):
     if isinstance(body, JSONResponse):
         return body
     try:
-        return proxy_ollama_show(body)
+        return await proxy_ollama_show(body)
     except GatewayRouteError as exc:
         return route_error_response(exc)
 

@@ -10,8 +10,8 @@ from starlette.responses import Response
 
 from orchestrator.gateway.chat_extensions import prepare_chat_upstream_body
 from orchestrator.gateway.protocol.anthropic_translate import (
+    anthropic_error_envelope,
     anthropic_request_to_chat,
-    anthropic_stream_content_block_start,
     anthropic_stream_content_block_stop,
     anthropic_stream_error,
     anthropic_stream_input_json_delta,
@@ -19,7 +19,10 @@ from orchestrator.gateway.protocol.anthropic_translate import (
     anthropic_stream_message_start,
     anthropic_stream_message_stop,
     anthropic_stream_text_delta,
+    anthropic_stream_thinking_block_start,
+    anthropic_stream_thinking_delta,
     anthropic_stream_tool_use_block_start,
+    anthropic_stream_content_block_start,
     chat_completion_to_anthropic,
     new_anthropic_message_id,
     openai_finish_to_anthropic_stop,
@@ -44,12 +47,16 @@ async def proxy_anthropic_messages(body: dict[str, Any], headers: Any) -> Respon
     validate_target_launch_mode(target, CHAT_LAUNCH_MODES, "anthropic messages")
     request_headers = forward_request_headers(headers)
     url = upstream_url_for_path(target, CHAT_COMPLETIONS_PATH)
-    upstream_body = prepare_chat_upstream_body(chat_body, target.upstream_model)
+    upstream_body = prepare_chat_upstream_body(
+        chat_body,
+        target.upstream_model,
+        force_include_usage=True,
+    )
 
     if chat_body.get("stream"):
         upstream = await proxy_sse_post(target, url, upstream_body, request_headers)
         if upstream.status_code >= 400:
-            return upstream
+            return _as_anthropic_error(upstream)
         return StreamingResponse(
             _translate_chat_sse_to_anthropic(
                 upstream.body_iterator,
@@ -61,7 +68,7 @@ async def proxy_anthropic_messages(body: dict[str, Any], headers: Any) -> Respon
 
     upstream = await proxy_json_post(target, url, upstream_body, request_headers)
     if upstream.status_code >= 400:
-        return upstream
+        return _as_anthropic_error(upstream)
     chat_payload = json.loads(upstream.body)
     return JSONResponse(
         status_code=200,
@@ -70,6 +77,43 @@ async def proxy_anthropic_messages(body: dict[str, Any], headers: Any) -> Respon
             client_model_alias=target.alias,
         ),
     )
+
+
+def _as_anthropic_error(upstream: Response) -> JSONResponse:
+    """Rewrite OpenAI/gateway error envelopes into Anthropic Messages shape."""
+    payload, raw_message = _decode_error_body(getattr(upstream, "body", None))
+    if isinstance(payload, dict) and payload.get("type") == "error":
+        return JSONResponse(status_code=upstream.status_code, content=payload)
+    message, error_type = _openai_error_fields(payload, raw_message)
+    return JSONResponse(
+        status_code=upstream.status_code,
+        content=anthropic_error_envelope(message, error_type),
+    )
+
+
+def _decode_error_body(body: Any) -> tuple[Any, str]:
+    fallback = "Upstream request failed"
+    if not isinstance(body, (bytes, bytearray)) or not body:
+        return None, fallback
+    try:
+        return json.loads(body), fallback
+    except json.JSONDecodeError:
+        return None, body.decode("utf-8", errors="replace") or fallback
+
+
+def _openai_error_fields(payload: Any, fallback_message: str) -> tuple[str, str]:
+    message = fallback_message
+    error_type = "api_error"
+    if not isinstance(payload, dict):
+        return message, error_type
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return message, error_type
+    message = str(error.get("message") or message)
+    raw_type = error.get("type")
+    if isinstance(raw_type, str) and raw_type.endswith("_error"):
+        error_type = raw_type
+    return message, error_type
 
 
 async def _translate_chat_sse_to_anthropic(
@@ -107,9 +151,11 @@ class _AnthropicStreamState:
     def __init__(self) -> None:
         self.stop_reason = "end_turn"
         self.block_index = 0
-        self.text_index: int | None = None
-        self.tool_block_indexes: dict[int, int] = {}
+        self.open_block_index: int | None = None
         self.tools = ToolCallAccumulator()
+        self.tool_block_indexes: dict[int, int] = {}
+        self.thinking_index: int | None = None
+        self.text_index: int | None = None
         self.usage: dict[str, Any] = {}
         self.failed = False
 
@@ -128,6 +174,8 @@ def _events_for_chat_line(line: bytes, state: _AnthropicStreamState) -> list[byt
         state.stop_reason = openai_finish_to_anthropic_stop(parsed.finish_reason)
 
     events: list[bytes] = []
+    if parsed.reasoning:
+        events.extend(_emit_thinking_delta(parsed.reasoning, state))
     if parsed.text:
         events.extend(_emit_text_delta(parsed.text, state))
     if parsed.tool_call_deltas:
@@ -135,12 +183,48 @@ def _events_for_chat_line(line: bytes, state: _AnthropicStreamState) -> list[byt
     return events
 
 
+def _close_open_block(state: _AnthropicStreamState) -> list[bytes]:
+    if state.open_block_index is None:
+        return []
+    index = state.open_block_index
+    state.open_block_index = None
+    return [anthropic_stream_content_block_stop(index=index)]
+
+
+def _open_block(state: _AnthropicStreamState, start_event: bytes) -> list[bytes]:
+    events = _close_open_block(state)
+    events.append(start_event)
+    state.open_block_index = state.block_index
+    state.block_index += 1
+    return events
+
+
+def _emit_thinking_delta(text: str, state: _AnthropicStreamState) -> list[bytes]:
+    events: list[bytes] = []
+    if state.thinking_index is None:
+        events.extend(
+            _open_block(
+                state,
+                anthropic_stream_thinking_block_start(index=state.block_index),
+            )
+        )
+        state.thinking_index = state.open_block_index
+    assert state.thinking_index is not None
+    events.append(anthropic_stream_thinking_delta(text, index=state.thinking_index))
+    return events
+
+
 def _emit_text_delta(text: str, state: _AnthropicStreamState) -> list[bytes]:
     events: list[bytes] = []
     if state.text_index is None:
-        state.text_index = state.block_index
-        events.append(anthropic_stream_content_block_start(index=state.text_index))
-        state.block_index += 1
+        events.extend(
+            _open_block(
+                state,
+                anthropic_stream_content_block_start(index=state.block_index),
+            )
+        )
+        state.text_index = state.open_block_index
+    assert state.text_index is not None
     events.append(anthropic_stream_text_delta(text, index=state.text_index))
     return events
 
@@ -155,16 +239,19 @@ def _emit_tool_deltas(
         if block_index is None:
             if not call.name:
                 continue
-            block_index = state.block_index
-            state.tool_block_indexes[call.index] = block_index
-            state.block_index += 1
-            events.append(
-                anthropic_stream_tool_use_block_start(
-                    index=block_index,
-                    tool_id=call.id or f"toolu_{call.index}",
-                    name=call.name,
+            events.extend(
+                _open_block(
+                    state,
+                    anthropic_stream_tool_use_block_start(
+                        index=state.block_index,
+                        tool_id=call.id or f"toolu_{call.index}",
+                        name=call.name,
+                    ),
                 )
             )
+            block_index = state.open_block_index
+            assert block_index is not None
+            state.tool_block_indexes[call.index] = block_index
             call.started = True
         if fragment:
             events.append(anthropic_stream_input_json_delta(fragment, index=block_index))
@@ -172,16 +259,15 @@ def _emit_tool_deltas(
 
 
 def _close_anthropic_stream(state: _AnthropicStreamState) -> list[bytes]:
-    events: list[bytes] = []
-    if state.text_index is not None:
-        events.append(anthropic_stream_content_block_stop(index=state.text_index))
-    for block_index in sorted(state.tool_block_indexes.values()):
-        events.append(anthropic_stream_content_block_stop(index=block_index))
+    events = _close_open_block(state)
     if state.tools.has_calls() and state.stop_reason == "end_turn":
         state.stop_reason = "tool_use"
-    output_tokens = int(state.usage.get("completion_tokens") or 0)
     events.append(
-        anthropic_stream_message_delta(state.stop_reason, output_tokens=output_tokens)
+        anthropic_stream_message_delta(
+            state.stop_reason,
+            output_tokens=int(state.usage.get("completion_tokens") or 0),
+            input_tokens=int(state.usage.get("prompt_tokens") or 0),
+        )
     )
     events.append(anthropic_stream_message_stop())
     return events
