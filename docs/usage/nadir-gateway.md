@@ -257,20 +257,50 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 !!! note "Input formats"
     WAV and MP3 decode in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on the MLX host. Realtime WebSocket STT is not supported in v1.
 
+## Security
+
+The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding protections are always on.
+
+| Control | Behaviour |
+|---------|-----------|
+| **Trusted Host** | `Host` must be `localhost`, `127.0.0.1`, `[::1]`, or a value from `NADIR_GATEWAY_ALLOWED_HOSTS` / `NADIR_GATEWAY_PUBLIC_BASE_URL`. Unknown hosts → **400**. |
+| **Origin guard** | If the request has an `Origin` header, it must appear in `NADIR_GATEWAY_CORS_ORIGINS`. Unknown origin → **403**. CLI/SDK clients that omit `Origin` are unaffected. |
+| **JSON Content-Type** | JSON POSTs must use `application/json` (or omit Content-Type). `text/plain` and other types → **415** (blocks browser “simple” cross-site POSTs). |
+| **API key** | Optional on loopback. **Required** when `NADIR_GATEWAY_HOST` is not loopback — startup refuses to bind otherwise. |
+| **Body size** | Requests with `Content-Length` above `NADIR_GATEWAY_MAX_BODY_MB` (default 50) → **413**. |
+| **OpenAPI `/docs`** | Exposed only when the gateway binds to loopback. |
+| **Image files** | `GET /v1/images/files/{uuid}` is public (unguessable ids) so `<img src>` works without an API key. |
+
+!!! warning "LAN exposure"
+    Prefer `NADIR_GATEWAY_HOST=127.0.0.1`. If you bind to a LAN address, set `NADIR_GATEWAY_API_KEY` and add the host to `NADIR_GATEWAY_ALLOWED_HOSTS`. mlx-lm / mlx-vlm still have **no auth** — keep instance bind on `127.0.0.1` and expose clients only through the gateway.
+
+!!! tip "Inference worker key"
+    Set `NADIR_INFERENCE_API_KEY` to protect Nadir-owned workers (image / STT / embedding / TTS). The gateway injects `Authorization: Bearer …` on upstream calls and health probes. mlx-lm and mlx-vlm are protected only by loopback bind.
+
 ## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NADIR_GATEWAY_HOST` | `127.0.0.1` | Gateway bind address |
 | `NADIR_GATEWAY_PORT` | `11380` | Must stay **outside** `11400–11500` |
+| `NADIR_GATEWAY_API_KEY` | — | Required for non-loopback binds (`Authorization: Bearer` or `X-API-Key`) |
+| `NADIR_INFERENCE_API_KEY` | — | Optional; injected upstream to Nadir workers |
+| `NADIR_GATEWAY_CORS_ORIGINS` | — | Allowed browser origins; empty rejects any `Origin` |
+| `NADIR_GATEWAY_ALLOWED_HOSTS` | — | Extra `Host` values for TrustedHostMiddleware |
+| `NADIR_GATEWAY_MAX_BODY_MB` | `50` | Max request body via Content-Length |
+| `NADIR_GATEWAY_PUBLIC_BASE_URL` | `http://127.0.0.1:11380` | Base URL for generated image links |
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
 | `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` | `16` | Max parallel upstream requests per instance (`0` = unlimited) |
 | `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `300` | Max wait in gateway queue when all slots are busy |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
 | `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
+| `NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS` | `15` | Mid-request `last_used_at` refresh (SSE + long JSON) |
 | `NADIR_IDLE_OFFLOAD_ENABLED` | `true` | Stop idle `on_demand` instances in background |
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | Idle watcher evaluation interval |
+| `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` under memory pressure before load |
+| `NADIR_LRU_EVICTION_GRACE_SECONDS` | `60` | Min idle age before eviction (floored to `2 ×` heartbeat) |
+| `NADIR_MEMORY_RESERVE_GB` | `4` | Free-memory headroom when deciding to evict |
 
 !!! tip "Upstream concurrency queue"
     When more clients hit the gateway than MLX can serve in parallel, excess requests **wait in a queue** (like Ollama) instead of failing immediately. Tune `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` for your hardware, or set **Max concurrent upstream requests** per instance in the server form. Use `0` globally or per instance to disable the cap (legacy pass-through).
@@ -278,7 +308,7 @@ curl http://127.0.0.1:11380/v1/audio/translations \
 !!! tip "Route cache"
     The gateway caches alias → instance resolution and `GET /v1/models` in memory for `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` (default 20s). After starting or stopping an instance, new routes may take up to one TTL window to appear. Lower the TTL in dev if you need faster feedback.
 
-See [instance-lifecycle.md](instance-lifecycle.md) for wake and idle offload behaviour.
+See [instance-lifecycle.md](instance-lifecycle.md) for wake, idle offload, LRU eviction, and activity heartbeats. Full variable list: [Configuration](../configuration.md).
 
 ## Error codes
 
@@ -317,12 +347,16 @@ Gateway and proxy errors use an OpenAI-style envelope:
 
 Upstream MLX errors are forwarded when possible (`type` may be `upstream_error`).
 
-### Request validation
+### Request validation and security
 
 | HTTP | `type` / `code` | When |
 |------|-----------------|------|
 | 400 | `invalid_request` | Malformed JSON body (not an object or parse error) |
-| 401 | — | Missing/invalid `X-API-Key` when `NADIR_GATEWAY_API_KEY` is set (`detail` string, FastAPI auth) |
+| 400 | — | Invalid `Host` (TrustedHostMiddleware / DNS-rebinding guard) |
+| 401 | `invalid_api_key` | Missing/invalid API key when `NADIR_GATEWAY_API_KEY` is set |
+| 403 | `forbidden` | `Origin` present but not in `NADIR_GATEWAY_CORS_ORIGINS` |
+| 413 | `payload_too_large` | `Content-Length` exceeds `NADIR_GATEWAY_MAX_BODY_MB` |
+| 415 | `unsupported_media_type` | JSON route with non-JSON Content-Type (e.g. `text/plain`) |
 
 ### Contract coverage
 
@@ -344,7 +378,11 @@ pytest -m contract orchestrator/tests/contracts -q
 | `502 bad_gateway` | MLX process down or port closed | Check instance status and logs |
 | `503 upstream_queue_timeout` | Too many parallel gateway requests | Raise per-instance max concurrent or global queue timeout |
 | `504 gateway_timeout` | Inference slower than proxy timeout | Increase `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` |
+| `400` on every request with custom Host | Trusted Host reject | Add host to `NADIR_GATEWAY_ALLOWED_HOSTS` or use `localhost` / `127.0.0.1` |
+| `403` from a browser app | Origin not allowlisted | Add the page origin to `NADIR_GATEWAY_CORS_ORIGINS` |
+| `415` from a browser form/fetch | Wrong Content-Type | Send `Content-Type: application/json` |
 | Empty `/v1/models` | No instances registered | Create at least one server (stopped `on_demand` aliases still appear) |
+| Gateway refuses to start on LAN IP | No API key | Set `NADIR_GATEWAY_API_KEY` or bind to `127.0.0.1` |
 
 ## Direct instance ports (debugging)
 

@@ -71,7 +71,7 @@ These are **not** part of `advanced`; use the main form.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `host` | `0.0.0.0` \| `127.0.0.1` | `MLX_DEFAULT_SERVER_HOST` | Bind address. Use `127.0.0.1` when only the gateway on the same machine should connect. |
+| `host` | `127.0.0.1` \| `0.0.0.0` | `127.0.0.1` | Bind address. **Prefer `127.0.0.1`** and expose clients only through the Nadir gateway. `0.0.0.0` makes the inference port reachable on the LAN; mlx-lm / mlx-vlm have **no auth**. |
 | `model_id` | string | model folder name | **Gateway alias** — value clients send in the OpenAI `model` field (TEXT instances are rewritten to `default_model` upstream). |
 
 ### TEXT & MULTIMODAL
@@ -79,7 +79,7 @@ These are **not** part of `advanced`; use the main form.
 | Field | Type | Description |
 |-------|------|-------------|
 | `max_tokens` | int (1–131072) | Server default when the client omits `max_tokens`. |
-| `trust_remote_code` | bool | Pass `--trust-remote-code` to mlx-lm / mlx-vlm (custom tokenizers / architectures). |
+| `trust_remote_code` | bool | Pass `--trust-remote-code` to mlx-lm / mlx-vlm. **WARNING:** executes Python from the Hugging Face repo (custom tokenizers / architectures). Enable only for models you trust. |
 | `enable_thinking` | bool (checkbox) | Default thinking mode. **MULTIMODAL:** stored as `advanced.enable_thinking`. **TEXT:** stored as `advanced.chat_template_args.enable_thinking`. Default: off. Disable for report-style clients (e.g. Spectra). |
 
 ### MULTIMODAL only

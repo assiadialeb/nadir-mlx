@@ -480,7 +480,9 @@ Example workflow:
 
 - **No telemetry** — Nadir MLX does not phone home
 - **Local processing** — inference never leaves your Mac (except Hugging Face downloads you trigger)
-- **Session auth** — protect the dashboard with Django users; inference ports are bound to `0.0.0.0` by default (restrict with firewall or bind to `127.0.0.1` in launchers for air-gapped setups)
+- **Session auth** — protect the dashboard with Django users
+- **Loopback by default** — gateway and MLX instances bind to `127.0.0.1`; prefer the gateway for clients and keep inference ports private
+- **Gateway guards** — Trusted Host, Origin allowlist, JSON Content-Type check; API key required for non-loopback gateway binds (see [Nadir Gateway — Security](docs/usage/nadir-gateway.md#security))
 
 ---
 
@@ -512,8 +514,9 @@ Check `./logs/` and the Downloads section on the dashboard. Incomplete folders i
 
 - [ ] Docker Compose deployment (web + worker split)
 - [ ] Hugging Face search filters for embedding / rerank models
-- [ ] Health checks and auto-restart for crashed instances
-- [ ] API key auth on inference endpoints
+- [x] Health checks and auto-restart for crashed instances
+- [x] API key auth on the Nadir Gateway (optional on loopback; required off-loopback)
+- [ ] Native auth on third-party mlx-lm / mlx-vlm servers (today: loopback + gateway only)
 
 ---
 

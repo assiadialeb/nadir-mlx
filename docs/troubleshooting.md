@@ -33,6 +33,17 @@ See [Nadir Gateway — Troubleshooting](usage/nadir-gateway.md#troubleshooting).
 
 See [Instance lifecycle](usage/instance-lifecycle.md).
 
+## Gateway returns 400 / 403 / 415
+
+| HTTP | When | Action |
+|------|------|--------|
+| 400 | Invalid `Host` | Use `localhost` / `127.0.0.1`, or add the host to `NADIR_GATEWAY_ALLOWED_HOSTS` |
+| 403 | Browser `Origin` not allowlisted | Add the page origin to `NADIR_GATEWAY_CORS_ORIGINS` |
+| 415 | Non-JSON `Content-Type` on a JSON route | Send `Content-Type: application/json` |
+| Startup error on LAN bind | Missing API key | Set `NADIR_GATEWAY_API_KEY` or bind to `127.0.0.1` |
+
+See [Nadir Gateway — Security](usage/nadir-gateway.md#security).
+
 ## Model download stuck
 
 Check `./logs/` and the Downloads section on the dashboard. Incomplete folders in `./models/` are detected automatically on restart.
