@@ -31,17 +31,26 @@ def eviction_grace_seconds() -> int:
 
     Defaults to a short grace window. Gateway traffic refreshes ``last_used_at``
     at request start/end and on a mid-request heartbeat (~15s) during long
-    JSON calls and SSE streams, so active generations stay non-evictable
-    without a multi-minute lockout after every call. Idle offload uses the
-    same timestamp.
+    JSON calls and SSE streams (including prefill waits), so active generations
+    stay non-evictable without a multi-minute lockout after every call. Idle
+    offload uses the same timestamp.
+
+    The effective grace is always at least ``2 ×`` the activity heartbeat so a
+    misconfigured shorter grace cannot silently defeat mid-request protection.
     """
+    import math
+
+    from orchestrator.gateway.services.http_proxy import activity_heartbeat_seconds
+
+    configured = _DEFAULT_EVICTION_GRACE_SECONDS
     raw = os.environ.get("NADIR_LRU_EVICTION_GRACE_SECONDS")
     if raw is not None and str(raw).strip():
         try:
-            return max(0, int(raw))
+            configured = max(0, int(raw))
         except ValueError:
             pass
-    return _DEFAULT_EVICTION_GRACE_SECONDS
+    min_grace = max(0, math.ceil(2 * activity_heartbeat_seconds()))
+    return max(configured, min_grace)
 
 
 def list_lru_evictable_instances(*, exclude_id: int | None = None) -> list[InferenceInstance]:
