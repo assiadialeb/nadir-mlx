@@ -120,7 +120,10 @@ These are **not** part of `advanced`; use the main form.
 | Field | Values | Description |
 |-------|--------|-------------|
 | `lifecycle_mode` | `always_on` \| `on_demand` | `on_demand` stops the process after `idle_minutes` without gateway traffic; next request triggers wake. |
-| `idle_minutes` | 5–1440 | Idle threshold when `lifecycle_mode` is `on_demand`. |
+| `idle_minutes` | 5–1440 | **Per-instance** idle threshold when `lifecycle_mode` is `on_demand`. |
+| `pinned` | bool | Never selected for memory-pressure LRU eviction (idle offload still applies when on demand). |
+| `warmup_on_load` | bool | After start/wake, run a 1-token generation so Metal compile is paid before the first user request (default `true`). |
+| `speculative_wake` | bool | Background wake on `GET /v1/models/{id}` or Ollama `/api/show` when stopped and on demand. |
 | `auto_restart` | bool | Relaunch when health checks report DOWN. |
 | `auto_restart_max_retries` | 1–20 | Cap before a 1-hour backoff. |
 

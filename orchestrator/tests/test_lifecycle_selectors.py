@@ -13,7 +13,10 @@ from orchestrator.lifecycle_selectors import (
     get_lifecycle_mode,
     instance_status_badge,
     is_on_demand_lifecycle,
+    is_pinned_lifecycle,
     lifecycle_policy_summary,
+    speculative_wake_enabled,
+    warmup_on_load_enabled,
 )
 from orchestrator.models import InferenceInstance
 
@@ -44,6 +47,38 @@ class LifecycleSelectorTests(TestCase):
         high = {"ops": {"idle_minutes": 9999}}
         self.assertEqual(get_idle_minutes(low), 5)
         self.assertEqual(get_idle_minutes(high), 1440)
+
+    def test_lifecycle_policy_summary_includes_pinned(self) -> None:
+        self.assertEqual(lifecycle_policy_summary({}), "Always on")
+        on_demand = {"ops": {"lifecycle_mode": LIFECYCLE_MODE_ON_DEMAND, "idle_minutes": 20}}
+        self.assertEqual(lifecycle_policy_summary(on_demand), "On demand · idle 20 min")
+        pinned = {
+            "ops": {
+                "lifecycle_mode": LIFECYCLE_MODE_ON_DEMAND,
+                "idle_minutes": 20,
+                "pinned": True,
+            }
+        }
+        self.assertEqual(
+            lifecycle_policy_summary(pinned),
+            "On demand · idle 20 min · pinned",
+        )
+
+    def test_pinned_warmup_and_speculative_flags(self) -> None:
+        empty = {}
+        self.assertFalse(is_pinned_lifecycle(empty))
+        self.assertTrue(warmup_on_load_enabled(empty))
+        self.assertFalse(speculative_wake_enabled(empty))
+        enabled = {
+            "ops": {
+                "pinned": True,
+                "warmup_on_load": False,
+                "speculative_wake": "yes",
+            }
+        }
+        self.assertTrue(is_pinned_lifecycle(enabled))
+        self.assertFalse(warmup_on_load_enabled(enabled))
+        self.assertTrue(speculative_wake_enabled(enabled))
 
 
 class LifecycleUiTests(DjangoTestCase):

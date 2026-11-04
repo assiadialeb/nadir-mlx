@@ -53,12 +53,14 @@ class EnsureInstanceReadyTests(TestCase):
         self.assertEqual(target.instance_id, instance.pk)
         self.assertEqual(target.alias, "ready-chat")
 
+    @patch("orchestrator.lifecycle_services.maybe_run_load_warmup", return_value=12.0)
     @patch("orchestrator.lifecycle_services.start_instance")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
     def test_on_demand_stopped_wakes_instance(
         self,
         _mock_probe: MagicMock,
         mock_start: MagicMock,
+        mock_warmup: MagicMock,
     ) -> None:
         instance = InferenceInstance.objects.create(
             model_name="sleeping-model",
@@ -88,6 +90,7 @@ class EnsureInstanceReadyTests(TestCase):
             "TEXT",
             instance.server_config,
         )
+        mock_warmup.assert_called_once()
 
     @patch("orchestrator.lifecycle_services.start_instance")
     def test_always_on_stopped_does_not_wake(self, mock_start: MagicMock) -> None:

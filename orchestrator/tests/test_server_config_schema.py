@@ -62,15 +62,29 @@ class ServerConfigSchemaTests(TestCase):
         config = validate_and_normalize_server_config("TEXT", {}, "model-a")
         self.assertEqual(config["ops"]["lifecycle_mode"], "always_on")
         self.assertEqual(config["ops"]["idle_minutes"], 30)
+        self.assertFalse(config["ops"]["pinned"])
+        self.assertTrue(config["ops"]["warmup_on_load"])
+        self.assertFalse(config["ops"]["speculative_wake"])
 
     def test_validate_lifecycle_on_demand(self) -> None:
         config = validate_and_normalize_server_config(
             "TEXT",
-            {"ops": {"lifecycle_mode": "on_demand", "idle_minutes": 60}},
+            {
+                "ops": {
+                    "lifecycle_mode": "on_demand",
+                    "idle_minutes": 60,
+                    "pinned": True,
+                    "warmup_on_load": False,
+                    "speculative_wake": True,
+                }
+            },
             "model-a",
         )
         self.assertEqual(config["ops"]["lifecycle_mode"], "on_demand")
         self.assertEqual(config["ops"]["idle_minutes"], 60)
+        self.assertTrue(config["ops"]["pinned"])
+        self.assertFalse(config["ops"]["warmup_on_load"])
+        self.assertTrue(config["ops"]["speculative_wake"])
 
     def test_validate_rejects_invalid_lifecycle_mode(self) -> None:
         with self.assertRaises(ValueError):

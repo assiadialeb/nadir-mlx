@@ -11,12 +11,15 @@ Operator guide for Ollama-like **sleep / wake** behaviour on Nadir MLX.
 |------|---------|
 | **always_on** | Instance stays running until manually stopped (default, pre-v0.3 behaviour) |
 | **on_demand** | Instance may be **stopped** when idle; gateway **wakes** it on first request |
-| **Idle offload** | Background watcher stops `on_demand` instances after `idle_minutes` without traffic |
-| **LRU eviction** | Before starting a model, stop least-recently-used `on_demand` instances if free memory is below the pending footprint (+ reserve) |
+| **Idle offload** | Background watcher stops `on_demand` instances after **per-instance** `idle_minutes` without traffic |
+| **Pinned** | Never selected as an LRU victim under memory pressure (idle offload still applies when `on_demand`) |
+| **Warmup** | After load/wake, a 1-token generation pays Metal shader compile before the first user request |
+| **Speculative wake** | Optional background wake on `GET /v1/models/{id}` or Ollama `/api/show` |
+| **LRU eviction** | Before starting a model, stop least-recently-used unpinned `on_demand` instances if free memory is below the pending footprint (+ reserve) |
 | **Eviction grace** | Instances touched within the grace window are not evictable (default 60s, at least `2 ×` activity heartbeat) |
 | **Activity heartbeat** | Gateway refreshes `last_used_at` ~every 15s during long JSON calls and SSE streams (including prefill waits) |
 | **Startup reconcile** | On app boot, `always_on` instances left `STOPPED`/`FAILED` (e.g. after host reboot) are restarted |
-| **Cold start** | Time to load weights into unified memory after wake |
+| **Cold start** | Time to load weights (+ optional warmup) after wake; surfaced as wake latency marked **cold** on the Servers page |
 
 ## Per-instance configuration
 
@@ -26,11 +29,16 @@ Set in the instance **server config** (UI advanced / ops section):
 |-----|--------|---------|
 | `lifecycle_mode` | `always_on`, `on_demand` | `always_on` |
 | `idle_minutes` | 5–1440 | `30` |
+| `pinned` | bool | `false` |
+| `warmup_on_load` | bool | `true` |
+| `speculative_wake` | bool | `false` |
 
 Recommendations:
 
-- Primary chat model → `always_on`
-- TTS, STT, image, reranker, secondary chat → `on_demand` with `idle_minutes` 15–60
+- Primary chat model → `always_on` (optionally `pinned` if you also keep secondary `on_demand` models)
+- Frequently used secondary chat → `on_demand` + `pinned` + shorter `idle_minutes` (survives LRU, still sleeps)
+- Rare TTS / STT / image → `on_demand` with `idle_minutes` 15–60
+- Enable `speculative_wake` when clients probe `/v1/models/{id}` or Ollama `/api/show` before the first completion
 
 ## Environment variables
 
@@ -45,8 +53,8 @@ Recommendations:
 | `NADIR_MEMORY_RESERVE_GB` | `4` | Free-memory headroom (GiB) kept when deciding to evict |
 | `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED` | `true` | Restore `always_on` instances after process/host restart |
 
-!!! note "always_on is never LRU-evicted"
-    Only `lifecycle_mode=on_demand` instances are candidates. Primary chat models should stay `always_on`.
+!!! note "LRU victims"
+    Only **unpinned** `lifecycle_mode=on_demand` instances are LRU candidates. `always_on` and `ops.pinned=true` are never stopped for memory headroom.
 
 !!! tip "Long generations stay protected"
     `last_used_at` is updated at request start, on a mid-request heartbeat (JSON background task and SSE, including mlx-lm prefill before the first token), and at request/stream end. That keeps active instances outside the eviction grace and idle-offload windows without a multi-minute lockout after every call. Heartbeat failures are best-effort (logged, never abort inference).

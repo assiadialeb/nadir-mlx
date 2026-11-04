@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -9,13 +10,17 @@ from typing import TYPE_CHECKING
 from django.conf import settings
 from django.utils import timezone
 
-from orchestrator.env_utils import env_float, env_str
+from orchestrator.env_utils import env_str
 
 from orchestrator.gateway.router import GatewayRouteError, GatewayTarget
 from orchestrator.gateway.route_cache import clear_gateway_route_cache
 from orchestrator.gateway_aliases import find_instance_by_gateway_alias, normalize_gateway_alias
 from orchestrator.instance_health import probe_http_health
-from orchestrator.lifecycle_selectors import is_on_demand_lifecycle
+from orchestrator.instance_warmup import maybe_run_load_warmup
+from orchestrator.lifecycle_selectors import (
+    is_on_demand_lifecycle,
+    speculative_wake_enabled,
+)
 from orchestrator.server_manager import start_instance
 
 if TYPE_CHECKING:
@@ -23,8 +28,12 @@ if TYPE_CHECKING:
 
     from orchestrator.models import InferenceInstance
 
+logger = logging.getLogger(__name__)
+
 _WAKE_LOCKS: dict[str, threading.Lock] = {}
 _WAKE_LOCKS_GUARD = threading.Lock()
+_SPECULATIVE_WAKE_STARTED: set[str] = set()
+_SPECULATIVE_WAKE_GUARD = threading.Lock()
 
 
 def gateway_wake_timeout_seconds() -> float:
@@ -116,6 +125,12 @@ def _mark_wake_timed_out(instance: InferenceInstance) -> None:
     clear_gateway_route_cache()
 
 
+def _ready_target_after_warmup(instance: InferenceInstance) -> GatewayTarget:
+    maybe_run_load_warmup(instance)
+    clear_gateway_route_cache()
+    return _gateway_target_from_instance(instance)
+
+
 def _wait_until_ready(instance: InferenceInstance, alias: str) -> GatewayTarget:
     deadline = time.monotonic() + gateway_wake_timeout_seconds()
     poll_seconds = gateway_wake_poll_interval_seconds()
@@ -127,8 +142,7 @@ def _wait_until_ready(instance: InferenceInstance, alias: str) -> GatewayTarget:
         if instance.status == "STOPPED":
             raise _route_error_unavailable(alias, detail="Instance stopped during wake.")
         if _instance_is_ready(instance):
-            clear_gateway_route_cache()
-            return _gateway_target_from_instance(instance)
+            return _ready_target_after_warmup(instance)
         time.sleep(poll_seconds)
 
     _mark_wake_timed_out(instance)
@@ -156,7 +170,7 @@ def _wake_on_demand_instance(instance: InferenceInstance, alias: str) -> Gateway
     instance.refresh_from_db()
     clear_gateway_route_cache()
     if _instance_is_ready(instance):
-        return _gateway_target_from_instance(instance)
+        return _ready_target_after_warmup(instance)
     return _wait_until_ready(instance, alias)
 
 
@@ -221,3 +235,53 @@ def ensure_instance_ready(alias: str) -> GatewayTarget:
     wake_lock = _wake_lock_for_alias(cleaned)
     with wake_lock:
         return _ensure_under_wake_lock(instance, cleaned)
+
+
+def maybe_speculative_wake(alias: str) -> None:
+    """Best-effort background wake for stopped on_demand instances (MLX-126).
+
+    Triggered by discovery probes (``GET /v1/models/{id}``, Ollama ``/api/show``)
+    when ``ops.speculative_wake`` is enabled. Never raises to callers.
+    """
+    cleaned = normalize_gateway_alias(alias)
+    if not cleaned:
+        return
+    instance = find_instance_by_gateway_alias(cleaned)
+    if instance is None:
+        return
+    if not speculative_wake_enabled(instance.server_config):
+        return
+    if not is_on_demand_lifecycle(instance.server_config):
+        return
+    if instance.status == "RUNNING" and probe_http_health(instance):
+        return
+    if instance.status not in ("STOPPED", "FAILED", "LOADING"):
+        return
+
+    alias_key = cleaned.casefold()
+    with _SPECULATIVE_WAKE_GUARD:
+        if alias_key in _SPECULATIVE_WAKE_STARTED and is_wake_in_progress(cleaned):
+            return
+        _SPECULATIVE_WAKE_STARTED.add(alias_key)
+
+    def _run() -> None:
+        try:
+            ensure_instance_ready(cleaned)
+        except GatewayRouteError as exc:
+            logger.info(
+                "Speculative wake for %s ended with %s: %s",
+                cleaned,
+                exc.code,
+                exc.message,
+            )
+        except Exception:
+            logger.exception("Speculative wake failed for %s", cleaned)
+        finally:
+            with _SPECULATIVE_WAKE_GUARD:
+                _SPECULATIVE_WAKE_STARTED.discard(alias_key)
+
+    threading.Thread(
+        target=_run,
+        name=f"nadir-speculative-wake-{alias_key[:24]}",
+        daemon=True,
+    ).start()

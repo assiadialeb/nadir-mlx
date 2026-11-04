@@ -45,6 +45,30 @@ def get_idle_minutes(server_config: dict[str, Any] | None) -> int:
     return max(MIN_IDLE_MINUTES, min(MAX_IDLE_MINUTES, minutes))
 
 
+def _ops_flag(server_config: dict[str, Any] | None, name: str, *, default: bool) -> bool:
+    raw = _ops_section(server_config).get(name, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw) if raw is not None else default
+
+
+def is_pinned_lifecycle(server_config: dict[str, Any] | None) -> bool:
+    """Pinned on_demand instances are never LRU-evicted under memory pressure."""
+    return _ops_flag(server_config, "pinned", default=False)
+
+
+def warmup_on_load_enabled(server_config: dict[str, Any] | None) -> bool:
+    """When True, run a 1-token generation after load to pay Metal compile once."""
+    return _ops_flag(server_config, "warmup_on_load", default=True)
+
+
+def speculative_wake_enabled(server_config: dict[str, Any] | None) -> bool:
+    """When True, discovery probes may wake a stopped on_demand instance."""
+    return _ops_flag(server_config, "speculative_wake", default=False)
+
+
 def is_on_demand_lifecycle(server_config: dict[str, Any] | None) -> bool:
     return get_lifecycle_mode(server_config) == LIFECYCLE_MODE_ON_DEMAND
 
@@ -55,6 +79,10 @@ def instance_lifecycle_mode(instance: InferenceInstance) -> str:
 
 def instance_idle_minutes(instance: InferenceInstance) -> int:
     return get_idle_minutes(instance.server_config)
+
+
+def instance_is_pinned(instance: InferenceInstance) -> bool:
+    return is_pinned_lifecycle(instance.server_config)
 
 
 def instance_status_badge(instance: InferenceInstance) -> tuple[str, str]:
@@ -80,13 +108,19 @@ def instance_status_badge(instance: InferenceInstance) -> tuple[str, str]:
 def lifecycle_policy_summary(server_config: dict[str, Any] | None) -> str:
     """Short lifecycle policy label for the servers list."""
     if get_lifecycle_mode(server_config) == LIFECYCLE_MODE_ON_DEMAND:
-        return f"On demand · idle {get_idle_minutes(server_config)} min"
+        parts = [f"On demand · idle {get_idle_minutes(server_config)} min"]
+        if is_pinned_lifecycle(server_config):
+            parts.append("pinned")
+        return " · ".join(parts)
+    if is_pinned_lifecycle(server_config):
+        return "Always on · pinned"
     return "Always on"
 
 
 def enrich_instance_lifecycle_ui(instance: InferenceInstance) -> None:
     """Attach lifecycle display attributes for templates (MLX-44)."""
     instance.lifecycle_on_demand = is_on_demand_lifecycle(instance.server_config)
+    instance.lifecycle_pinned = is_pinned_lifecycle(instance.server_config)
     label, variant = instance_status_badge(instance)
     instance.status_badge_label = label
     instance.status_badge_variant = variant
