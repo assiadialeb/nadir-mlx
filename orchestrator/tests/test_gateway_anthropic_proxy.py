@@ -108,14 +108,101 @@ class GatewayAnthropicProxyTests(SimpleTestCase):
         self.assertIn(b"event: message_stop", response.content)
         self.assertNotIn(b"not_implemented", response.content)
 
-    def test_messages_invalid_json_returns_400(self) -> None:
+    def test_messages_invalid_json_returns_anthropic_error(self) -> None:
         response = self.client.post(
             "/v1/messages",
             content=b"{bad",
             headers={"Content-Type": "application/json"},
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["code"], "invalid_request")
+        payload = response.json()
+        self.assertEqual(payload["type"], "error")
+        self.assertEqual(payload["error"]["type"], "invalid_request_error")
+        self.assertNotIn("code", payload["error"])
+
+    def test_messages_missing_model_returns_anthropic_error(self) -> None:
+        response = self.client.post(
+            "/v1/messages",
+            json={"max_tokens": 8, "messages": [{"role": "user", "content": "Hi"}]},
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["type"], "error")
+        self.assertEqual(payload["error"]["type"], "invalid_request_error")
+
+    def test_count_tokens_returns_estimate(self) -> None:
+        response = self.client.post(
+            "/v1/messages/count_tokens",
+            json={
+                "model": "demo-chat",
+                "messages": [{"role": "user", "content": "Hello Claude Code probe"}],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["model"], "demo-chat")
+        self.assertGreater(payload["input_tokens"], 0)
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_messages_tools_round_trip(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        upstream = httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "reasoning": "use tool",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_abc",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_weather",
+                                        "arguments": '{"city":"Paris"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            },
+            headers={"content-type": "application/json"},
+        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
+        response = self.client.post(
+            "/v1/messages",
+            json={
+                "model": "demo-chat",
+                "max_tokens": 32,
+                "tools": [
+                    {
+                        "name": "get_weather",
+                        "description": "Weather",
+                        "input_schema": {"type": "object", "properties": {}},
+                    }
+                ],
+                "messages": [{"role": "user", "content": "Paris?"}],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["stop_reason"], "tool_use")
+        self.assertEqual(payload["content"][0]["type"], "thinking")
+        self.assertEqual(payload["content"][1]["type"], "tool_use")
+        self.assertEqual(payload["content"][1]["name"], "get_weather")
+        posted = mock_client.post.await_args.kwargs["json"]
+        self.assertEqual(posted["tools"][0]["function"]["name"], "get_weather")
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")

@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: November 2026 — Anthropic `/v1/messages` streaming (MLX-107).
+Last updated: November 2026 — Anthropic tools / thinking / count_tokens (MLX-118).
 
 ## Cross-cutting (all modes)
 
@@ -21,7 +21,8 @@ Last updated: November 2026 — Anthropic `/v1/messages` streaming (MLX-107).
 | CORS | ⚠️ opt-in via `NADIR_GATEWAY_CORS_ORIGINS` |
 | Shared upstream httpx client | ✅ |
 | `POST /v1/responses` (stateless façade) | ✅ MVP (no `previous_response_id` / store) |
-| `POST /v1/messages` (Anthropic) | ✅ JSON + SSE stream (chat completions upstream) |
+| `POST /v1/messages` (Anthropic) | ✅ JSON + SSE stream; tools / `tool_use`; thinking from `reasoning`; Anthropic error envelope |
+| `POST /v1/messages/count_tokens` | ✅ best-effort estimate (no tokenizer load) |
 | Ollama `/api/tags`, `/api/chat`, `/api/embed` | ✅ MVP (`/api/chat` stream → 501) |
 | Multi-worker uvicorn | ❌ single process by default |
 
