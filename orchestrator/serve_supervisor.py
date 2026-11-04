@@ -74,7 +74,11 @@ def required_bind_services(spec: ServeSpec) -> list[BoundService]:
 
 
 def _port_in_use(host: str, port: int) -> bool:
-    """Return True when ``host:port`` cannot be bound."""
+    """Return True when a real listener blocks ``host:port``.
+
+    Uses ``SO_REUSEADDR`` like Django/uvicorn so a leftover TIME_WAIT socket
+    after Ctrl+C is not reported as ``already in use``.
+    """
     family = socket.AF_INET6 if ":" in host and not host.startswith(":") else socket.AF_INET
     bind_host = host
     if host in {"0.0.0.0", "::"}:
@@ -82,6 +86,7 @@ def _port_in_use(host: str, port: int) -> bool:
         family = socket.AF_INET if bind_host == "127.0.0.1" else socket.AF_INET6
     with socket.socket(family, socket.SOCK_STREAM) as sock:
         try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((bind_host, port))
             return False
         except OSError:
@@ -116,10 +121,19 @@ def assert_serve_ports_free(spec: ServeSpec) -> None:
         if not _port_in_use(service.host, service.port):
             continue
         pids = _listener_pids(service.port)
-        pid_hint = f" (pid {pids[0]})" if pids else ""
+        if pids:
+            details = ", ".join(
+                f"{pid} ({_process_command(pid)[:80] or 'unknown'})" for pid in pids[:3]
+            )
+            pid_hint = f" — listener(s): {details}"
+            kill_hint = f" Try: kill {' '.join(str(pid) for pid in pids)}"
+        else:
+            pid_hint = ""
+            kill_hint = ""
         raise SystemExit(
             f"Port {service.port} ({service.label}) is already in use{pid_hint}. "
             "Nadir seems already running — stop the existing process or change the port."
+            f"{kill_hint}"
         )
 
 
@@ -237,8 +251,8 @@ def _terminate_process_group(process: subprocess.Popen[bytes], *, grace_seconds:
         pass
 
 
-def _is_nadir_serve_listener(pid: int) -> bool:
-    """Return True when ``pid`` looks like a supervised manage.py child."""
+def _process_command(pid: int) -> str:
+    """Best-effort process command line (lowercased)."""
     try:
         result = subprocess.run(
             ["ps", "-p", str(pid), "-o", "command="],
@@ -248,13 +262,22 @@ def _is_nadir_serve_listener(pid: int) -> bool:
             timeout=2,
         )
     except subprocess.TimeoutExpired:
-        return False
+        return ""
     except OSError:
+        return ""
+    return (result.stdout or "").strip().lower()
+
+
+def _is_nadir_serve_listener(pid: int) -> bool:
+    """Return True when ``pid`` looks like a Nadir UI/gateway/MCP listener."""
+    command = _process_command(pid)
+    if not command:
         return False
-    command = (result.stdout or "").strip().lower()
-    if "manage.py" not in command:
-        return False
-    return any(token in command for token in ("runserver", "run_gateway", "run_mcp"))
+    serve_tokens = ("runserver", "run_gateway", "run_mcp")
+    if "manage.py" in command and any(token in command for token in serve_tokens):
+        return True
+    # Autoreload / orphaned children sometimes drop manage.py from ps output.
+    return any(token in command for token in serve_tokens)
 
 
 def _wait_until_port_free(host: str, port: int, *, timeout_seconds: float = 2.0) -> bool:

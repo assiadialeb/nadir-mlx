@@ -104,8 +104,42 @@ def test_assert_serve_ports_free_raises_when_busy() -> None:
     )
     with patch("orchestrator.serve_supervisor._port_in_use", return_value=True):
         with patch("orchestrator.serve_supervisor._listener_pids", return_value=[999]):
-            with pytest.raises(SystemExit, match="already in use"):
-                assert_serve_ports_free(spec)
+            with patch(
+                "orchestrator.serve_supervisor._process_command",
+                return_value="python manage.py runserver",
+            ):
+                with pytest.raises(SystemExit, match="already in use"):
+                    assert_serve_ports_free(spec)
+
+
+def test_port_in_use_allows_bind_with_reuseaddr_after_busy_connect() -> None:
+    """TIME_WAIT must not look like a live listener (servers use SO_REUSEADDR)."""
+    from orchestrator.serve_supervisor import _port_in_use
+
+    import socket as socket_mod
+
+    server = socket_mod.socket(socket_mod.AF_INET, socket_mod.SOCK_STREAM)
+    server.setsockopt(socket_mod.SOL_SOCKET, socket_mod.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.listen(1)
+    client = socket_mod.socket(socket_mod.AF_INET, socket_mod.SOCK_STREAM)
+    client.connect(("127.0.0.1", port))
+    server.accept()
+    client.close()
+    server.close()
+    # Port may be in TIME_WAIT; our check should still report free.
+    assert _port_in_use("127.0.0.1", port) is False
+
+
+def test_is_nadir_serve_listener_matches_runserver_without_manage_py() -> None:
+    from orchestrator.serve_supervisor import _is_nadir_serve_listener
+
+    with patch(
+        "orchestrator.serve_supervisor._process_command",
+        return_value="/usr/bin/python3 -c runserver 127.0.0.1:8000",
+    ):
+        assert _is_nadir_serve_listener(1) is True
 
 
 def test_reclaim_stale_serve_ports_signals_manage_py_listeners() -> None:
