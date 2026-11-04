@@ -42,3 +42,8 @@ class GatewayMiddlewareTests(SimpleTestCase):
         )
         self.assertEqual(kwargs["allow_origins"], ["*"])
         self.assertFalse(kwargs["allow_credentials"])
+
+    def test_cors_middleware_is_outermost(self) -> None:
+        app = FastAPI()
+        install_gateway_middleware(app, cors_origins=["https://app.example"])
+        self.assertEqual(app.user_middleware[0].cls, CORSMiddleware)

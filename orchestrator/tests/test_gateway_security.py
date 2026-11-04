@@ -26,9 +26,18 @@ class GatewaySecurityMiddlewareTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_origin_guard_rejects_unknown_origin(self) -> None:
-        response = self.client.get(
-            "/health",
-            headers={"origin": "https://evil.example"},
+        # Isolate from NADIR_GATEWAY_CORS_ORIGINS=* in local .env (skips OriginGuard).
+        app = FastAPI()
+        install_gateway_middleware(app, cors_origins=["https://app.example"])
+
+        @app.get("/ping")
+        def ping() -> dict[str, str]:
+            return {"ok": "1"}
+
+        client = TestClient(app)
+        response = client.get(
+            "/ping",
+            headers={"origin": "https://evil.example", "host": "testserver"},
         )
         self.assertEqual(response.status_code, 403)
 
