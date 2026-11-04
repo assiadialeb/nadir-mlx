@@ -15,6 +15,7 @@ from orchestrator.serve_supervisor import (
     build_child_commands,
     default_serve_spec,
     gateway_bind_from_env,
+    reclaim_stale_serve_ports,
     start_children,
     stop_children,
     wait_for_exit,
@@ -62,6 +63,14 @@ class Command(BaseCommand):
             self.stdout.flush()
             call_command("migrate", interactive=False, verbosity=1)
 
+        reclaimed = reclaim_stale_serve_ports(spec)
+        if reclaimed:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Reclaimed stale serve listener(s): pids {', '.join(map(str, reclaimed))}"
+                )
+            )
+            self.stdout.flush()
         assert_serve_ports_free(spec)
         commands = build_child_commands(spec)
         gateway_host, gateway_port = gateway_bind_from_env()
@@ -78,32 +87,35 @@ class Command(BaseCommand):
         self.stdout.flush()
         sys.stdout.flush()
 
-        processes = start_children(commands)
-        stopping = False
+        # Flag-only signal handlers: do not stop children inside the handler
+        # (unsafe / can leave UI:8000 listening after Ctrl+C on macOS).
+        stop_requested = False
 
-        def _shutdown(signum: int, _frame: Any) -> None:
-            nonlocal stopping
-            if stopping:
+        def _request_stop(signum: int, _frame: Any) -> None:
+            nonlocal stop_requested
+            if stop_requested:
                 return
-            stopping = True
+            stop_requested = True
             self.stdout.write(self.style.WARNING(f"\nSignal {signum}: stopping children…"))
             self.stdout.flush()
-            stop_children(processes)
 
-        signal.signal(signal.SIGINT, _shutdown)
-        signal.signal(signal.SIGTERM, _shutdown)
+        signal.signal(signal.SIGINT, _request_stop)
+        signal.signal(signal.SIGTERM, _request_stop)
 
+        processes = start_children(commands)
         try:
-            exit_code = wait_for_exit(processes)
-            if not stopping:
-                self.stdout.write(
-                    self.style.ERROR(
-                        f"A supervised process exited (code {exit_code}); shutting down."
-                    )
+            exit_code = wait_for_exit(processes, should_stop=lambda: stop_requested)
+            if stop_requested:
+                stop_children(processes, spec=spec)
+                return
+            self.stdout.write(
+                self.style.ERROR(
+                    f"A supervised process exited (code {exit_code}); shutting down."
                 )
-                self.stdout.flush()
-                stop_children(processes)
-            if exit_code not in (0, None) and not stopping:
+            )
+            self.stdout.flush()
+            stop_children(processes, spec=spec)
+            if exit_code not in (0, None):
                 raise SystemExit(exit_code)
         finally:
-            stop_children(processes)
+            stop_children(processes, spec=spec)

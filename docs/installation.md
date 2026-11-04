@@ -95,7 +95,7 @@ Optional MCP in the same stack:
 python manage.py serve --with-mcp
 ```
 
-Ctrl+C stops every supervised process. Background reconcile / watchdog / idle-offload run only in the gateway child. If `serve` is killed with `SIGKILL`, children exit shortly after (parent-PID watch); a restart also refuses busy ports with a clear message. You can still run `runserver` / `run_gateway` / `run_mcp` in separate terminals if you prefer.
+Ctrl+C stops every supervised process (cleanup runs on the main thread, then reclaim any orphaned listeners on the UI/gateway ports). Background reconcile / watchdog / idle-offload run only in the gateway child. If `serve` is killed with `SIGKILL`, children exit shortly after (parent-PID watch); the next `serve` also reclaims stale `manage.py` listeners before binding. You can still run `runserver` / `run_gateway` / `run_mcp` in separate terminals if you prefer.
 
 Open **http://127.0.0.1:8000** and sign in with your superuser account.
 
