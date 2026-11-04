@@ -154,6 +154,60 @@ class ResponsesTranslateTests(SimpleTestCase):
         self.assertEqual(chat["messages"][2]["role"], "tool")
         self.assertEqual(chat["messages"][2]["content"], "result")
 
+    def test_consecutive_function_calls_merge_into_one_assistant(self) -> None:
+        chat = responses_request_to_chat(
+            {
+                "model": "demo",
+                "input": [
+                    {"role": "user", "content": "multi"},
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "a",
+                        "arguments": "{}",
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call_2",
+                        "name": "b",
+                        "arguments": "{}",
+                    },
+                ],
+            }
+        )
+        assistant = chat["messages"][1]
+        self.assertEqual(assistant["role"], "assistant")
+        self.assertEqual(len(assistant["tool_calls"]), 2)
+        self.assertEqual(assistant["tool_calls"][1]["id"], "call_2")
+
+    def test_flat_json_schema_format_nests_for_chat(self) -> None:
+        chat = responses_request_to_chat(
+            {
+                "model": "demo",
+                "input": "Hi",
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "reply",
+                        "schema": {"type": "object"},
+                        "strict": True,
+                    }
+                },
+                "tools": [
+                    {"type": "web_search"},
+                    {
+                        "type": "function",
+                        "name": "lookup",
+                        "parameters": {"type": "object"},
+                    },
+                ],
+            }
+        )
+        self.assertEqual(chat["response_format"]["type"], "json_schema")
+        self.assertEqual(chat["response_format"]["json_schema"]["name"], "reply")
+        self.assertEqual(len(chat["tools"]), 1)
+        self.assertEqual(chat["tools"][0]["function"]["name"], "lookup")
+
     def test_chat_tool_calls_become_function_call_output_items(self) -> None:
         payload = chat_completion_to_response(
             {

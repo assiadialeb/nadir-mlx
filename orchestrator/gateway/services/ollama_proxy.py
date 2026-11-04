@@ -10,8 +10,12 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.responses import Response
 
 from orchestrator.gateway.chat_extensions import prepare_chat_upstream_body
+from orchestrator.gateway.protocol.chat_sse import (
+    ToolCallAccumulator,
+    parse_chat_sse_line,
+    tool_calls_as_ollama,
+)
 from orchestrator.gateway.protocol.ollama_translate import (
-    chat_sse_delta_text,
     models_list_to_ollama_ps,
     models_list_to_ollama_tags,
     ollama_chat_stream_chunk,
@@ -167,29 +171,89 @@ async def _translate_chat_sse(
     client_model_alias: str,
     stream_chunk: StreamChunkFn,
 ) -> AsyncIterator[bytes]:
+    state = _OllamaStreamState()
     buffer = b""
     async for chunk in chunks:
         buffer += chunk
         while b"\n" in buffer:
             line, buffer = buffer.split(b"\n", 1)
-            text = chat_sse_delta_text(line)
-            if text is not None:
-                yield stream_chunk(
-                    client_model_alias=client_model_alias,
-                    content=text,
-                    done=False,
-                )
-    if buffer:
-        text = chat_sse_delta_text(buffer)
-        if text is not None:
-            yield stream_chunk(
+            for event in _events_for_ollama_line(line, client_model_alias, stream_chunk, state):
+                yield event
+            if state.failed:
+                return
+    if buffer and not state.failed:
+        for event in _events_for_ollama_line(buffer, client_model_alias, stream_chunk, state):
+            yield event
+        if state.failed:
+            return
+    yield _final_ollama_chunk(client_model_alias, stream_chunk, state)
+
+
+class _OllamaStreamState:
+    def __init__(self) -> None:
+        self.tools = ToolCallAccumulator()
+        self.done_reason = "stop"
+        self.usage: dict[str, Any] = {}
+        self.failed = False
+        self.error_message = ""
+
+
+def _events_for_ollama_line(
+    line: bytes,
+    client_model_alias: str,
+    stream_chunk: StreamChunkFn,
+    state: _OllamaStreamState,
+) -> list[bytes]:
+    parsed = parse_chat_sse_line(line)
+    if parsed is None:
+        return []
+    if parsed.error is not None:
+        state.failed = True
+        state.error_message = str(parsed.error.get("message") or "Upstream stream error")
+        return [
+            stream_chunk(
                 client_model_alias=client_model_alias,
-                content=text,
-                done=False,
+                content="",
+                done=True,
+                done_reason="error",
+                error=state.error_message,
             )
-    yield stream_chunk(
-        client_model_alias=client_model_alias,
-        content="",
-        done=True,
-        done_reason="stop",
-    )
+        ]
+    if parsed.usage is not None:
+        state.usage = parsed.usage
+    if parsed.finish_reason:
+        state.done_reason = (
+            "tool_calls" if parsed.finish_reason == "tool_calls" else parsed.finish_reason
+        )
+    if parsed.tool_call_deltas:
+        state.tools.ingest(parsed.tool_call_deltas)
+    if not parsed.text:
+        return []
+    return [
+        stream_chunk(
+            client_model_alias=client_model_alias,
+            content=parsed.text,
+            done=False,
+        )
+    ]
+
+
+def _final_ollama_chunk(
+    client_model_alias: str,
+    stream_chunk: StreamChunkFn,
+    state: _OllamaStreamState,
+) -> bytes:
+    tool_calls = tool_calls_as_ollama(state.tools.completed_calls())
+    if tool_calls and state.done_reason == "stop":
+        state.done_reason = "tool_calls"
+    kwargs: dict[str, Any] = {
+        "client_model_alias": client_model_alias,
+        "content": "",
+        "done": True,
+        "done_reason": state.done_reason,
+        "prompt_eval_count": int(state.usage.get("prompt_tokens") or 0),
+        "eval_count": int(state.usage.get("completion_tokens") or 0),
+    }
+    if tool_calls and stream_chunk is ollama_chat_stream_chunk:
+        kwargs["tool_calls"] = tool_calls
+    return stream_chunk(**kwargs)

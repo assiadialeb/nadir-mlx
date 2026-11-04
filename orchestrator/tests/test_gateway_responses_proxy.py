@@ -218,3 +218,30 @@ class ResponsesSseTranslateAsyncTests(IsolatedAsyncioTestCase):
         joined = b"".join(parts)
         self.assertIn(b"response.failed", joined)
         self.assertNotIn(b"response.completed", joined)
+
+    async def test_translate_chat_sse_emits_function_call_events(self) -> None:
+        async def chunks():
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                b'"type":"function","function":{"name":"lookup","arguments":""}}]}}]}\n'
+            )
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                b'"function":{"arguments":"{\\"q\\":1}"}}]}}]}\n'
+            )
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n'
+
+        parts = [
+            chunk
+            async for chunk in _translate_chat_sse_to_responses(
+                chunks(),
+                client_model_alias="demo",
+            )
+        ]
+        joined = b"".join(parts)
+        self.assertIn(b"response.output_item.added", joined)
+        self.assertIn(b"function_call", joined)
+        self.assertIn(b"response.function_call_arguments.delta", joined)
+        self.assertIn(b"response.function_call_arguments.done", joined)
+        self.assertIn(b"lookup", joined)
+        self.assertIn(b'"q\\":1', joined)

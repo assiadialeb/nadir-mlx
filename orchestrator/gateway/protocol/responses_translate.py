@@ -75,11 +75,17 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     if isinstance(text, dict):
         fmt = text.get("format")
         if isinstance(fmt, dict) and fmt.get("type") in {"json_object", "json_schema"}:
-            chat["response_format"] = fmt
+            chat["response_format"] = _responses_format_to_chat(fmt)
 
     tools = body.get("tools")
     if isinstance(tools, list) and tools:
-        chat["tools"] = [_responses_tool_to_chat(tool) for tool in tools if isinstance(tool, dict)]
+        chat_tools = [
+            _responses_tool_to_chat(tool)
+            for tool in tools
+            if isinstance(tool, dict) and _is_function_tool(tool)
+        ]
+        if chat_tools:
+            chat["tools"] = chat_tools
 
     if "tool_choice" in body:
         chat["tool_choice"] = _responses_tool_choice_to_chat(body.get("tool_choice"))
@@ -88,6 +94,32 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         if key in body:
             chat[key] = body[key]
     return chat
+
+
+def _responses_format_to_chat(fmt: dict[str, Any]) -> dict[str, Any]:
+    """Map Responses ``text.format`` into Chat Completions ``response_format``."""
+    if fmt.get("type") != "json_schema":
+        return fmt
+    if isinstance(fmt.get("json_schema"), dict):
+        return fmt
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": fmt.get("name") or "response",
+            "schema": fmt.get("schema") if isinstance(fmt.get("schema"), dict) else {},
+            "strict": fmt.get("strict"),
+        },
+    }
+
+
+def _is_function_tool(tool: dict[str, Any]) -> bool:
+    tool_type = tool.get("type")
+    if tool_type not in (None, "function"):
+        return False
+    if isinstance(tool.get("function"), dict) and tool["function"].get("name"):
+        return True
+    name = tool.get("name")
+    return isinstance(name, str) and bool(name)
 
 
 def _responses_tool_to_chat(tool: dict[str, Any]) -> dict[str, Any]:
@@ -138,10 +170,31 @@ def _input_to_messages(input_value: Any, instructions: Any) -> list[dict[str, An
             param="input",
         )
 
+    pending_tool_calls: list[dict[str, Any]] = []
+
+    def flush_tool_calls() -> None:
+        if not pending_tool_calls:
+            return
+        messages.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": list(pending_tool_calls),
+            }
+        )
+        pending_tool_calls.clear()
+
     for item in input_value:
+        if isinstance(item, dict) and item.get("type") == "function_call":
+            call = _function_call_to_tool_call(item)
+            if call is not None:
+                pending_tool_calls.append(call)
+            continue
+        flush_tool_calls()
         message = _coerce_input_item(item)
         if message is not None:
             messages.append(message)
+    flush_tool_calls()
     if not any(msg.get("role") != "system" for msg in messages):
         raise GatewayRouteError(
             status_code=400,
@@ -178,22 +231,27 @@ def _coerce_input_item(item: Any) -> dict[str, Any] | None:
     return None
 
 
-def _function_call_to_assistant_message(item: dict[str, Any]) -> dict[str, Any]:
-    call_id = str(item.get("call_id") or item.get("id") or _new_id("call"))
+def _function_call_to_tool_call(item: dict[str, Any]) -> dict[str, Any] | None:
     name = str(item.get("name") or "")
+    if not name:
+        return None
+    call_id = str(item.get("call_id") or item.get("id") or _new_id("call"))
     arguments = item.get("arguments")
     if not isinstance(arguments, str):
         arguments = json.dumps(arguments or {}, separators=(",", ":"))
     return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": arguments},
+    }
+
+
+def _function_call_to_assistant_message(item: dict[str, Any]) -> dict[str, Any]:
+    call = _function_call_to_tool_call(item)
+    return {
         "role": "assistant",
         "content": None,
-        "tool_calls": [
-            {
-                "id": call_id,
-                "type": "function",
-                "function": {"name": name, "arguments": arguments},
-            }
-        ],
+        "tool_calls": [call] if call is not None else [],
     }
 
 

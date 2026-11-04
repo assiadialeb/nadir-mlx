@@ -250,3 +250,31 @@ class AnthropicStreamTranslateAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn(b"text_delta", joined)
         self.assertIn(b"max_tokens", joined)
         self.assertIn(b"message_stop", joined)
+
+    async def test_translate_chat_sse_emits_tool_use_blocks(self) -> None:
+        async def chunks():
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                b'"type":"function","function":{"name":"get_weather","arguments":""}}]}}]}\n'
+            )
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                b'"function":{"arguments":"{\\"city\\":\\"Paris\\"}"}}]}}]}\n'
+            )
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n'
+            yield b'data: {"usage":{"prompt_tokens":2,"completion_tokens":5}}\n'
+
+        parts = [
+            chunk
+            async for chunk in _translate_chat_sse_to_anthropic(
+                chunks(),
+                client_model_alias="demo",
+            )
+        ]
+        joined = b"".join(parts)
+        self.assertIn(b'"type":"tool_use"', joined)
+        self.assertIn(b"get_weather", joined)
+        self.assertIn(b"input_json_delta", joined)
+        self.assertIn(b"Paris", joined)
+        self.assertIn(b'"stop_reason":"tool_use"', joined)
+        self.assertIn(b'"output_tokens":5', joined)

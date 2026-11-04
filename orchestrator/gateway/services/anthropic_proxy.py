@@ -13,16 +13,18 @@ from orchestrator.gateway.protocol.anthropic_translate import (
     anthropic_request_to_chat,
     anthropic_stream_content_block_start,
     anthropic_stream_content_block_stop,
+    anthropic_stream_error,
+    anthropic_stream_input_json_delta,
     anthropic_stream_message_delta,
     anthropic_stream_message_start,
     anthropic_stream_message_stop,
     anthropic_stream_text_delta,
+    anthropic_stream_tool_use_block_start,
     chat_completion_to_anthropic,
-    chat_sse_delta_text,
-    chat_sse_finish_reason,
     new_anthropic_message_id,
     openai_finish_to_anthropic_stop,
 )
+from orchestrator.gateway.protocol.chat_sse import ToolCallAccumulator, parse_chat_sse_line
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH
 from orchestrator.gateway.services.chat_proxy import CHAT_LAUNCH_MODES
 from orchestrator.gateway.services.http_proxy import (
@@ -76,42 +78,110 @@ async def _translate_chat_sse_to_anthropic(
     client_model_alias: str,
 ) -> AsyncIterator[bytes]:
     message_id = new_anthropic_message_id()
-    stop_reason = "end_turn"
+    state = _AnthropicStreamState()
     yield anthropic_stream_message_start(
         message_id=message_id,
         client_model_alias=client_model_alias,
     )
-    yield anthropic_stream_content_block_start()
 
     buffer = b""
     async for chunk in chunks:
         buffer += chunk
         while b"\n" in buffer:
             line, buffer = buffer.split(b"\n", 1)
-            stop_reason = _emit_chat_line(line, stop_reason)
-            event = _delta_event_for_line(line)
-            if event is not None:
+            for event in _events_for_chat_line(line, state):
                 yield event
-    if buffer:
-        stop_reason = _emit_chat_line(buffer, stop_reason)
-        event = _delta_event_for_line(buffer)
-        if event is not None:
+            if state.failed:
+                return
+    if buffer and not state.failed:
+        for event in _events_for_chat_line(buffer, state):
             yield event
+        if state.failed:
+            return
 
-    yield anthropic_stream_content_block_stop()
-    yield anthropic_stream_message_delta(stop_reason)
-    yield anthropic_stream_message_stop()
-
-
-def _delta_event_for_line(line: bytes) -> bytes | None:
-    text = chat_sse_delta_text(line)
-    if text is None:
-        return None
-    return anthropic_stream_text_delta(text)
+    for event in _close_anthropic_stream(state):
+        yield event
 
 
-def _emit_chat_line(line: bytes, current_stop: str) -> str:
-    finish = chat_sse_finish_reason(line)
-    if finish is None:
-        return current_stop
-    return openai_finish_to_anthropic_stop(finish)
+class _AnthropicStreamState:
+    def __init__(self) -> None:
+        self.stop_reason = "end_turn"
+        self.block_index = 0
+        self.text_index: int | None = None
+        self.tool_block_indexes: dict[int, int] = {}
+        self.tools = ToolCallAccumulator()
+        self.usage: dict[str, Any] = {}
+        self.failed = False
+
+
+def _events_for_chat_line(line: bytes, state: _AnthropicStreamState) -> list[bytes]:
+    parsed = parse_chat_sse_line(line)
+    if parsed is None:
+        return []
+    if parsed.error is not None:
+        state.failed = True
+        message = str(parsed.error.get("message") or "Upstream stream error")
+        return [anthropic_stream_error(message)]
+    if parsed.usage is not None:
+        state.usage = parsed.usage
+    if parsed.finish_reason:
+        state.stop_reason = openai_finish_to_anthropic_stop(parsed.finish_reason)
+
+    events: list[bytes] = []
+    if parsed.text:
+        events.extend(_emit_text_delta(parsed.text, state))
+    if parsed.tool_call_deltas:
+        events.extend(_emit_tool_deltas(parsed.tool_call_deltas, state))
+    return events
+
+
+def _emit_text_delta(text: str, state: _AnthropicStreamState) -> list[bytes]:
+    events: list[bytes] = []
+    if state.text_index is None:
+        state.text_index = state.block_index
+        events.append(anthropic_stream_content_block_start(index=state.text_index))
+        state.block_index += 1
+    events.append(anthropic_stream_text_delta(text, index=state.text_index))
+    return events
+
+
+def _emit_tool_deltas(
+    deltas: list[dict[str, Any]],
+    state: _AnthropicStreamState,
+) -> list[bytes]:
+    events: list[bytes] = []
+    for call, fragment in state.tools.ingest(deltas):
+        block_index = state.tool_block_indexes.get(call.index)
+        if block_index is None:
+            if not call.name:
+                continue
+            block_index = state.block_index
+            state.tool_block_indexes[call.index] = block_index
+            state.block_index += 1
+            events.append(
+                anthropic_stream_tool_use_block_start(
+                    index=block_index,
+                    tool_id=call.id or f"toolu_{call.index}",
+                    name=call.name,
+                )
+            )
+            call.started = True
+        if fragment:
+            events.append(anthropic_stream_input_json_delta(fragment, index=block_index))
+    return events
+
+
+def _close_anthropic_stream(state: _AnthropicStreamState) -> list[bytes]:
+    events: list[bytes] = []
+    if state.text_index is not None:
+        events.append(anthropic_stream_content_block_stop(index=state.text_index))
+    for block_index in sorted(state.tool_block_indexes.values()):
+        events.append(anthropic_stream_content_block_stop(index=block_index))
+    if state.tools.has_calls() and state.stop_reason == "end_turn":
+        state.stop_reason = "tool_use"
+    output_tokens = int(state.usage.get("completion_tokens") or 0)
+    events.append(
+        anthropic_stream_message_delta(state.stop_reason, output_tokens=output_tokens)
+    )
+    events.append(anthropic_stream_message_stop())
+    return events

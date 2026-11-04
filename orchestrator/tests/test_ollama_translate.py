@@ -43,7 +43,7 @@ class OllamaTranslateTests(SimpleTestCase):
         self.assertEqual(chat["seed"], 7)
         self.assertEqual(chat["response_format"]["type"], "json_object")
         self.assertEqual(chat["tools"][0]["function"]["name"], "lookup")
-        self.assertFalse(chat["stream"])
+        self.assertTrue(chat["stream"])
         self.assertNotIn("num_ctx", chat)
 
     def test_ollama_chat_images_and_format_schema(self) -> None:

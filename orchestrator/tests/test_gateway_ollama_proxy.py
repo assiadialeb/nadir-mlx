@@ -71,7 +71,11 @@ class GatewayOllamaProxyTests(SimpleTestCase):
 
         response = self.client.post(
             "/api/chat",
-            json={"model": "demo-chat", "messages": [{"role": "user", "content": "Hi"}]},
+            json={
+                "model": "demo-chat",
+                "stream": False,
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["message"]["content"], "Hello")
@@ -121,7 +125,7 @@ class GatewayOllamaProxyTests(SimpleTestCase):
 
         response = self.client.post(
             "/api/generate",
-            json={"model": "demo-chat", "prompt": "Hello"},
+            json={"model": "demo-chat", "prompt": "Hello", "stream": False},
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["response"], "World")
@@ -166,6 +170,51 @@ class GatewayOllamaProxyTests(SimpleTestCase):
         self.assertEqual(lines[0]["message"]["content"], "Hi")
         self.assertFalse(lines[0]["done"])
         self.assertTrue(lines[-1]["done"])
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    def test_chat_stream_emits_tool_calls(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        async def chunk_stream():
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                b'"type":"function","function":{"name":"get_weather","arguments":""}}]}}]}\n'
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                b'"function":{"arguments":"{\\"city\\":\\"Paris\\"}"}}]}}]}\n'
+                b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n'
+                b'data: {"usage":{"prompt_tokens":1,"completion_tokens":2}}\n'
+                b"data: [DONE]\n\n"
+            )
+
+        upstream = MagicMock()
+        upstream.status_code = 200
+        upstream.aiter_bytes = chunk_stream
+        upstream.aclose = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=upstream)
+        mock_get_client.return_value = mock_client
+
+        response = self.client.post(
+            "/api/chat",
+            json={
+                "model": "demo-chat",
+                "stream": True,
+                "messages": [{"role": "user", "content": "Paris?"}],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        lines = [json.loads(line) for line in response.content.splitlines() if line]
+        final = lines[-1]
+        self.assertTrue(final["done"])
+        self.assertEqual(final["done_reason"], "tool_calls")
+        self.assertEqual(final["eval_count"], 2)
+        tool = final["message"]["tool_calls"][0]
+        self.assertEqual(tool["function"]["name"], "get_weather")
+        self.assertEqual(tool["function"]["arguments"], {"city": "Paris"})
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=EMBED_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")
@@ -232,7 +281,11 @@ class GatewayOllamaProxyTests(SimpleTestCase):
 
         response = self.client.post(
             "/api/chat",
-            json={"model": "demo-chat", "messages": [{"role": "user", "content": "Hi"}]},
+            json={
+                "model": "demo-chat",
+                "stream": False,
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
         )
         self.assertEqual(response.status_code, 502)
 

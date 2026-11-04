@@ -99,10 +99,6 @@ class GatewaySdkSmokeTests(IsolatedAsyncioTestCase):
         await self._http.__aexit__(None, None, None)
         self._touch_patcher.stop()
 
-    async def _streaming_supported(self, path: str, body: dict) -> bool:
-        probe = await self._http.post(path, json=body)
-        return probe.status_code != 501
-
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     async def test_openai_sdk_chat_completions(
@@ -179,18 +175,6 @@ class GatewaySdkSmokeTests(IsolatedAsyncioTestCase):
         mock_get_client: MagicMock,
         _mock_ready: MagicMock,
     ) -> None:
-        supported = await self._streaming_supported(
-            "/v1/messages",
-            {
-                "model": "demo-chat",
-                "max_tokens": 8,
-                "stream": True,
-                "messages": [{"role": "user", "content": "ping"}],
-            },
-        )
-        if not supported:
-            self.skipTest("Anthropic streaming requires MLX-107 / PR #34")
-
         _mock_sse_upstream(
             mock_get_client,
             b'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}\n'
@@ -211,6 +195,52 @@ class GatewaySdkSmokeTests(IsolatedAsyncioTestCase):
             async for text in stream.text_stream:
                 chunks.append(text)
         self.assertIn("hi", "".join(chunks))
+
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
+    @patch("orchestrator.gateway.services.http_proxy.get_http_client")
+    async def test_anthropic_sdk_messages_stream_tool_use(
+        self,
+        mock_get_client: MagicMock,
+        _mock_ready: MagicMock,
+    ) -> None:
+        _mock_sse_upstream(
+            mock_get_client,
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+            b'"type":"function","function":{"name":"get_weather","arguments":""}}]}}]}\n'
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"function":{"arguments":"{\\"city\\":\\"Paris\\"}"}}]}}]}\n'
+            b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n'
+            b"data: [DONE]\n\n",
+        )
+        client = AsyncAnthropic(
+            api_key="test-key",
+            base_url="http://testserver",
+            http_client=self._http,
+        )
+        tool_names: list[str] = []
+        async with client.messages.stream(
+            model="demo-chat",
+            max_tokens=32,
+            tools=[
+                {
+                    "name": "get_weather",
+                    "description": "Weather",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+            messages=[{"role": "user", "content": "Paris?"}],
+        ) as stream:
+            async for event in stream:
+                if getattr(event, "type", None) == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    if block is not None and getattr(block, "type", None) == "tool_use":
+                        tool_names.append(block.name)
+            final = await stream.get_final_message()
+        self.assertIn("get_weather", tool_names)
+        self.assertEqual(final.stop_reason, "tool_use")
+        tool_blocks = [b for b in final.content if getattr(b, "type", None) == "tool_use"]
+        self.assertEqual(tool_blocks[0].name, "get_weather")
+        self.assertEqual(tool_blocks[0].input, {"city": "Paris"})
 
     @patch("orchestrator.lifecycle_services.ensure_instance_ready", return_value=TEXT_TARGET)
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")
@@ -243,17 +273,6 @@ class GatewaySdkSmokeTests(IsolatedAsyncioTestCase):
         mock_get_client: MagicMock,
         _mock_ready: MagicMock,
     ) -> None:
-        supported = await self._streaming_supported(
-            "/api/chat",
-            {
-                "model": "demo-chat",
-                "stream": True,
-                "messages": [{"role": "user", "content": "ping"}],
-            },
-        )
-        if not supported:
-            self.skipTest("Ollama streaming requires MLX-108 / PR #35")
-
         _mock_sse_upstream(
             mock_get_client,
             b'data: {"choices":[{"delta":{"content":"yo"}}]}\n'
