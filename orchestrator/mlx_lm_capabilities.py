@@ -5,13 +5,16 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from typing import Iterable
 
 from django.conf import settings
 
 TEXT_KV_CLI_FLAGS: tuple[str, ...] = ("kv-bits", "kv-quant-scheme", "kv-group-size")
+_PROBE_FAILURE_TTL_SECONDS = 300.0
 
 _cached_cli_flags: frozenset[str] | None = None
+_probe_failed_until: float = 0.0
 
 
 def _python_for_mlx_lm() -> str:
@@ -23,14 +26,24 @@ def _python_for_mlx_lm() -> str:
 
 
 def mlx_lm_server_cli_flags() -> frozenset[str]:
-    """Return long-option names from ``python -m mlx_lm.server --help``."""
-    global _cached_cli_flags
+    """Return long-option names from ``python -m mlx_lm.server --help``.
+
+    Successful probes are cached for the process lifetime. Probe failures are
+    cached briefly (``_PROBE_FAILURE_TTL_SECONDS``) so a missing/broken mlx-lm
+    does not re-run ``--help`` on every form validation or schema render.
+    """
+    global _cached_cli_flags, _probe_failed_until
     if _cached_cli_flags is not None:
         return _cached_cli_flags
+    if time.monotonic() < _probe_failed_until:
+        return frozenset()
     flags = _probe_mlx_lm_server_cli_flags()
     if flags:
         _cached_cli_flags = flags
-    return flags
+        _probe_failed_until = 0.0
+        return flags
+    _probe_failed_until = time.monotonic() + _PROBE_FAILURE_TTL_SECONDS
+    return frozenset()
 
 
 def mlx_lm_server_supports_flag(flag: str) -> bool:
@@ -51,8 +64,9 @@ def text_kv_quantization_enabled() -> bool:
 
 def clear_mlx_lm_capability_cache() -> None:
     """Tests only."""
-    global _cached_cli_flags
+    global _cached_cli_flags, _probe_failed_until
     _cached_cli_flags = None
+    _probe_failed_until = 0.0
 
 
 def _probe_mlx_lm_server_cli_flags() -> frozenset[str]:

@@ -39,13 +39,23 @@ InstalledSort = Literal[
 HF_FETCH_LIMIT_DEFAULT = 24
 HF_FETCH_LIMIT_FILTERED = 100
 
-SORT_OPTIONS: tuple[tuple[str, str], ...] = (
+SORT_OPTIONS_INSTALLED: tuple[tuple[str, str], ...] = (
+    ("name_asc", "Name A → Z"),
+    ("name_desc", "Name Z → A"),
+    ("size_desc", "Size (largest)"),
+    ("size_asc", "Size (smallest)"),
+)
+
+SORT_OPTIONS_HUB: tuple[tuple[str, str], ...] = (
     ("name_asc", "Name A → Z"),
     ("name_desc", "Name Z → A"),
     ("mac_recommended", "Recommended for Mac"),
     ("size_desc", "Size (largest)"),
     ("size_asc", "Size (smallest)"),
 )
+
+# Back-compat alias (hub includes Mac-fit sort).
+SORT_OPTIONS = SORT_OPTIONS_HUB
 
 CAPABILITY_FILTER_IDS: frozenset[str] = frozenset(server_type["id"] for server_type in SERVER_TYPES)
 CAPABILITY_TO_KEY: dict[str, str] = {
@@ -160,8 +170,23 @@ def _heuristic_multimodal_match(
 
 
 def _extract_param_size(name: str) -> float | None:
+    """Total parameter size in billions from a model folder/repo name."""
     param_match = re.search(r"(\d+(?:\.\d+)?)[Bb]", name)
     return float(param_match.group(1)) if param_match else None
+
+
+def _param_size_from_hf_payload(model_data: dict[str, Any], name: str) -> float | None:
+    """Prefer HF ``safetensors.total`` (exact param count); fall back to name regex."""
+    safetensors = model_data.get("safetensors")
+    if isinstance(safetensors, dict):
+        raw_total = safetensors.get("total")
+        try:
+            total = int(raw_total)
+        except (TypeError, ValueError):
+            total = 0
+        if total > 0:
+            return total / 1_000_000_000.0
+    return _extract_param_size(name)
 
 
 def _extract_quantization_bits(name: str) -> int:
@@ -201,9 +226,19 @@ def _estimate_model_size_bytes(param_size: float | None, bits: int) -> int:
     return int(param_size * 1_000_000_000 * (bits / 8.0))
 
 
+def _format_param_size_label(param_size: float | None) -> str:
+    if param_size is None:
+        return "Unknown"
+    if abs(param_size - round(param_size)) < 1e-6:
+        return f"{int(round(param_size))}B"
+    return f"{param_size:.1f}B"
+
+
 def parse_hf_model_from_api(
     model_data: dict[str, Any],
     download_records: dict[str, ModelDownload],
+    *,
+    profile=None,
 ) -> dict[str, Any]:
     """Build a UI-ready Hugging Face model dict from the HF API payload."""
     repo_id = str(model_data.get("id") or "").strip()
@@ -211,14 +246,14 @@ def parse_hf_model_from_api(
     tags = model_data.get("tags") or []
     pipeline_tag = str(model_data.get("pipeline_tag") or "")
 
-    param_size = _extract_param_size(name)
+    param_size = _param_size_from_hf_payload(model_data, name)
     bits = _extract_quantization_bits(name)
     estimated_size_bytes = _estimate_model_size_bytes(param_size, bits)
 
     parsed: dict[str, Any] = {
         "repo_id": repo_id,
         "name": name,
-        "param_size": f"{param_size}B" if param_size else "Unknown",
+        "param_size": _format_param_size_label(param_size),
         "param_size_b": param_size,
         "bits": f"{bits}bit",
         "quant_bits": bits,
@@ -230,7 +265,7 @@ def parse_hf_model_from_api(
         "likes": model_data.get("likes", 0),
         **infer_hf_model_capabilities(name, pipeline_tag=pipeline_tag, tags=tags),
     }
-    enrich_hf_model_mac_fit(parsed)
+    enrich_hf_model_mac_fit(parsed, profile=profile)
 
     download_record = download_records.get(repo_id)
     if download_record:
@@ -251,6 +286,7 @@ def fetch_hf_models(query: str = "", *, limit: int = HF_FETCH_LIMIT_DEFAULT) -> 
         "sort": "downloads",
         "direction": "-1",
         "limit": limit,
+        "expand": "safetensors",
     }
     if safe_query:
         params["search"] = safe_query
@@ -265,13 +301,16 @@ def fetch_hf_models(query: str = "", *, limit: int = HF_FETCH_LIMIT_DEFAULT) -> 
         record.repo_id: record
         for record in ModelDownload.objects.filter(repo_id__in=repo_ids)
     }
+    profile = load_mac_hardware_profile()
 
     models: list[dict[str, Any]] = []
     for model_data in payload:
         repo_id = str(model_data.get("id") or "").strip()
         if not repo_id:
             continue
-        models.append(parse_hf_model_from_api(model_data, download_records))
+        models.append(
+            parse_hf_model_from_api(model_data, download_records, profile=profile)
+        )
     return models
 
 
