@@ -8,6 +8,7 @@ extensions:
       - ["orchestrator.security_utils", "Function[validated_benchmark_artifact_path].ReturnValue", "path-injection"]
       - ["orchestrator.security_utils", "Function[validated_sqlite_migration_path].ReturnValue", "path-injection"]
       - ["orchestrator.security_utils", "Function[build_validated_http_url].ReturnValue", "full-ssrf"]
+      - ["orchestrator.security_utils", "Function[validated_gateway_chat_completions_url].ReturnValue", "full-ssrf"]
       - ["orchestrator.security_utils", "Function[validate_outbound_http_host].ReturnValue", "full-ssrf"]
       - ["orchestrator.security_utils", "Function[validate_benchmark_endpoint_host].ReturnValue", "full-ssrf"]
       - ["orchestrator.security_utils", "Function[validate_server_bind_host].ReturnValue", "full-ssrf"]

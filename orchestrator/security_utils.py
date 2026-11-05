@@ -282,6 +282,16 @@ def build_validated_http_url(host: str, port: int, path: str = "/") -> str:
     return f"http://{safe_host}:{port}{normalized_path}"
 
 
+def validated_gateway_chat_completions_url(host: str, port: int) -> str:
+    """Return a sanitized gateway chat-completions URL (anti-SSRF)."""
+    safe_port = validated_launch_port(port)
+    return build_validated_http_url(
+        validate_outbound_http_host(host),
+        safe_port,
+        "/v1/chat/completions",
+    )
+
+
 def benchmark_compare_export_filename(run_a_id: int, run_b_id: int) -> str:
     """Return a safe Content-Disposition filename for benchmark comparison exports."""
     safe_positive_int(run_a_id, field_name=BENCHMARK_RUN_ID_FIELD)

@@ -17,6 +17,7 @@ from orchestrator.security_utils import (
     safe_path_under_root,
     safe_positive_int,
     sanitize_hf_search_query,
+    validated_gateway_chat_completions_url,
     validated_launch_port,
     validated_subprocess_model_reference,
     validated_sqlite_migration_path,
@@ -147,6 +148,10 @@ class SecurityUtilsTests(SimpleTestCase):
     def test_build_validated_http_url_rejects_public_host(self) -> None:
         with self.assertRaises(ValueError):
             build_validated_http_url("8.8.8.8", 8080, "/v1/models")
+
+    def test_validated_gateway_chat_completions_url_uses_loopback(self) -> None:
+        url = validated_gateway_chat_completions_url("127.0.0.1", 8080)
+        self.assertEqual(url, "http://127.0.0.1:8080/v1/chat/completions")
 
     def test_benchmark_compare_export_filename_uses_validated_ids(self) -> None:
         self.assertEqual(
