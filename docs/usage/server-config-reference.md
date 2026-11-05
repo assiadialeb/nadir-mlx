@@ -53,7 +53,7 @@ All whitelisted `advanced` keys are forwarded at instance **Start** via `server_
 
 | Launch mode | Allowed keys | Wired |
 |-------------|--------------|-------|
-| TEXT | `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`, `prompt_cache_size`, `prompt_cache_bytes`, `decode_concurrency`, `prompt_concurrency` | Yes → `mlx_lm.server` CLI |
+| TEXT | `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`, `prompt_cache_size`, `prompt_cache_bytes`, `decode_concurrency`, `prompt_concurrency`, `prefill_step_size`, plus `kv_bits` / `kv_quant_scheme` / `kv_group_size` when mlx-lm exposes `--kv-bits` | Yes → `mlx_lm.server` CLI |
 | MULTIMODAL | `adapter_path`, `draft_model`, `draft_kind`, `draft_block_size`, `kv_bits`, `kv_quant_scheme`, `kv_group_size`, `enable_thinking`, `thinking_budget` | Yes → `mlx_vlm.server` CLI |
 | IMAGE | `quantize_override` | Yes → `image_server` (`apply_quantize_override`) |
 | TTS | `response_format` | Yes → `tts_server` default codec |

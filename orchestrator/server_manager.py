@@ -607,8 +607,17 @@ def _build_launch_command(
         "min-p": advanced.get("min_p"),
         "decode-concurrency": advanced.get("decode_concurrency"),
         "prompt-concurrency": advanced.get("prompt_concurrency"),
+        "prefill-step-size": advanced.get("prefill_step_size"),
     })
+    from orchestrator.mlx_lm_capabilities import text_kv_quantization_enabled
     from orchestrator.prompt_cache import resolve_prompt_cache_cli_flags
+
+    if text_kv_quantization_enabled():
+        _append_cli_args(command, {
+            "kv-bits": advanced.get("kv_bits"),
+            "kv-quant-scheme": advanced.get("kv_quant_scheme"),
+            "kv-group-size": advanced.get("kv_group_size"),
+        })
 
     _append_cli_args(command, resolve_prompt_cache_cli_flags(advanced))
     if text_mtp_preview_enabled():

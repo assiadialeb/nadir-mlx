@@ -261,3 +261,20 @@ class ServerConfigSchemaTests(TestCase):
         with patch.dict("os.environ", {"NADIR_TEXT_MTP_PREVIEW": "1"}):
             preview_keys = advanced_whitelist_for_mode("TEXT")
             self.assertIn("draft_kind", preview_keys)
+
+    def test_text_kv_quant_extends_whitelist_when_supported(self) -> None:
+        from orchestrator.server_config_schema import advanced_whitelist_for_mode
+
+        with patch(
+            "orchestrator.mlx_lm_capabilities.text_kv_quantization_enabled",
+            return_value=False,
+        ):
+            base = advanced_whitelist_for_mode("TEXT")
+            self.assertNotIn("kv_bits", base)
+            self.assertIn("prefill_step_size", base)
+        with patch(
+            "orchestrator.mlx_lm_capabilities.text_kv_quantization_enabled",
+            return_value=True,
+        ):
+            extended = advanced_whitelist_for_mode("TEXT")
+            self.assertIn("kv_bits", extended)
