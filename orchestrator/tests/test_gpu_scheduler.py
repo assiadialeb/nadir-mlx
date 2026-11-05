@@ -11,6 +11,7 @@ from orchestrator.gateway.gpu_scheduler import (
     PRIORITY_INTERACTIVE,
     GatewayUpstreamScheduler,
     PrioritySlotScheduler,
+    _UpstreamWaiter,
     parse_request_priority,
 )
 
@@ -127,7 +128,7 @@ class GatewayUpstreamSchedulerTests(SimpleTestCase):
                 order.append(f"{label}-start")
                 await asyncio.sleep(delay)
                 order.append(f"{label}-end")
-                await scheduler.release(
+                scheduler.release(
                     instance_id=instance_id,
                     instance_limit=1,
                     priority=PRIORITY_INTERACTIVE,
@@ -147,6 +148,49 @@ class GatewayUpstreamSchedulerTests(SimpleTestCase):
         b_index = order.index("B1-start")
         a2_index = order.index("A2-start")
         self.assertLess(b_index, a2_index)
+
+    def test_abandon_after_grant_wakes_next_waiter(self) -> None:
+        """G2-c: slot freed on cancel must call _grant_waiters (not only _release)."""
+
+        async def run() -> None:
+            scheduler = GatewayUpstreamScheduler(1, batch_max_share=1.0)
+            loop = asyncio.get_running_loop()
+            await scheduler.acquire(
+                instance_id=1,
+                instance_limit=1,
+                priority=PRIORITY_INTERACTIVE,
+                timeout_seconds=1.0,
+            )
+            waiter_b = _UpstreamWaiter(
+                instance_id=1,
+                instance_limit=1,
+                priority=PRIORITY_INTERACTIVE,
+                future=loop.create_future(),
+            )
+            waiter_c = _UpstreamWaiter(
+                instance_id=1,
+                instance_limit=1,
+                priority=PRIORITY_INTERACTIVE,
+                future=loop.create_future(),
+            )
+            scheduler._interactive.append(waiter_b)
+            scheduler._interactive.append(waiter_c)
+            scheduler.release(
+                instance_id=1,
+                instance_limit=1,
+                priority=PRIORITY_INTERACTIVE,
+            )
+            self.assertTrue(waiter_b.future.done())
+            self.assertFalse(waiter_c.future.done())
+            scheduler._release(
+                instance_id=1,
+                instance_limit=1,
+                priority=PRIORITY_INTERACTIVE,
+            )
+            scheduler._grant_waiters()
+            self.assertTrue(waiter_c.future.done())
+
+        asyncio.run(run())
 
 
 class RequestPriorityMiddlewareTests(SimpleTestCase):

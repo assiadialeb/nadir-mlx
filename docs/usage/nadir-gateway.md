@@ -332,7 +332,7 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
 | `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` | `16` | Max parallel upstream requests per instance (`0` = unlimited) |
 | `NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL` | `8` | Cross-instance GPU cap (`0` = unlimited). Default 8 on 48 GB class Macs so interactive traffic queues ahead of batch under load |
-| `NADIR_GATEWAY_BATCH_MAX_SHARE` | `0.5` | Max share of each pool for `X-Nadir-Priority: batch` (interactive keeps the rest) |
+| `NADIR_GATEWAY_BATCH_MAX_SHARE` | `0.5` | Max share of the **global** pool for `X-Nadir-Priority: batch` (interactive keeps the rest). Per-instance caps are not batch-limited unless the global cap binds first. |
 | `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `300` | Max wait in gateway queue when all slots are busy |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
@@ -353,7 +353,7 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 !!! note "GPU scheduling and priority"
     Every upstream request acquires **global** and **instance** capacity in one step (`NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL`, default **8**), under one `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` budget. A waiter blocked on a full instance never holds a global slot, so other models keep moving.
 
-    Freed slots go to **interactive** requests first. Batch traffic is further capped by `NADIR_GATEWAY_BATCH_MAX_SHARE` (default **0.5**) so long-running batch jobs cannot fill every slot. Background clients (report generation, bulk embeddings, evaluations) should send `X-Nadir-Priority: batch`. Any other value, or no header, is interactive.
+    Freed slots go to **interactive** requests first. Batch traffic is further capped by `NADIR_GATEWAY_BATCH_MAX_SHARE` (default **0.5**) on the **global** pool only — a single instance with a low `decode_concurrency` can still use all of its own slots for batch when the global cap is not saturated. Background clients (report generation, bulk embeddings, evaluations) should send `X-Nadir-Priority: batch`. Any other value, or no header, is interactive.
 
     !!! tip "Proxies and LiteLLM"
         Many OpenAI-compatible proxies (including LiteLLM) **do not forward custom headers** by default. If `X-Nadir-Priority` is stripped, every request is treated as interactive — safe, but batch isolation will not apply until the proxy is configured to pass the header through.
