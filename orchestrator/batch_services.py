@@ -13,6 +13,7 @@ from typing import Any, BinaryIO
 
 import httpx
 from django.conf import settings
+from django.db import transaction
 
 from orchestrator.batch_file_store import (
     append_jsonl_bytes,
@@ -342,23 +343,6 @@ def _record_batch_line_result(
     return False
 
 
-def _serialize_batch_output_lines(
-    results: list[dict[str, Any] | None],
-    *,
-    cancelled: bool,
-) -> list[str]:
-    if cancelled:
-        return [
-            json.dumps(item, separators=(",", ":"))
-            for item in results
-            if item is not None
-        ]
-    return [
-        json.dumps(results[index], separators=(",", ":"))  # type: ignore[arg-type]
-        for index in range(len(results))
-    ]
-
-
 def _execute_batch_lines(
     job_pk: int,
     lines: list[dict[str, Any]],
@@ -396,8 +380,7 @@ def _execute_batch_lines(
                     pending.cancel()
                 break
 
-    output_lines = _serialize_batch_output_lines(results, cancelled=cancelled)
-    return output_lines, counts, cancelled
+    return [], counts, cancelled
 
 
 def _batch_cancel_requested(job_pk: int) -> bool:
@@ -596,6 +579,37 @@ def _persist_batch_line(
         GatewayBatchJob.objects.filter(pk=job_pk).update(request_counts=counts)
 
 
+def _batch_file_still_referenced(record: GatewayBatchFile) -> bool:
+    if GatewayBatchJob.objects.filter(input_file=record).exists():
+        return True
+    if GatewayBatchJob.objects.filter(output_file=record).exists():
+        return True
+    return GatewayBatchJob.objects.filter(error_file=record).exists()
+
+
+def _delete_unreferenced_batch_file(record: GatewayBatchFile) -> None:
+    if _batch_file_still_referenced(record):
+        return
+    storage_name = record.storage_name
+    record.delete()
+    delete_storage_blob(storage_name)
+
+
+def _purge_one_expired_batch_job(job: GatewayBatchJob) -> bool:
+    files = [job.input_file, job.output_file, job.error_file]
+    try:
+        with transaction.atomic():
+            job.delete()
+        for record in files:
+            if record is None:
+                continue
+            _delete_unreferenced_batch_file(record)
+        return True
+    except Exception:
+        logger.exception("Failed to purge expired batch job %s", job.batch_id)
+        return False
+
+
 def purge_expired_batch_jobs() -> int:
     """Delete terminal batch jobs and blobs older than ``NADIR_BATCH_RETENTION_DAYS``."""
     days = env_float("NADIR_BATCH_RETENTION_DAYS", 30.0)
@@ -607,10 +621,12 @@ def purge_expired_batch_jobs() -> int:
         GatewayBatchJob.STATUS_FAILED,
         GatewayBatchJob.STATUS_CANCELLED,
     ]
-    candidates = GatewayBatchJob.objects.filter(status__in=terminal).select_related(
-        "input_file",
-        "output_file",
-        "error_file",
+    candidates = list(
+        GatewayBatchJob.objects.filter(status__in=terminal).select_related(
+            "input_file",
+            "output_file",
+            "error_file",
+        )
     )
     removed = 0
     for job in candidates:
@@ -619,14 +635,8 @@ def purge_expired_batch_jobs() -> int:
             finished = finished.replace(tzinfo=timezone.utc)
         if finished >= cutoff:
             continue
-        files = [job.input_file, job.output_file, job.error_file]
-        job.delete()
-        for record in files:
-            if record is None:
-                continue
-            delete_storage_blob(record.storage_name)
-            record.delete()
-        removed += 1
+        if _purge_one_expired_batch_job(job):
+            removed += 1
     return removed
 
 

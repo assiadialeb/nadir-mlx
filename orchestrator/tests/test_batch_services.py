@@ -493,6 +493,42 @@ def test_purge_expired_batch_jobs(batch_files_tmp) -> None:
     assert GatewayBatchJob.objects.filter(pk=job.pk).exists() is False
 
 
+@pytest.mark.django_db
+def test_purge_keeps_shared_input_for_newer_batch(batch_files_tmp) -> None:
+    from orchestrator.batch_services import read_batch_file_content
+
+    payload = (
+        b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n'
+    )
+    record = create_batch_file(purpose="batch", filename="shared.jsonl", data=payload)
+    assert not isinstance(record, BatchServiceError)
+    old_job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(old_job, GatewayBatchJob)
+    GatewayBatchJob.objects.filter(pk=old_job.pk).update(
+        status=GatewayBatchJob.STATUS_COMPLETED,
+        completed_at=datetime.now(timezone.utc) - timedelta(days=60),
+    )
+    new_job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(new_job, GatewayBatchJob)
+
+    with patch.dict("os.environ", {"NADIR_BATCH_RETENTION_DAYS": "30"}):
+        removed = purge_expired_batch_jobs()
+    assert removed == 1
+    assert get_batch_file(record.file_id) is not None
+    assert read_batch_file_content(record) is not None
+
+    mock_response = type(
+        "R",
+        (),
+        {"status_code": 200, "json": lambda self: {"id": "chatcmpl-1", "choices": []}},
+    )()
+    with patch("orchestrator.batch_services.httpx.post", return_value=mock_response):
+        process_pending_batch_jobs(max_jobs=1)
+
+    new_job.refresh_from_db()
+    assert new_job.status == GatewayBatchJob.STATUS_COMPLETED
+
+
 def test_normalize_batch_errors_legacy_message() -> None:
     normalized = _normalize_batch_errors({"message": "legacy"})
     assert normalized == _batch_errors_payload("legacy")
