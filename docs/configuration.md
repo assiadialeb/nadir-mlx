@@ -69,8 +69,24 @@ SQLite is used when no PostgreSQL host is configured.
 | `NADIR_GATEWAY_CORS_ORIGINS` | — | Allowed browser `Origin` values; empty rejects any `Origin` (CLI/SDK without Origin still work) |
 | `NADIR_GATEWAY_ALLOWED_HOSTS` | — | Extra `Host` values for TrustedHostMiddleware (beyond localhost / 127.0.0.1 / `[::1]`) |
 | `NADIR_GATEWAY_MAX_BODY_MB` | `50` | Reject requests whose `Content-Length` exceeds this size |
+| `NADIR_GATEWAY_TELEMETRY_ENABLED` | `true` | Per-request TTFT / prefill / prompt-cache metrics (logs + Servers UI) |
+| `NADIR_GATEWAY_TELEMETRY_FORCE_USAGE` | `true` | Force upstream usage for cache counts; strip usage-only SSE when client did not opt in |
+| `NADIR_GATEWAY_TELEMETRY_RETAIN` | `100` | Max recent timing rows in the local DB |
 
 Per-instance overrides (lifecycle, idle minutes, concurrency) are set in **server config** in the UI. See [Server config reference](usage/server-config-reference.md).
+
+## OpenAI batch API (gateway)
+
+Local `/v1/files` + `/v1/batches` for chat JSONL (privacy-first overnight eval). See [Nadir Gateway — Local batch jobs](usage/nadir-gateway.md#local-batch-jobs-openai-compatible).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NADIR_GATEWAY_BATCH_WORKER_ENABLED` | `true` | Background batch worker inside `run_gateway` / `serve` |
+| `NADIR_GATEWAY_BATCH_POLL_SECONDS` | `15` | Poll interval for `validating` jobs |
+| `NADIR_BATCH_RETENTION_DAYS` | `30` | Purge terminal jobs; delete blobs only when unreferenced |
+| `NADIR_BATCH_LINE_TIMEOUT_SECONDS` | `600` | Per-line timeout when the worker calls `/v1/chat/completions` |
+| `NADIR_BATCH_FILE_MAX_MB` | `200` | Max streamed upload size for `POST /v1/files` |
+| `NADIR_BATCH_FILES_DIR` | `data/batch_files` | On-disk blob store for batch input/output |
 
 ## Nadir MCP
 

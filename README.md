@@ -16,11 +16,13 @@ Running MLX locally usually means juggling CLI commands, virtual environments, a
 
 - **Search & download** MLX models from Hugging Face into `./models/`
 - **Launch** one or more inference servers on dedicated ports (`11400–11500`)
-- **Monitor** live logs and instance status from the browser
+- **Monitor** live logs, instance status, and optional **gateway TTFT / prompt-cache** metrics from the browser
 - **Benchmark** throughput and latency with integrated [llmbenchmark](https://github.com/tcs211/llmbenchmark)
-- **Integrate** with any OpenAI-compatible client (curl, SDKs, Open WebUI, etc.)
+- **Route** all clients through the **Nadir Gateway** (`:11380/v1`) — OpenAI chat/embeddings/image/audio, Anthropic `/v1/messages`, Ollama façade, Responses API
+- **Run overnight chat evals** with local OpenAI **`/v1/files`** + **`/v1/batches`** (JSONL on disk; worker bundled with `serve` / `run_gateway`)
+- **Integrate** with any OpenAI-compatible client (curl, SDKs, Open WebUI, Claude Code, LiteLLM, etc.)
 
-Everything runs on your machine. Model weights, logs, and SQLite state stay local.
+Everything runs on your machine. Model weights, logs, and SQLite/PostgreSQL state stay local.
 
 ---
 
@@ -33,7 +35,12 @@ Everything runs on your machine. Model weights, logs, and SQLite state stay loca
 | **Smart detection** | Auto-detect text, multimodal, embedding, reranker, and image-generation capabilities |
 | **Reliable lifecycle** | Process-group shutdown + port verification on stop (no ghost listeners) |
 | **Benchmarks** | Performance (llmbench), quality (platform + optional industry), complete runs |
-| **Auth** | Django session login to protect the dashboard |
+| **Nadir Gateway** | Single `:11380/v1` entry; alias routing; `on_demand` wake + idle offload; global concurrency queue with **interactive-before-batch** priority |
+| **Batch API** | OpenAI-compatible `/v1/files` + `/v1/batches` for chat JSONL; streaming upload; incremental output; auto worker |
+| **Gateway façades** | Anthropic Messages, OpenAI Responses, Ollama `/api/*` on the same port as chat |
+| **MCP server** | Streamable HTTP tools to list/start/stop instances (`run_mcp` / `serve --with-mcp`) |
+| **Mac-fit & memory** | Download RAM estimates; layer-aware footprint before load; LRU eviction of unpinned `on_demand` instances |
+| **Auth** | Django session login for the dashboard; optional gateway API key (required off loopback) |
 
 ---
 
@@ -79,7 +86,8 @@ flowchart TB
 
     subgraph Gateway["Nadir Gateway :11380"]
         Router[alias router]
-        Proxy["/v1 proxy (MLX-22+)"]
+        Proxy["/v1 proxy + façades"]
+        Batch["/v1/files + /v1/batches"]
     end
 
     subgraph Orchestrator["orchestrator/"]
@@ -107,6 +115,8 @@ flowchart TB
     Gateway --> Router
     Router --> DB
     Gateway --> Proxy
+    Gateway --> Batch
+    Batch --> Proxy
     Proxy --> Instances
     Dashboard --> SM
     Search --> DL
@@ -117,14 +127,15 @@ flowchart TB
     Benchmark --> Instances
 ```
 
-See [Nadir Gateway](docs/usage/nadir-gateway.md) for the control-plane vs data-plane split. Ollama-like wake on demand and idle offload: [instance lifecycle](docs/usage/instance-lifecycle.md). Client recipes (Open WebUI, Continue, Cursor, Claude Code, n8n, LiteLLM): [integration recipes](docs/usage/integration-recipes.md).
+See [Nadir Gateway](docs/usage/nadir-gateway.md) for the control-plane vs data-plane split. Ollama-like wake on demand and idle offload: [instance lifecycle](docs/usage/instance-lifecycle.md). Client recipes (Open WebUI, Continue, Cursor, Claude Code, n8n, LiteLLM): [integration recipes](docs/usage/integration-recipes.md). Overnight chat evals: local OpenAI [`/v1/files` + `/v1/batches`](docs/usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api) (JSONL on disk, auto worker with `serve`).
 
 **Port allocation**
 
 | Port | Service |
 |------|---------|
 | `8000` | Django admin UI |
-| `11380` | Nadir Gateway (`NADIR_GATEWAY_PORT`) |
+| `11380` | Nadir Gateway (`NADIR_GATEWAY_PORT`) — OpenAI, Anthropic, Ollama, batch |
+| `11381` | Nadir MCP (`NADIR_MCP_PORT`, optional — `run_mcp`) |
 | `11400–11500` | MLX inference instances (auto-assigned) |
 
 ---
@@ -233,13 +244,16 @@ curl http://127.0.0.1:11380/v1/chat/completions \
   }'
 ```
 
-Environment variables (see `.env.example`):
+Environment variables (see `.env.example` and **[docs/configuration.md](docs/configuration.md)** for the full list):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NADIR_GATEWAY_HOST` | `127.0.0.1` | Gateway bind address |
 | `NADIR_GATEWAY_PORT` | `11380` | Gateway port (must stay outside `11400–11500`) |
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
+| `NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL` | `8` | Cross-instance cap; interactive traffic preferred over `X-Nadir-Priority: batch` |
+| `NADIR_GATEWAY_BATCH_MAX_SHARE` | `0.5` | Max share of the global pool for batch-priority requests |
+| `NADIR_GATEWAY_BATCH_WORKER_ENABLED` | `true` | Drain `/v1/batches` inside `serve` / `run_gateway` |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for an `on_demand` instance to become healthy after wake |
 | `NADIR_GATEWAY_WAKE_POLL_INTERVAL_SECONDS` | `1` | Health poll interval during wake |
@@ -247,13 +261,14 @@ Environment variables (see `.env.example`):
 | `NADIR_IDLE_CHECK_INTERVAL_SECONDS` | `60` | How often idle candidates are evaluated |
 | `NADIR_LRU_EVICTION_ENABLED` | `true` | Evict LRU `on_demand` instances when memory is tight before a load |
 | `NADIR_MEMORY_RESERVE_GB` | `4` | Free-memory headroom (GiB) kept for LRU decisions |
+| `NADIR_BATCH_RETENTION_DAYS` | `30` | Purge terminal batch jobs; shared input files kept while referenced |
 
-### 9. Download and launch a model
+### 7. Download and launch a model
 
 1. Go to **Search** and find a model (e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit`)
 2. Click **Download** — files land in `./models/<model-name>/`
-3. On the **Dashboard**, pick a launch mode and click **Start**
-4. Point your client at `http://127.0.0.1:<port>/v1`
+3. On the **Dashboard**, pick a launch mode, set the **gateway alias**, and click **Start**
+4. Point your client at **`http://127.0.0.1:11380/v1`** with that alias (direct `:114xx` ports are for debugging only)
 
 ---
 
@@ -357,7 +372,7 @@ curl http://127.0.0.1:11442/v1/audio/transcriptions \
 
 **Recommended:** point clients at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
 
-See **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)** for curl samples per launch mode, environment variables, and troubleshooting (`404`, `503`, wrong route for mode).
+See **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)** for curl samples per launch mode, environment variables, and troubleshooting (`404`, `503`, wrong route for mode). For bulk JSONL evals, see the **[batch runbook](docs/usage/gateway-runbooks/batch.md)** and **[integration recipes](docs/usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api)** (`/v1/files`, `/v1/batches`, streaming upload, incremental progress).
 
 #### Direct instance port (debugging)
 
@@ -382,7 +397,10 @@ nadir-mlx/
 │   ├── stt_server.py         # OpenAI-compatible STT (Whisper / mlx-audio)
 │   ├── image_model_loader.py # mflux model routing & inference helpers
 │   ├── mlx_*_launcher.py     # Subprocess entrypoints
-│   ├── gateway/              # Nadir Gateway (FastAPI proxy)
+│   ├── batch_services.py     # OpenAI batch jobs + file metadata
+│   ├── batch_file_store.py   # Local JSONL blob store
+│   ├── gateway_batch_worker.py # Auto batch worker (run_gateway lifespan)
+│   ├── gateway/              # Nadir Gateway (FastAPI: OpenAI, Anthropic, Ollama, batch)
 │   ├── benchmark_service.py  # llmbenchmark integration
 │   └── vendor/llmbench.py    # Vendored benchmark CLI
 ├── models/                   # Downloaded weights (gitignored)
@@ -468,7 +486,7 @@ Example workflow:
 
 ## Privacy & security
 
-- **No telemetry** — Nadir MLX does not phone home
+- **No outbound telemetry** — Nadir MLX does not phone home or use cloud analytics (optional **local** gateway TTFT / cache metrics stay in your DB and Servers UI only)
 - **Local processing** — inference never leaves your Mac (except Hugging Face downloads you trigger)
 - **Session auth** — protect the dashboard with Django users
 - **Loopback by default** — gateway and MLX instances bind to `127.0.0.1`; prefer the gateway for clients and keep inference ports private
@@ -506,6 +524,9 @@ Check `./logs/` and the Downloads section on the dashboard. Incomplete folders i
 - [ ] Hugging Face search filters for embedding / rerank models
 - [x] Health checks and auto-restart for crashed instances
 - [x] API key auth on the Nadir Gateway (optional on loopback; required off-loopback)
+- [x] Local OpenAI `/v1/files` + `/v1/batches` for chat JSONL (MLX-132 / MLX-133)
+- [x] Gateway TTFT / prompt-cache telemetry + Anthropic `cache_read_input_tokens` parity (MLX-122 / MLX-134)
+- [ ] Batch resume/checkpoint, embeddings batch endpoint, batch webhooks (see [ADR 008](adr/008-files-batches-spike.md))
 - [ ] Native auth on third-party mlx-lm / mlx-vlm servers (today: loopback + gateway only)
 
 ---

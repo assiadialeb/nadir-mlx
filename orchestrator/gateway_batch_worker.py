@@ -11,6 +11,7 @@ from django.conf import settings
 from orchestrator.batch_services import (
     process_pending_batch_jobs,
     purge_expired_batch_jobs,
+    reconcile_stale_in_progress_jobs,
 )
 from orchestrator.env_utils import env_float
 from orchestrator.instance_health import should_skip_watchdog
@@ -20,13 +21,21 @@ logger = logging.getLogger(__name__)
 
 _worker_started = False
 _worker_lock = threading.Lock()
+_reconcile_stale_pending = True
 
 
 def run_gateway_batch_worker_cycle() -> None:
     """Process one validating batch if the cross-process worker lock is free."""
+    global _reconcile_stale_pending
     try:
         with gateway_batch_worker_lock(blocking=False):
-            purge_expired_batch_jobs()
+            if _reconcile_stale_pending:
+                reconcile_stale_in_progress_jobs()
+                _reconcile_stale_pending = False
+            try:
+                purge_expired_batch_jobs()
+            except Exception:
+                logger.exception("Batch retention purge failed")
             process_pending_batch_jobs(max_jobs=1)
     except BatchWorkerBusy:
         return

@@ -11,6 +11,7 @@ Nadir MLX is a Django control plane that downloads Hugging Face models, launches
 - **Monitor** live logs and instance status from the browser
 - **Benchmark** throughput, latency, and optional quality suites
 - **Integrate** via the **Nadir Gateway** (`:11380/v1`) with any OpenAI-compatible client
+- **Run overnight chat evals** with local OpenAI **`/v1/files`** + **`/v1/batches`** (JSONL stays on disk; auto worker in `serve` / `run_gateway`)
 
 Everything runs on your machine. Model weights, logs, and local database state stay on the Mac.
 
@@ -64,6 +65,7 @@ flowchart TB
 | Install on macOS | [Installation](installation.md) |
 | Environment variables | [Configuration](configuration.md) |
 | Gateway & curl examples | [Nadir Gateway](usage/nadir-gateway.md) |
+| Bulk JSONL / batch jobs | [Batch runbook](usage/gateway-runbooks/batch.md) · [Integration recipes](usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api) |
 | Client integrations | [Integration recipes](usage/integration-recipes.md) |
 | IDE MCP (start/stop) | [MCP server](usage/mcp.md) |
 | Gateway security | [Nadir Gateway — Security](usage/nadir-gateway.md#security) |

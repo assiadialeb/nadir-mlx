@@ -1,8 +1,8 @@
 # ADR 008: OpenAI `/v1/files` + `/v1/batches` — local overnight batch (spike)
 
 **Date:** 2026-11-04  
-**Status:** Accepted (conditional go — phased MVP; not in current sprint delivery)  
-**Ticket:** MLX-117
+**Status:** Accepted — **MVP delivered** (MLX-132, MLX-133, MLX-134 follow-ups; docs in `docs/usage/nadir-gateway.md`)  
+**Ticket:** MLX-117 (implementation: MLX-132 / MLX-133)
 
 ## Context
 
@@ -90,7 +90,7 @@ Out of scope for MVP:
 
 1. **Product**: **Conditional go** on Option B — local `purpose=batch` Files + Batches for **chat completions** only.
 2. **Timing**: **Not** a current-sprint delivery item after façades/security/MCP. Schedule as a dedicated story when overnight bulk jobs are a concrete customer/operator need (or when Spectra/GitPulse ask for private eval batches).
-3. **Until then**: operators use scripts/`xargs`/cron against `:11380`, or LiteLLM for multi-key LAN — documented as the interim path.
+3. **Delivered (2026-11)**: local `purpose=batch` Files + chat Batches with streaming upload, auto worker, incremental JSONL output, OpenAI error shape. Scripts/cron remain valid for one-off bulk chat without the Batch API.
 4. **No-go** for Assistants / fine-tune file purposes and full cloud Batch parity.
 
 ## Consequences

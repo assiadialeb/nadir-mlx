@@ -1096,7 +1096,7 @@ def _settle_orphan_loading(instance: InferenceInstance) -> str:
     if _detect_log_failure(_instance_log_path(instance)):
         try:
             stop_instance(instance, blocking=False)
-        except InstanceSlotBusy:
+        except (InstanceSlotBusy, RuntimeError):
             return instance.status
         _persist_stop_outcome(instance, "FAILED")
         return "FAILED"

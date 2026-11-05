@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: November 2026 — local `/v1/files` + `/v1/batches` MVP (MLX-132).
+Last updated: November 2026 — batch v2 (MLX-133), Anthropic cache usage (MLX-134), TTFT telemetry + global scheduler (MLX-122 / MLX-123).
 
 ## Cross-cutting (all modes)
 
@@ -17,6 +17,9 @@ Last updated: November 2026 — local `/v1/files` + `/v1/batches` MVP (MLX-132).
 | In-memory alias cache (avoid DB on every hit) | ✅ (`NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS`, default 20s) |
 | Wake / idle stop for instances | ✅ [runbook](instance-lifecycle.md) |
 | Activity heartbeat + LRU eviction grace | ✅ mid-request `last_used_at` (~15s); grace ≥ `2 ×` heartbeat |
+| Global upstream cap + batch share | ✅ `NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL` + `X-Nadir-Priority: batch` / `NADIR_GATEWAY_BATCH_MAX_SHARE` |
+| Gateway TTFT / cache telemetry | ✅ `NADIR_GATEWAY_TELEMETRY_*`; Servers UI + DB retain; usage-only SSE stripped when client did not opt in |
+| Anthropic prompt cache usage fields | ✅ `cache_read_input_tokens`; `input_tokens` = non-cached (JSON + stream `message_delta`) |
 | API key auth on gateway | ✅ optional on loopback; required for non-loopback binds via `NADIR_GATEWAY_API_KEY` |
 | Trusted Host / Origin guard | ✅ `TrustedHostMiddleware` + reject unknown `Origin`; JSON `Content-Type` required (or absent) |
 | Body size limit | ✅ `NADIR_GATEWAY_MAX_BODY_MB` (default 50) |
@@ -30,8 +33,10 @@ Last updated: November 2026 — local `/v1/files` + `/v1/batches` MVP (MLX-132).
 | Ollama façade | ✅ `/`, `/api/version`, `/api/tags`, `/api/ps`, `/api/show`, `/api/chat`, `/api/generate`, `/api/embed` + legacy `/api/embeddings` |
 | Multi-worker uvicorn | ❌ single process by default |
 | `/v1/files` (`purpose=batch`) | ✅ streaming upload / list / delete / content; `NADIR_BATCH_FILE_MAX_MB` (default 200) |
-| `/v1/batches` (chat JSONL) | ✅ create / get / list / cancel; auto worker in `run_gateway` + `process_gateway_batches`; incremental `request_counts` + output/error JSONL |
-| OpenAI Batch parity | ✅ line `id`, `errors` list shape, separate `error_file`; ⏸️ resume/checkpoint, embeddings batch, webhooks — [ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md) |
+| `/v1/batches` (chat JSONL) | ✅ create / get / list / cancel; auto worker in `run_gateway` + `process_gateway_batches`; incremental `request_counts` + append output/error JSONL |
+| Batch retention purge | ✅ terminal jobs + unreferenced blobs after `NADIR_BATCH_RETENTION_DAYS`; shared `input_file_id` safe across jobs |
+| Stale `in_progress` after restart | ✅ first worker cycle reconciles to `failed` (fail-closed); CLI `--reconcile-stale` |
+| OpenAI Batch parity | ✅ line `id`, `errors` list shape, separate `error_file`; ⏸️ resume/checkpoint, embeddings batch, webhooks, orphan uploads — [ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md) |
 
 ## TEXT
 
@@ -145,4 +150,4 @@ Last updated: November 2026 — local `/v1/files` + `/v1/batches` MVP (MLX-132).
 ## References
 
 - Integration guide: [nadir-gateway.md](nadir-gateway.md)
-- E2E runbooks: see [Nadir Gateway — Per-mode runbooks](nadir-gateway.md#per-mode-runbooks-e2e-validation)
+- E2E runbooks: see [Nadir Gateway — Per-mode runbooks](nadir-gateway.md#per-mode-runbooks-e2e-validation) (incl. [batch.md](gateway-runbooks/batch.md))

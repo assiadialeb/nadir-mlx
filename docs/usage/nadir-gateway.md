@@ -442,13 +442,15 @@ Privacy-first overnight eval: upload JSONL, create a batch, let the gateway work
 
 1. `POST /v1/files` with `purpose=batch` and a JSONL file (streamed to disk; OpenAI line shape: `custom_id`, `url`, `body`).
 2. `POST /v1/batches` with `input_file_id` and `endpoint: /v1/chat/completions`.
-3. With `run_gateway` / `serve`, the **batch worker** polls every `NADIR_GATEWAY_BATCH_POLL_SECONDS` (default 15s) and holds the same lock as `process_gateway_batches`. Optional manual run: `python manage.py process_gateway_batches --max-jobs 1` (`--reconcile-stale` only when recovering from a crash).
-4. Poll `GET /v1/batches/{id}` — `request_counts` updates while `in_progress`; output/error JSONL files grow line-by-line.
+3. With `run_gateway` / `serve`, the **batch worker** polls every `NADIR_GATEWAY_BATCH_POLL_SECONDS` (default 15s) and holds the same lock as `process_gateway_batches`. On the **first** cycle after gateway start, any leftover `in_progress` job is reconciled to `failed` (orphan after crash/restart). Optional manual run: `python manage.py process_gateway_batches --max-jobs 1` (`--reconcile-stale` when the auto worker is off).
+4. Poll `GET /v1/batches/{id}` — `request_counts` updates while `in_progress`; output/error JSONL files grow line-by-line (OpenAI line `id`, list-shaped `errors`, separate `error_file`).
 5. Download `GET /v1/files/{output_file_id}/content` and optional `error_file_id`.
 
-Fan-out uses `X-Nadir-Priority: batch` and shares the global scheduler with interactive traffic. Cancel sets `cancelling` and waits for in-flight lines (up to `NADIR_BATCH_LINE_TIMEOUT_SECONDS` each). Terminal jobs and blobs older than `NADIR_BATCH_RETENTION_DAYS` are purged by the worker.
+Fan-out uses `X-Nadir-Priority: batch` and shares the **global** concurrency scheduler with interactive traffic (`NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL`, `NADIR_GATEWAY_BATCH_MAX_SHARE`). Cancel sets `cancelling` and waits for in-flight lines (up to `NADIR_BATCH_LINE_TIMEOUT_SECONDS` each). Terminal jobs older than `NADIR_BATCH_RETENTION_DAYS` are purged by the worker; **shared** input/output blobs are kept until no batch job references them.
 
 Cancel while `validating` stops immediately. Cancel while `in_progress` sets `cancelling`; the worker records any line that already finished, then stops scheduling new lines. In-flight upstream calls still run until they complete or hit `NADIR_BATCH_LINE_TIMEOUT_SECONDS` (default 600s).
+
+E2E validation: [Batch runbook](gateway-runbooks/batch.md). Copy-paste client setup: [Integration recipes — Overnight bulk jobs](integration-recipes.md#overnight-bulk-jobs-openai-batch-api).
 
 ## Troubleshooting
 
@@ -467,6 +469,8 @@ Cancel while `validating` stops immediately. Cancel while `in_progress` sets `ca
 | `415` from a browser form/fetch | Wrong Content-Type | Send `Content-Type: application/json` |
 | Empty `/v1/models` | No instances registered | Create at least one server (stopped `on_demand` aliases still appear) |
 | Gateway refuses to start on LAN IP | No API key | Set `NADIR_GATEWAY_API_KEY` or bind to `127.0.0.1` |
+| Batch `failed` — input missing on disk | Retention purge vs shared file (fixed in v1.1+) or manual delete | Re-upload JSONL; avoid deleting `input_file_id` while a job still references it |
+| Batch stuck `in_progress` after gateway restart | Orphan job before auto-reconcile | Restart gateway (first worker cycle reconciles) or `process_gateway_batches --reconcile-stale` |
 
 ## Direct instance ports (debugging)
 
@@ -485,5 +489,6 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 | IMAGE | [gateway-runbooks/image.md](gateway-runbooks/image.md) |
 | TTS | [gateway-runbooks/tts.md](gateway-runbooks/tts.md) |
 | STT | [gateway-runbooks/stt.md](gateway-runbooks/stt.md) |
+| Batch (OpenAI Files + Batches) | [gateway-runbooks/batch.md](gateway-runbooks/batch.md) |
 
 See also the [API coverage matrix](nadir-gateway-coverage-matrix.md) for gaps vs the OpenAI API (streaming, audio formats, etc.).
