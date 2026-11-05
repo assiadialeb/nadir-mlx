@@ -96,7 +96,11 @@ def ensure_headroom_for_load(pending: InferenceInstance) -> int:
     if not lru_eviction_enabled():
         return 0
 
-    needed = estimate_instance_footprint_bytes(pending.model_name, pending.server_config)
+    needed = estimate_instance_footprint_bytes(
+        pending.model_name,
+        pending.server_config,
+        launch_mode=pending.launch_mode,
+    )
     with _eviction_lock:
         plan = _plan_evictions(pending, needed=needed)
 
@@ -154,6 +158,7 @@ def _plan_evictions(
         projected += estimate_instance_footprint_bytes(
             candidate.model_name,
             candidate.server_config,
+            launch_mode=candidate.launch_mode,
         )
     return {"victims": victims, "available": available}
 

@@ -31,12 +31,14 @@ def _instance(
     last_used_at,
     status: str = "RUNNING",
     pinned: bool = False,
+    launch_mode: str = "TEXT",
 ) -> MagicMock:
     row = MagicMock()
     row.pk = pk
     row.model_name = model_name
     row.port = 11400 + pk
     row.status = status
+    row.launch_mode = launch_mode
     row.last_used_at = last_used_at
     row.server_config = {
         "ops": {
