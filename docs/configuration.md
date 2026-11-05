@@ -60,6 +60,8 @@ SQLite is used when no PostgreSQL host is configured.
 | `NADIR_MEMORY_RESERVE_GB` | `4` | Keep this much free memory (GiB) when evaluating LRU eviction |
 | `NADIR_MEMORY_PLANNING_CONTEXT_TOKENS` | `8192` | Context length assumed resident when sizing KV for eviction (capped by `max_kv_size` / model max) |
 | `NADIR_MEMORY_PLANNING_PROMPT_PREFIX_TOKENS` | `4096` | Assumed shared-prefix length per prompt-cache entry when `prompt_cache_bytes` is unset |
+| `NADIR_MEMORY_PLANNING_PROMPT_CACHE_ENTRIES` | `1` | Prompt-cache slots reserved at load (cold cache is empty; full LRU grows with use) |
+| `NADIR_MEMORY_PLANNING_PARALLEL_SEQUENCES` | `2` | Concurrent sequences assumed for KV sizing (`min` with decode/gateway caps) |
 | `NADIR_GATEWAY_PUBLIC_BASE_URL` | `http://127.0.0.1:11380` | Base URL for generated image links |
 | `NADIR_GATEWAY_API_KEY` | — | Required when binding outside loopback; `Authorization: Bearer` or `X-API-Key` |
 | `NADIR_INFERENCE_API_KEY` | — | Optional auth for Nadir workers (image/stt/embedding/tts); gateway injects it upstream. mlx-lm/mlx-vlm remain loopback-only. |

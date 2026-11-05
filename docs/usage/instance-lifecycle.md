@@ -65,7 +65,7 @@ Recommendations:
     Only **unpinned** `lifecycle_mode=on_demand` instances are LRU candidates. `always_on` and `ops.pinned=true` are never stopped for memory headroom.
 
 !!! note "Memory footprint (MLX-127)"
-    Before loading a model, Nadir estimates **weights** (on-disk × 1.15) **+ active KV** (planning context × layers × KV heads × head dim × dtype) **+ prompt-cache budget** (explicit `prompt_cache_bytes`, or `prompt_cache_size` × assumed prefix KV). That total is compared to free unified memory minus `NADIR_MEMORY_RESERVE_GB`. Without the KV/cache terms, LRU fired too late and macOS swap crushed prefill/decode.
+    Before loading a model, Nadir estimates **weights** (on-disk × 1.15) **+ active KV** (layer-aware: full / sliding-window / shared KV / linear-attention state, × `min(decode_concurrency, gateway caps, NADIR_MEMORY_PLANNING_PARALLEL_SEQUENCES)`) **+ a small prompt-cache budget** (explicit `prompt_cache_bytes`, otherwise `min(prompt_cache_size, NADIR_MEMORY_PLANNING_PROMPT_CACHE_ENTRIES)` × assumed prefix KV — cold loads do not reserve the full LRU). That total is compared to free unified memory minus `NADIR_MEMORY_RESERVE_GB`.
 
 !!! warning "Advanced — `iogpu.wired_limit_mb` (dedicated Macs only)"
     mlx-lm may wire ~75% of RAM. On a **dedicated** inference Mac you can raise the wired limit (`sudo sysctl iogpu.wired_limit_mb=…`) so large models stay out of swap — this is optional, host-wide, and easy to misconfigure on a laptop that still runs a desktop session. Prefer Nadir's estimator + eviction first; only tune the sysctl when you understand the trade-off.
