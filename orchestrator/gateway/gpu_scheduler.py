@@ -208,18 +208,18 @@ class GatewayUpstreamScheduler:
                 self._remove_waiter(waiter)
                 if waiter.future.done() and not waiter.future.cancelled():
                     self._release(instance_id, instance_limit, priority)
+                    self._grant_waiters()
             raise
 
-    async def release(
+    def release(
         self,
         *,
         instance_id: int,
         instance_limit: int | None,
         priority: RequestPriority,
     ) -> None:
-        async with self._lock:
-            self._release(instance_id, instance_limit, priority)
-            self._grant_waiters()
+        self._release(instance_id, instance_limit, priority)
+        self._grant_waiters()
 
     def _can_grant(
         self,

@@ -48,7 +48,7 @@ SQLite is used when no PostgreSQL host is configured.
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
 | `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` | `16` | Max parallel upstream requests per instance (`0` = unlimited) |
 | `NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL` | `8` | Max parallel upstream requests across all instances (`0` = unlimited). Default 8 keeps interactive priority meaningful on 48 GB / M4 Max class Macs (raise for single-model throughput) |
-| `NADIR_GATEWAY_BATCH_MAX_SHARE` | `0.5` | Max fraction of each concurrency pool that `X-Nadir-Priority: batch` may hold; remaining slots stay reserved for interactive |
+| `NADIR_GATEWAY_BATCH_MAX_SHARE` | `0.5` | Max fraction of the **global** concurrency pool for `X-Nadir-Priority: batch` (per-instance caps are not batch-limited separately) |
 | `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `300` | Max wait in gateway queue |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | Alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |

@@ -46,3 +46,33 @@ class MlxLmCapabilitiesTests(SimpleTestCase):
         ):
             with patch.dict("os.environ", {"NADIR_TEXT_KV_BITS_PREVIEW": "1"}):
                 self.assertTrue(text_kv_quantization_enabled())
+
+    def test_text_kv_requires_all_related_flags(self) -> None:
+        with patch(
+            "orchestrator.mlx_lm_capabilities.mlx_lm_server_cli_flags",
+            return_value=frozenset({"kv-bits", "kv-quant-scheme"}),
+        ):
+            self.assertFalse(text_kv_quantization_enabled())
+        with patch(
+            "orchestrator.mlx_lm_capabilities.mlx_lm_server_cli_flags",
+            return_value=frozenset({"kv-bits", "kv-quant-scheme", "kv-group-size"}),
+        ):
+            self.assertTrue(text_kv_quantization_enabled())
+
+    def test_probe_failure_is_not_cached(self) -> None:
+        with patch(
+            "orchestrator.mlx_lm_capabilities.subprocess.run",
+            side_effect=TimeoutError("slow"),
+        ):
+            clear_mlx_lm_capability_cache()
+            self.assertEqual(mlx_lm_server_cli_flags(), frozenset())
+            clear_mlx_lm_capability_cache()
+            with patch(
+                "orchestrator.mlx_lm_capabilities.subprocess.run",
+                return_value=type(
+                    "R",
+                    (),
+                    {"stdout": "  --prefill-step-size N\n", "stderr": "", "returncode": 0},
+                )(),
+            ):
+                self.assertIn("prefill-step-size", mlx_lm_server_cli_flags())

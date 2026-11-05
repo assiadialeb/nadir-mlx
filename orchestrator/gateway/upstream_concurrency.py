@@ -148,7 +148,7 @@ async def upstream_concurrency_slot(target: GatewayTarget) -> AsyncIterator[None
     try:
         yield
     finally:
-        await coordinator.release(
+        coordinator.release(
             instance_id=target.instance_id,
             instance_limit=instance_limit,
             priority=priority,
