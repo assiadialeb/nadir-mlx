@@ -80,29 +80,9 @@ def list_lru_evictable_instances(*, exclude_id: int | None = None) -> list[Infer
 
 def evict_one_lru_instance(*, exclude_id: int | None = None) -> InferenceInstance | None:
     """Stop the least-recently-used evictable on_demand instance, if any."""
-    from orchestrator.server_manager import is_manual_stop_in_progress, stop_instance
-
-    candidates = list_lru_evictable_instances(exclude_id=exclude_id)
-    for instance in candidates:
-        if is_manual_stop_in_progress(instance):
-            continue
-        alias = instance_gateway_alias(instance)
-        try:
-            stop_instance(instance)
-            clear_gateway_route_cache()
-            logger.info(
-                "LRU-evicted instance %s (alias=%s) on port %s to free memory",
-                instance.model_name,
-                alias,
-                instance.port,
-            )
+    for instance in list_lru_evictable_instances(exclude_id=exclude_id):
+        if _stop_planned_victim(instance) is not None:
             return instance
-        except Exception:
-            logger.exception(
-                "LRU eviction failed for instance %s (alias=%s)",
-                instance.model_name,
-                alias,
-            )
     return None
 
 
@@ -160,14 +140,14 @@ def _plan_evictions(
         logger.debug("Skipping LRU eviction: host available memory unknown")
         return None
 
-    from orchestrator.server_manager import is_manual_stop_in_progress
+    from orchestrator.server_manager import is_stop_in_progress
 
     victims: list[InferenceInstance] = []
     projected = available
     for candidate in list_lru_evictable_instances(exclude_id=pending.pk):
         if projected >= needed or len(victims) >= _MAX_EVICTIONS_PER_LOAD:
             break
-        if is_manual_stop_in_progress(candidate):
+        if is_stop_in_progress(candidate):
             continue
         victims.append(candidate)
         _reserved_victim_ids.add(candidate.pk)
@@ -184,13 +164,20 @@ def _release_victim_reservation(instance_id: int) -> None:
 
 
 def _stop_planned_victim(instance: InferenceInstance) -> InferenceInstance | None:
-    from orchestrator.server_manager import is_manual_stop_in_progress, stop_instance
+    from orchestrator.instance_locks import InstanceSlotBusy
+    from orchestrator.server_manager import is_stop_in_progress, stop_instance
 
-    if is_manual_stop_in_progress(instance):
+    if is_stop_in_progress(instance):
         return None
     alias = instance_gateway_alias(instance)
     try:
-        stop_instance(instance)
+        # Non-blocking: the loader already holds its own slot; waiting on a
+        # victim's slot could deadlock with a symmetric eviction.
+        stop_instance(
+            instance,
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+            blocking=False,
+        )
         clear_gateway_route_cache()
         logger.info(
             "LRU-evicted instance %s (alias=%s) on port %s to free memory",
@@ -199,6 +186,8 @@ def _stop_planned_victim(instance: InferenceInstance) -> InferenceInstance | Non
             instance.port,
         )
         return instance
+    except InstanceSlotBusy:
+        return None
     except Exception:
         logger.exception(
             "LRU eviction failed for instance %s (alias=%s)",

@@ -53,14 +53,12 @@ class EnsureInstanceReadyTests(TestCase):
         self.assertEqual(target.instance_id, instance.pk)
         self.assertEqual(target.alias, "ready-chat")
 
-    @patch("orchestrator.lifecycle_services.maybe_run_load_warmup", return_value=12.0)
     @patch("orchestrator.lifecycle_services.start_instance")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
     def test_on_demand_stopped_wakes_instance(
         self,
         _mock_probe: MagicMock,
         mock_start: MagicMock,
-        mock_warmup: MagicMock,
     ) -> None:
         instance = InferenceInstance.objects.create(
             model_name="sleeping-model",
@@ -90,7 +88,6 @@ class EnsureInstanceReadyTests(TestCase):
             "TEXT",
             instance.server_config,
         )
-        mock_warmup.assert_called_once()
 
     @patch("orchestrator.lifecycle_services.start_instance")
     def test_always_on_stopped_does_not_wake(self, mock_start: MagicMock) -> None:
@@ -128,12 +125,16 @@ class EnsureInstanceReadyTests(TestCase):
         self.assertIn("manual", ctx.exception.message.lower())
         mock_start.assert_not_called()
 
+    @patch("orchestrator.lifecycle_services.is_slot_lock_held_elsewhere", return_value=True)
+    @patch("orchestrator.lifecycle_services.start_instance")
     @patch("orchestrator.lifecycle_services.time.sleep")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=False)
-    def test_loading_timeout_marks_instance_stopped(
+    def test_loading_timeout_leaves_row_to_its_starter(
         self,
         _mock_probe: MagicMock,
         _mock_sleep: MagicMock,
+        mock_start: MagicMock,
+        _mock_lock: MagicMock,
     ) -> None:
         instance = InferenceInstance.objects.create(
             model_name="slow-model",
@@ -155,7 +156,41 @@ class EnsureInstanceReadyTests(TestCase):
                 ensure_instance_ready("slow-chat")
         self.assertEqual(ctx.exception.code, "model_waking_timeout")
         instance.refresh_from_db()
-        self.assertEqual(instance.status, "STOPPED")
+        self.assertEqual(instance.status, "LOADING")
+        mock_start.assert_not_called()
+
+    @patch("orchestrator.lifecycle_services.is_instance_process", return_value=False)
+    @patch("orchestrator.lifecycle_services.is_slot_lock_held_elsewhere", return_value=False)
+    @patch("orchestrator.lifecycle_services.start_instance")
+    @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
+    def test_stale_loading_row_is_relaunched(
+        self,
+        _mock_probe: MagicMock,
+        mock_start: MagicMock,
+        _mock_lock: MagicMock,
+        _mock_identity: MagicMock,
+    ) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="orphan-model",
+            port=11416,
+            launch_mode="TEXT",
+            server_config={
+                "model_id": "orphan-chat",
+                "host": "127.0.0.1",
+                "ops": {"lifecycle_mode": LIFECYCLE_MODE_ON_DEMAND},
+            },
+            status="LOADING",
+            pid=31337,
+        )
+
+        def _mark_running(*_args: object, **_kwargs: object) -> InferenceInstance:
+            InferenceInstance.objects.filter(pk=instance.pk).update(status="RUNNING")
+            return instance
+
+        mock_start.side_effect = _mark_running
+        target = ensure_instance_ready("orphan-chat")
+        self.assertEqual(target.instance_id, instance.pk)
+        mock_start.assert_called_once()
 
     @patch("orchestrator.lifecycle_services.start_instance")
     def test_wake_lock_blocks_concurrent_wake(self, mock_start: MagicMock) -> None:

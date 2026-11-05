@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
 from orchestrator.instance_health import (
     _last_generation_probe_at,
@@ -41,7 +42,7 @@ class InstanceHealthTests(TestCase):
 
     @patch("orchestrator.instance_health.probe_http_health", return_value=True)
     @patch("orchestrator.instance_health._find_listener_pids", return_value=[123])
-    @patch("orchestrator.instance_health._is_process_alive", return_value=True)
+    @patch("orchestrator.instance_health.is_instance_process", return_value=True)
     def test_evaluate_instance_health_healthy(
         self,
         _mock_alive: MagicMock,
@@ -56,7 +57,7 @@ class InstanceHealthTests(TestCase):
     @patch("orchestrator.instance_health.probe_generation_health", return_value=False)
     @patch("orchestrator.instance_health.probe_http_health", return_value=True)
     @patch("orchestrator.instance_health._find_listener_pids", return_value=[123])
-    @patch("orchestrator.instance_health._is_process_alive", return_value=True)
+    @patch("orchestrator.instance_health.is_instance_process", return_value=True)
     def test_evaluate_instance_health_degraded_when_generation_fails(
         self,
         _mock_alive: MagicMock,
@@ -234,7 +235,8 @@ class RefreshInstanceHealthIntegrationTests(TestCase):
             launch_mode="TEXT",
             status="RUNNING",
             health_status="HEALTHY",
-            server_config={"host": "127.0.0.1", "ops": {"manual_stop_in_progress": True}},
+            server_config={"host": "127.0.0.1", "ops": {}},
+            stopping_since=timezone.now(),
         )
         with patch("orchestrator.instance_health.check_instance_status") as mock_check:
             status = refresh_instance_health(instance)

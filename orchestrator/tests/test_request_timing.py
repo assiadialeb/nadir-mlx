@@ -164,7 +164,11 @@ class RequestTimingAsyncPersistTests(IsolatedAsyncioTestCase, SimpleTestCase):
 
     @override_settings(NADIR_GATEWAY_TELEMETRY_ENABLED=True)
     async def test_finalize_from_async_persists_via_writer_queue(self) -> None:
-        with patch(
+        # Writes queued by earlier tests must drain before the patch is active.
+        flush_gateway_timing_writes()
+        # The shared writer thread may hold a DB connection from an earlier
+        # TransactionTestCase; SimpleTestCase forbids touching it.
+        with patch("django.db.close_old_connections"), patch(
             "orchestrator.gateway_telemetry_services.record_gateway_request_timing"
         ) as mock_record:
             collector = start_request_timing(
@@ -176,6 +180,10 @@ class RequestTimingAsyncPersistTests(IsolatedAsyncioTestCase, SimpleTestCase):
             )
             reset_request_timing(collector)
             flush_gateway_timing_writes()
-            mock_record.assert_called_once()
-            snap = mock_record.call_args.args[0]
-            self.assertEqual(snap.prompt_tokens, 10)
+            snapshots = [
+                call.args[0]
+                for call in mock_record.call_args_list
+                if call.args[0].request_id == collector.request_id
+            ]
+            self.assertEqual(len(snapshots), 1)
+            self.assertEqual(snapshots[0].prompt_tokens, 10)

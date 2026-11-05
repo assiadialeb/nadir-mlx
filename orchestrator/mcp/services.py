@@ -10,7 +10,7 @@ from asgiref.sync import sync_to_async
 
 from orchestrator.gateway_aliases import instance_gateway_aliases, instance_primary_gateway_alias
 from orchestrator.models import InferenceInstance
-from orchestrator.server_manager import restart_instance, stop_instance
+from orchestrator.server_manager import request_instance_stop, restart_instance
 from orchestrator.ui_selectors import list_installed_models
 
 
@@ -68,11 +68,16 @@ def stop_instance_sync(instance_id: int) -> dict[str, Any]:
             "message": "Instance already stopped.",
             "instance": _serialize_instance(instance),
         }
-    stop_instance(instance)
+    stopped_now = request_instance_stop(instance)
     instance.refresh_from_db()
+    message = (
+        f"Instance on port {instance.port} stopped."
+        if stopped_now
+        else f"Stop queued for port {instance.port}; a start/stop is in progress."
+    )
     return {
         "ok": True,
-        "message": f"Instance on port {instance.port} stopped.",
+        "message": message,
         "instance": _serialize_instance(instance),
     }
 

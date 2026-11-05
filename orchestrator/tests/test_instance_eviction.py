@@ -14,6 +14,7 @@ from orchestrator.instance_eviction import (
     evict_one_lru_instance,
     list_lru_evictable_instances,
 )
+from orchestrator.models import InferenceInstance
 from orchestrator.memory_pressure import (
     estimate_instance_footprint_bytes,
     host_available_bytes,
@@ -123,7 +124,7 @@ class InstanceEvictionTests(SimpleTestCase):
         self.assertEqual(eviction_grace_seconds(), 30)
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.server_manager.is_stop_in_progress", return_value=False)
     @patch("orchestrator.instance_eviction._stop_planned_victim")
     @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
     @patch("orchestrator.instance_eviction.host_available_bytes", return_value=10)
@@ -168,7 +169,7 @@ class InstanceEvictionTests(SimpleTestCase):
         self.assertNotIn(7, eviction_mod._reserved_victim_ids)
 
     @patch("orchestrator.instance_eviction._stop_planned_victim")
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", side_effect=[True, False])
+    @patch("orchestrator.server_manager.is_stop_in_progress", side_effect=[True, False])
     @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
     @patch("orchestrator.instance_eviction.host_available_bytes", return_value=10)
     @patch(
@@ -199,7 +200,7 @@ class InstanceEvictionTests(SimpleTestCase):
         self.assertEqual(ensure_headroom_for_load(pending), 1)
         self.assertEqual(mock_stop.call_args[0][0].model_name, "ok")
 
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=True)
+    @patch("orchestrator.server_manager.is_stop_in_progress", return_value=True)
     def test_stop_planned_victim_skips_manual(self, _mock_manual: MagicMock) -> None:
         from orchestrator.instance_eviction import _stop_planned_victim
 
@@ -212,7 +213,7 @@ class InstanceEvictionTests(SimpleTestCase):
         self.assertIsNone(_stop_planned_victim(victim))
 
     @patch("orchestrator.server_manager.stop_instance", side_effect=RuntimeError("boom"))
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.server_manager.is_stop_in_progress", return_value=False)
     @patch("orchestrator.instance_eviction.instance_gateway_alias", return_value="x")
     def test_stop_planned_victim_handles_failure(
         self,
@@ -250,7 +251,7 @@ class InstanceEvictionTests(SimpleTestCase):
         ordered = list_lru_evictable_instances()
         self.assertEqual([row.model_name for row in ordered], ["cold"])
 
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.server_manager.is_stop_in_progress", return_value=False)
     @patch("orchestrator.server_manager.stop_instance")
     @patch("orchestrator.instance_eviction.clear_gateway_route_cache")
     @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
@@ -270,10 +271,14 @@ class InstanceEvictionTests(SimpleTestCase):
         mock_list.return_value = [victim]
         stopped = evict_one_lru_instance()
         self.assertIs(stopped, victim)
-        mock_stop.assert_called_once_with(victim)
+        mock_stop.assert_called_once_with(
+            victim,
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+            blocking=False,
+        )
 
     @patch(
-        "orchestrator.server_manager.is_manual_stop_in_progress",
+        "orchestrator.server_manager.is_stop_in_progress",
         side_effect=[True, False, False],
     )
     @patch("orchestrator.server_manager.stop_instance", side_effect=[RuntimeError("boom"), None])
@@ -296,7 +301,7 @@ class InstanceEvictionTests(SimpleTestCase):
         self.assertEqual(mock_stop.call_count, 2)
         mock_cache.assert_called_once()
 
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.server_manager.is_stop_in_progress", return_value=False)
     @patch("orchestrator.server_manager.stop_instance", side_effect=RuntimeError("all failed"))
     @patch("orchestrator.instance_eviction.clear_gateway_route_cache")
     @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
@@ -314,7 +319,7 @@ class InstanceEvictionTests(SimpleTestCase):
         mock_cache.assert_not_called()
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.server_manager.is_stop_in_progress", return_value=False)
     @patch("orchestrator.instance_eviction._stop_planned_victim")
     @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
     @patch("orchestrator.instance_eviction.host_available_bytes")
@@ -370,7 +375,7 @@ class InstanceEvictionTests(SimpleTestCase):
         self.assertEqual(ensure_headroom_for_load(pending), 0)
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.server_manager.is_stop_in_progress", return_value=False)
     @patch("orchestrator.instance_eviction._stop_planned_victim")
     @patch("orchestrator.instance_eviction.list_lru_evictable_instances", return_value=[])
     @patch("orchestrator.instance_eviction.host_available_bytes", return_value=10)
@@ -398,7 +403,7 @@ class InstanceEvictionTests(SimpleTestCase):
         mock_stop.assert_not_called()
 
     @patch.dict("os.environ", {"NADIR_LRU_EVICTION_ENABLED": "true"}, clear=False)
-    @patch("orchestrator.server_manager.is_manual_stop_in_progress", return_value=False)
+    @patch("orchestrator.server_manager.is_stop_in_progress", return_value=False)
     @patch("orchestrator.instance_eviction._stop_planned_victim")
     @patch("orchestrator.instance_eviction.list_lru_evictable_instances")
     @patch("orchestrator.instance_eviction.host_available_bytes")

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import random
 import re
@@ -6,6 +7,7 @@ import socket
 import subprocess
 import signal
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -15,6 +17,7 @@ from django.utils import timezone
 from orchestrator.gateway.route_cache import clear_gateway_route_cache
 
 from .gateway_aliases import validate_instance_gateway_aliases
+from .instance_locks import instance_slot_lock, is_slot_lock_held_elsewhere
 from .models import InferenceInstance
 from .server_config_schema import (
     build_default_server_config,
@@ -45,6 +48,29 @@ from .security_utils import (
 
 LaunchMode = Literal["TEXT", "MULTIMODAL", "EMBEDDING", "RERANKER", "IMAGE", "TTS", "STT"]
 _REUSABLE_INSTANCE_STATUSES = ("STOPPED", "FAILED")
+_ACTIVE_INSTANCE_STATUSES = ("LOADING", "RUNNING")
+_INSTANCE_COMMAND_MARKER = "orchestrator."
+_READY_POLL_SECONDS = 0.5
+# A stop whose actor died (Ctrl+C, SIGKILL) must not freeze the instance forever.
+_STOP_IN_PROGRESS_STALE_SECONDS = 60.0
+
+logger = logging.getLogger(__name__)
+
+
+class InstanceStartCancelled(RuntimeError):
+    """A stop was requested while the instance was loading."""
+
+
+@dataclass(frozen=True)
+class InstanceLaunchPlan:
+    """Validated launch parameters; the DB row is already LOADING / desired running."""
+
+    instance_id: int
+    port: int
+    model_path: str
+    launch_mode: LaunchMode
+    requested_model_name: str
+    already_active: bool = False
 
 
 def default_server_host() -> str:
@@ -53,15 +79,11 @@ def default_server_host() -> str:
 
 
 DEFAULT_SERVER_HOST = "127.0.0.1"
-STARTUP_WAIT_SECONDS = {
-    "TEXT": 2,
-    "MULTIMODAL": 8,
-    "EMBEDDING": 5,
-    "RERANKER": 8,
-    "IMAGE": 25,
-    "TTS": 15,
-    "STT": 20,
-}
+
+
+def instance_ready_timeout_seconds() -> float:
+    """Max wait for /health after spawn before a start is declared FAILED."""
+    return float(getattr(settings, "MLX_INSTANCE_READY_TIMEOUT_SECONDS", 300.0))
 
 _LOG_FAILURE_PATTERNS = (
     re.compile(r"ValueError: Model type .+ not supported"),
@@ -154,7 +176,8 @@ def _find_listener_pids(port: int) -> list[int]:
 def _find_orchestrator_launcher_pids(port: int) -> list[int]:
     """Return PIDs for orchestrator launcher modules bound to a port."""
     safe_port = validated_launch_port(port)
-    pattern = f"orchestrator\\.mlx_.*launcher.*--port {safe_port}"
+    # Anchored port token: "--port 1145" must not match "--port 11454".
+    pattern = f"orchestrator\\.[a-z_]+ .*--port {safe_port}( |$)"
     try:
         result = subprocess.run(
             ["pgrep", "-f", pattern],
@@ -186,6 +209,42 @@ def _is_process_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def _process_command(pid: int) -> str:
+    """Return the full command line of a PID, or an empty string."""
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(int(pid)), "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _command_matches_instance_port(command: str, port: int) -> bool:
+    if _INSTANCE_COMMAND_MARKER not in command:
+        return False
+    tokens = command.split()
+    return any(
+        token == "--port" and tokens[index + 1] == str(port)
+        for index, token in enumerate(tokens[:-1])
+    )
+
+
+def is_instance_process(pid: int | None, port: int) -> bool:
+    """Return True only for a live orchestrator launcher bound to ``port``.
+
+    Stored PIDs survive reboots and crashes and may be recycled by unrelated
+    programs; never signal or trust a PID without checking its command line.
+    """
+    if not pid or not _is_process_alive(pid):
+        return False
+    return _command_matches_instance_port(_process_command(pid), port)
 
 
 def _find_child_pids(parent_pid: int) -> list[int]:
@@ -225,13 +284,27 @@ def _collect_descendant_pids(root_pid: int) -> set[int]:
     return collected
 
 
+def _owned_port_pids(port: int, *, extra_root: int | None = None) -> set[int]:
+    """Return launcher trees and listeners on ``port`` that belong to Nadir.
+
+    Foreign listeners (not an orchestrator launcher, not a descendant of one)
+    are never returned, so stop/start cannot kill unrelated programs.
+    """
+    roots = set(_find_orchestrator_launcher_pids(port))
+    if extra_root and is_instance_process(extra_root, port):
+        roots.add(extra_root)
+    owned: set[int] = set()
+    for root in roots:
+        owned.update(_collect_descendant_pids(root))
+    for pid in _find_listener_pids(port):
+        if pid in owned or is_instance_process(pid, port):
+            owned.add(pid)
+    return {pid for pid in owned if pid > 0}
+
+
 def _collect_stop_targets(instance: InferenceInstance) -> set[int]:
     """Gather every PID that should be stopped for an inference instance."""
-    targets = set(_find_orchestrator_launcher_pids(instance.port))
-    targets.update(_find_listener_pids(instance.port))
-    if instance.pid:
-        targets.update(_collect_descendant_pids(instance.pid))
-    return {pid for pid in targets if pid > 0}
+    return _owned_port_pids(instance.port, extra_root=instance.pid)
 
 
 def _force_stop_pids(pids: set[int], grace_seconds: float = 2.0) -> set[int]:
@@ -258,9 +331,7 @@ def _force_stop_pids(pids: set[int], grace_seconds: float = 2.0) -> set[int]:
 
 def _terminate_launchers_on_port(port: int) -> None:
     """Stop orchestrator launcher processes and free the TCP port."""
-    targets = set(_find_orchestrator_launcher_pids(port))
-    targets.update(_find_listener_pids(port))
-    survivors = _force_stop_pids(targets, grace_seconds=2.0)
+    survivors = _force_stop_pids(_owned_port_pids(port), grace_seconds=2.0)
 
     if survivors:
         for pid in survivors:
@@ -599,53 +670,85 @@ def _get_launch_env(
     return env
 
 
-def _find_reusable_instance(model_name: str, port: int) -> InferenceInstance | None:
-    """Return a stopped or failed instance row that can be relaunched on the same slot."""
-    return (
-        InferenceInstance.objects.filter(
-            model_name=model_name,
-            port=port,
-            status__in=_REUSABLE_INSTANCE_STATUSES,
-        )
-        .order_by("-created_at")
-        .first()
+def _find_active_instance(model_name: str, port: int) -> InferenceInstance | None:
+    """Return a LOADING/RUNNING row for this slot whose process is really alive."""
+    rows = InferenceInstance.objects.filter(
+        model_name=model_name,
+        port=port,
+        status__in=_ACTIVE_INSTANCE_STATUSES,
     )
+    for row in rows:
+        if is_instance_process(row.pid, port):
+            return row
+    return None
+
+
+def _find_reusable_instance(model_name: str, port: int) -> InferenceInstance | None:
+    """Return a stopped, failed, or stale LOADING row that can be relaunched on this slot."""
+    rows = InferenceInstance.objects.filter(model_name=model_name, port=port).order_by(
+        "-created_at"
+    )
+    for row in rows:
+        if row.status in _REUSABLE_INSTANCE_STATUSES:
+            return row
+        if row.status == "LOADING" and not is_instance_process(row.pid, port):
+            return row
+    return None
+
+
+def _ensure_port_not_owned_by_other_instance(port: int, instance_id: int | None) -> None:
+    """Refuse to launch over another live instance (start would kill its process)."""
+    others = InferenceInstance.objects.filter(
+        port=port,
+        status__in=_ACTIVE_INSTANCE_STATUSES,
+    ).exclude(pk=instance_id)
+    for other in others:
+        if is_instance_process(other.pid, port):
+            raise ValueError(
+                f"Port {port} is already used by running instance '{other.model_name}'."
+            )
 
 
 def _get_or_create_instance(
+    reusable: InferenceInstance | None,
+    *,
     model_name: str,
     port: int,
     launch_mode: LaunchMode,
     server_config: dict[str, Any],
+    mark_desired_running: bool,
 ) -> InferenceInstance:
-    existing = _find_reusable_instance(model_name, port)
-    if existing:
-        existing.status = "LOADING"
-        existing.launch_mode = launch_mode
-        existing.server_config = server_config
-        existing.pid = None
-        existing.stopped_at = None
-        existing.save(update_fields=["status", "launch_mode", "server_config", "pid", "stopped_at"])
-        return existing
+    if reusable is None:
+        return InferenceInstance.objects.create(
+            model_name=model_name,
+            port=port,
+            launch_mode=launch_mode,
+            server_config=server_config,
+            status="LOADING",
+        )
 
-    return InferenceInstance.objects.create(
-        model_name=model_name,
-        port=port,
-        launch_mode=launch_mode,
-        server_config=server_config,
-        status="LOADING",
-    )
+    reusable.status = "LOADING"
+    reusable.launch_mode = launch_mode
+    reusable.server_config = server_config
+    reusable.pid = None
+    reusable.stopped_at = None
+    reusable.stopping_since = None
+    update_fields = [
+        "status",
+        "launch_mode",
+        "server_config",
+        "pid",
+        "stopped_at",
+        "stopping_since",
+    ]
+    if mark_desired_running:
+        reusable.desired_state = InferenceInstance.DESIRED_STATE_RUNNING
+        update_fields.append("desired_state")
+    reusable.save(update_fields=update_fields)
+    return reusable
 
 
-def start_instance(
-    model_name: str,
-    port: Optional[int] = None,
-    launch_mode: LaunchMode = "TEXT",
-    server_config: dict[str, Any] | None = None,
-) -> InferenceInstance:
-    """Launch an inference server in the background."""
-    launch_mode = parse_launch_mode(launch_mode)
-    safe_model_name = validate_model_folder_name(model_name)
+def _validated_model_path(safe_model_name: str, launch_mode: LaunchMode) -> str:
     model_path = str(resolve_model_dir(safe_model_name))
     if not os.path.isdir(model_path):
         raise ValueError(f"Model folder '{safe_model_name}' was not found in ./models.")
@@ -653,81 +756,226 @@ def start_instance(
         raise ValueError(
             f"Model '{safe_model_name}' is incomplete. Wait for the download to finish."
         )
-
     _prepare_model_for_launch(model_path, launch_mode)
+    return model_path
 
-    if not port:
-        port = get_free_port()
-    else:
-        port = validated_launch_port(int(port))
 
-    reusable = _find_reusable_instance(safe_model_name, port)
-    normalized_config = _resolve_server_config(
-        launch_mode,
-        server_config,
-        safe_model_name,
-        exclude_instance_id=reusable.pk if reusable else None,
+def prepare_instance_launch(
+    model_name: str,
+    port: Optional[int] = None,
+    launch_mode: LaunchMode = "TEXT",
+    server_config: dict[str, Any] | None = None,
+    *,
+    wait_for_slot: bool = True,
+    mark_desired_running: bool = True,
+) -> InstanceLaunchPlan:
+    """Validate a launch and reserve its DB row (LOADING) under the slot lock.
+
+    Raises:
+        ValueError: invalid model, config, or port owned by another instance.
+        InstanceSlotBusy: ``wait_for_slot=False`` and another actor holds the slot.
+    """
+    launch_mode = parse_launch_mode(launch_mode)
+    safe_model_name = validate_model_folder_name(model_name)
+    model_path = _validated_model_path(safe_model_name, launch_mode)
+    resolved_port = validated_launch_port(int(port)) if port else get_free_port()
+
+    with instance_slot_lock(resolved_port, blocking=wait_for_slot):
+        active = _find_active_instance(safe_model_name, resolved_port)
+        if active is not None:
+            return InstanceLaunchPlan(
+                instance_id=active.pk,
+                port=resolved_port,
+                model_path=model_path,
+                launch_mode=launch_mode,
+                requested_model_name=model_name,
+                already_active=True,
+            )
+        reusable = _find_reusable_instance(safe_model_name, resolved_port)
+        _ensure_port_not_owned_by_other_instance(
+            resolved_port, reusable.pk if reusable else None
+        )
+        normalized_config = _resolve_server_config(
+            launch_mode,
+            server_config,
+            safe_model_name,
+            exclude_instance_id=reusable.pk if reusable else None,
+        )
+        instance = _get_or_create_instance(
+            reusable,
+            model_name=safe_model_name,
+            port=resolved_port,
+            launch_mode=launch_mode,
+            server_config=normalized_config,
+            mark_desired_running=mark_desired_running,
+        )
+    return InstanceLaunchPlan(
+        instance_id=instance.pk,
+        port=resolved_port,
+        model_path=model_path,
+        launch_mode=launch_mode,
+        requested_model_name=model_name,
     )
 
-    _terminate_launchers_on_port(port)
-    if not is_port_free(port):
-        raise ValueError(f"Port {port} is already in use.")
+
+def launch_prepared_instance(
+    plan: InstanceLaunchPlan,
+    *,
+    wait_for_slot: bool = True,
+) -> InferenceInstance:
+    """Spawn the process, wait for /health and warmup, then mark RUNNING.
+
+    Idempotent: returns the row untouched when its process is already alive.
+    """
+    with instance_slot_lock(plan.port, blocking=wait_for_slot):
+        instance = InferenceInstance.objects.get(pk=plan.instance_id)
+        if instance.status in _ACTIVE_INSTANCE_STATUSES and is_instance_process(
+            instance.pid, plan.port
+        ):
+            return instance
+        if instance.desired_state == InferenceInstance.DESIRED_STATE_STOPPED:
+            _persist_stop_outcome(instance, "STOPPED")
+            raise InstanceStartCancelled("Start cancelled: a stop was requested.")
+        return _launch_locked(instance, plan)
+
+
+def start_instance(
+    model_name: str,
+    port: Optional[int] = None,
+    launch_mode: LaunchMode = "TEXT",
+    server_config: dict[str, Any] | None = None,
+    *,
+    wait_for_slot: bool = True,
+) -> InferenceInstance:
+    """Launch an inference server and return once it is RUNNING (healthy and warm)."""
+    plan = prepare_instance_launch(
+        model_name,
+        port,
+        launch_mode,
+        server_config,
+        wait_for_slot=wait_for_slot,
+    )
+    return launch_prepared_instance(plan, wait_for_slot=wait_for_slot)
+
+
+def _launch_locked(instance: InferenceInstance, plan: InstanceLaunchPlan) -> InferenceInstance:
+    _ensure_port_not_owned_by_other_instance(plan.port, instance.pk)
+    _terminate_launchers_on_port(plan.port)
+    if not is_port_free(plan.port):
+        _persist_stop_outcome(instance, "FAILED")
+        raise ValueError(f"Port {plan.port} is already in use by another program.")
 
     os.makedirs(settings.LOGS_DIR, exist_ok=True)
-    log_file_path = str(resolve_log_file_path(safe_model_name, port))
-    log_file = open(log_file_path, "w", encoding="utf-8")
+    log_file_path = str(resolve_log_file_path(instance.model_name, plan.port))
+    try:
+        with open(log_file_path, "w", encoding="utf-8") as log_file:
+            process = _spawn_instance_process(instance, plan, log_file)
+        _wait_until_healthy(instance, process, log_file_path)
+        from orchestrator.instance_warmup import maybe_run_load_warmup
 
-    instance = _get_or_create_instance(safe_model_name, port, launch_mode, normalized_config)
+        maybe_run_load_warmup(instance)
+        if _stop_requested(instance.pk):
+            raise InstanceStartCancelled("Start cancelled: a stop was requested.")
+        _mark_instance_running(instance)
+        return instance
+    except InstanceStartCancelled:
+        _stop_instance_locked(instance, desired_state=None)
+        raise
+    except Exception:
+        _abort_failed_launch(instance)
+        raise
+
+
+def _spawn_instance_process(
+    instance: InferenceInstance,
+    plan: InstanceLaunchPlan,
+    log_file: Any,
+) -> subprocess.Popen:
     # Free on_demand LRU victims when unified memory is tight (MLX-112).
     from orchestrator.instance_eviction import ensure_headroom_for_load
 
     ensure_headroom_for_load(instance)
-    cmd = _build_launch_command(model_path, port, launch_mode, normalized_config, safe_model_name)
+    server_config = dict(instance.server_config or {})
+    cmd = _build_launch_command(
+        plan.model_path,
+        plan.port,
+        plan.launch_mode,
+        server_config,
+        instance.model_name,
+    )
+    process = subprocess.Popen(
+        cmd,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        env=_get_launch_env(
+            plan.launch_mode,
+            server_config,
+            model_name=plan.requested_model_name,
+        ),
+    )
+    instance.pid = process.pid
+    instance.status = "LOADING"
+    instance.save(update_fields=["pid", "status"])
+    return process
 
-    try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            env=_get_launch_env(launch_mode, normalized_config, model_name=model_name),
-        )
-        instance.pid = process.pid
-        instance.status = "LOADING"
-        instance.save(update_fields=["pid", "status"])
 
-        time.sleep(STARTUP_WAIT_SECONDS[launch_mode])
+def _stop_requested(instance_id: int) -> bool:
+    return InferenceInstance.objects.filter(
+        pk=instance_id,
+        desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+    ).exists()
+
+
+def _wait_until_healthy(
+    instance: InferenceInstance,
+    process: subprocess.Popen,
+    log_file_path: str,
+) -> None:
+    """Stay LOADING until /health answers; mlx-lm only serves it after weights load."""
+    from orchestrator.instance_health import probe_http_health
+
+    timeout_seconds = instance_ready_timeout_seconds()
+    deadline = time.monotonic() + timeout_seconds
+    while True:
         failure = _detect_log_failure(log_file_path)
         if failure:
-            stop_instance(instance)
-            instance.status = "FAILED"
-            instance.save(update_fields=["status"])
             raise RuntimeError(f"Server failed to load model: {failure}")
-
         if process.poll() is not None:
-            failure = _detect_log_failure(log_file_path) or "Process exited unexpectedly."
-            instance.status = "FAILED"
-            instance.save(update_fields=["status"])
-            raise RuntimeError(f"Server failed to start: {failure}")
+            raise RuntimeError("Server failed to start: Process exited unexpectedly.")
+        if _stop_requested(instance.pk):
+            raise InstanceStartCancelled("Start cancelled: a stop was requested.")
+        if probe_http_health(instance):
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"Server did not answer /health within {int(timeout_seconds)} seconds."
+            )
+        time.sleep(_READY_POLL_SECONDS)
 
-        # Seed activity so idle offload does not treat created_at / old stopped_at
-        # as "idle for days" and stop a freshly started on_demand instance.
-        instance.status = "RUNNING"
-        instance.stopped_at = None
-        instance.last_used_at = timezone.now()
-        instance.save(update_fields=["status", "stopped_at", "last_used_at"])
-        clear_gateway_route_cache()
-        from orchestrator.instance_warmup import maybe_run_load_warmup
 
-        maybe_run_load_warmup(instance)
-        return instance
-    except Exception:
-        if instance.status != "FAILED":
-            instance.status = "FAILED"
-            instance.save(update_fields=["status"])
-        raise
-    finally:
-        log_file.close()
+def _mark_instance_running(instance: InferenceInstance) -> None:
+    # Seed activity so idle offload does not treat created_at / old stopped_at
+    # as "idle for days" and stop a freshly started on_demand instance.
+    instance.status = "RUNNING"
+    instance.stopped_at = None
+    instance.last_used_at = timezone.now()
+    instance.save(update_fields=["status", "stopped_at", "last_used_at"])
+    clear_gateway_route_cache()
+
+
+def _abort_failed_launch(instance: InferenceInstance) -> None:
+    """Kill whatever was spawned and leave the row FAILED (never stuck LOADING)."""
+    if instance.pid:
+        try:
+            _stop_instance_locked(instance, desired_state=None)
+        except Exception:
+            logger.exception(
+                "Cleanup after failed launch of %s on port %s failed",
+                instance.model_name,
+                instance.port,
+            )
+    _persist_stop_outcome(instance, "FAILED")
 
 
 def _stop_port_release_timeout_seconds() -> float:
@@ -741,50 +989,22 @@ def _stop_port_release_timeout_seconds() -> float:
     return float(getattr(settings, "MLX_STOP_PORT_RELEASE_TIMEOUT_SECONDS", 12.0))
 
 
-def is_manual_stop_in_progress(instance: InferenceInstance) -> bool:
-    """Return True while the UI is stopping this instance (watchdog should stay idle)."""
-    ops = (instance.server_config or {}).get("ops") or {}
-    return bool(ops.get("manual_stop_in_progress"))
-
-
-def _set_manual_stop_in_progress(
-    instance: InferenceInstance,
-    *,
-    active: bool,
-    save: bool = True,
-) -> None:
-    config = dict(instance.server_config or {})
-    ops = dict(config.get("ops") or {})
-    if active:
-        ops["manual_stop_in_progress"] = True
-    else:
-        ops.pop("manual_stop_in_progress", None)
-    config["ops"] = ops
-    instance.server_config = config
-    if save:
-        instance.save(update_fields=["server_config"])
-
-
-def _port_blocker_pids(port: int) -> list[int]:
-    """Return launcher and listener PIDs still bound to a port."""
-    seen: set[int] = set()
-    ordered: list[int] = []
-    for pid in _find_orchestrator_launcher_pids(port) + _find_listener_pids(port):
-        if pid in seen or pid <= 0:
-            continue
-        seen.add(pid)
-        ordered.append(pid)
-    return ordered
+def is_stop_in_progress(instance: InferenceInstance) -> bool:
+    """Return True while a stop is running (stale after a timeout if its actor died)."""
+    since = instance.stopping_since
+    if since is None:
+        return False
+    return (timezone.now() - since).total_seconds() < _STOP_IN_PROGRESS_STALE_SECONDS
 
 
 def _ensure_port_released(port: int, timeout_seconds: float) -> list[int]:
-    """Kill blockers and poll until the port is free or the timeout expires."""
+    """Kill owned blockers and poll until the port is free or the timeout expires."""
     deadline = time.time() + timeout_seconds
     last_known: list[int] = []
     while time.time() < deadline:
         if is_port_free(port):
             return []
-        blockers = _port_blocker_pids(port)
+        blockers = sorted(_owned_port_pids(port))
         if blockers:
             last_known = blockers
             for pid in blockers:
@@ -794,61 +1014,103 @@ def _ensure_port_released(port: int, timeout_seconds: float) -> list[int]:
         time.sleep(0.25)
     if is_port_free(port):
         return []
-    return _port_blocker_pids(port) or last_known
+    return sorted(_owned_port_pids(port)) or last_known
+
+
+def _instance_log_path(instance: InferenceInstance) -> str:
+    return os.path.join(settings.LOGS_DIR, f"{instance.model_name}_{instance.port}.log")
 
 
 def check_instance_status(instance: InferenceInstance) -> str:
-    """Check whether the subprocess PID is still active and update status."""
-    if is_manual_stop_in_progress(instance):
+    """Reconcile DB status with the real process; never touch a slot mid-transition."""
+    if instance.status not in _ACTIVE_INSTANCE_STATUSES:
         return instance.status
-
-    if instance.status not in ("RUNNING", "LOADING"):
+    if is_stop_in_progress(instance) or is_slot_lock_held_elsewhere(instance.port):
         return instance.status
-
-    if not instance.pid:
-        instance.status = "STOPPED"
-        instance.save(update_fields=["status"])
-        return "STOPPED"
-
-    try:
-        os.kill(instance.pid, 0)
-    except OSError:
-        log_path = os.path.join(
-            settings.LOGS_DIR,
-            f"{instance.model_name}_{instance.port}.log",
-        )
-        failure = _detect_log_failure(log_path)
-        instance.status = "FAILED" if failure else "STOPPED"
-        instance.pid = None
-        instance.stopped_at = timezone.now()
-        instance.save(update_fields=["status", "pid", "stopped_at"])
-        return instance.status
-
+    if not is_instance_process(instance.pid, instance.port):
+        return _mark_process_gone(instance)
     if instance.status == "LOADING":
-        log_path = os.path.join(
-            settings.LOGS_DIR,
-            f"{instance.model_name}_{instance.port}.log",
-        )
-        failure = _detect_log_failure(log_path)
-        if failure:
-            stop_instance(instance)
-            instance.status = "FAILED"
-            instance.save(update_fields=["status"])
-            return "FAILED"
-
-        instance.status = "RUNNING"
-        instance.save(update_fields=["status"])
-
+        return _settle_orphan_loading(instance)
     return instance.status
 
 
-def stop_instance(instance: InferenceInstance) -> None:
-    """Terminate the inference server and ensure the port is released."""
+def _mark_process_gone(instance: InferenceInstance) -> str:
+    """Record an exit nobody asked for: always_on → FAILED, sleepers → STOPPED."""
+    from orchestrator.lifecycle_selectors import LIFECYCLE_MODE_ALWAYS_ON, get_lifecycle_mode
+
+    failure = _detect_log_failure(_instance_log_path(instance))
+    expected_running = (
+        instance.desired_state == InferenceInstance.DESIRED_STATE_RUNNING
+        and get_lifecycle_mode(instance.server_config) == LIFECYCLE_MODE_ALWAYS_ON
+    )
+    instance.status = "FAILED" if failure or expected_running else "STOPPED"
+    if instance.status == "STOPPED":
+        instance.desired_state = InferenceInstance.DESIRED_STATE_STOPPED
+    instance.pid = None
+    instance.stopped_at = timezone.now()
+    instance.save(update_fields=["status", "desired_state", "pid", "stopped_at"])
+    clear_gateway_route_cache()
+    return instance.status
+
+
+def _settle_orphan_loading(instance: InferenceInstance) -> str:
+    """Finish a LOADING row whose starter died (e.g. runserver reload mid-start)."""
+    from orchestrator.instance_health import probe_http_health
+    from orchestrator.instance_locks import InstanceSlotBusy
+
+    if _detect_log_failure(_instance_log_path(instance)):
+        try:
+            stop_instance(instance, blocking=False)
+        except (InstanceSlotBusy, RuntimeError):
+            return instance.status
+        _persist_stop_outcome(instance, "FAILED")
+        return "FAILED"
+    if probe_http_health(instance):
+        _mark_instance_running(instance)
+    return instance.status
+
+
+def _persist_stop_outcome(instance: InferenceInstance, status: str) -> None:
+    instance.status = status
+    instance.pid = None
+    instance.stopped_at = timezone.now()
+    instance.stopping_since = None
+    instance.save(update_fields=["status", "pid", "stopped_at", "stopping_since"])
+    clear_gateway_route_cache()
+
+
+def stop_instance(
+    instance: InferenceInstance,
+    *,
+    desired_state: str | None = None,
+    blocking: bool = True,
+) -> None:
+    """Terminate the inference server and ensure the port is released.
+
+    Args:
+        instance: Row to stop.
+        desired_state: Intent to persist (``stopped`` for user / idle / eviction
+            stops); ``None`` for internal stops (restart, failed launch).
+        blocking: Wait for an in-flight start/stop on the slot instead of failing.
+
+    Raises:
+        InstanceSlotBusy: ``blocking=False`` and another actor holds the slot.
+        RuntimeError: the port could not be released (row is left FAILED).
+    """
+    with instance_slot_lock(instance.port, blocking=blocking):
+        _stop_instance_locked(instance, desired_state=desired_state)
+
+
+def _stop_instance_locked(instance: InferenceInstance, *, desired_state: str | None) -> None:
     instance.refresh_from_db()
-    _set_manual_stop_in_progress(instance, active=True)
+    instance.stopping_since = timezone.now()
+    update_fields = ["stopping_since"]
+    if desired_state:
+        instance.desired_state = desired_state
+        update_fields.append("desired_state")
+    instance.save(update_fields=update_fields)
     try:
-        targets = _collect_stop_targets(instance)
-        _force_stop_pids(targets, grace_seconds=3.0)
+        _force_stop_pids(_collect_stop_targets(instance), grace_seconds=3.0)
         remaining = _ensure_port_released(
             instance.port,
             _stop_port_release_timeout_seconds(),
@@ -859,29 +1121,43 @@ def stop_instance(instance: InferenceInstance) -> None:
                 f"Port {instance.port} is still in use (PID: {pid_list}). "
                 "The server could not be stopped completely."
             )
-
-        config = dict(instance.server_config or {})
-        ops = dict(config.get("ops") or {})
-        ops.pop("manual_stop_in_progress", None)
-        config["ops"] = ops
-        instance.server_config = config
-        instance.pid = None
-        instance.status = "STOPPED"
-        instance.stopped_at = timezone.now()
-        instance.save(update_fields=["status", "pid", "stopped_at", "server_config"])
-        from orchestrator.instance_warmup import mark_instance_needs_warmup
-
-        mark_instance_needs_warmup(instance.pk)
+        _persist_stop_outcome(instance, "STOPPED")
     except Exception:
-        _set_manual_stop_in_progress(instance, active=False)
+        # Process may already be dead while status still says RUNNING; fail closed.
+        _persist_stop_outcome(instance, "FAILED")
         raise
 
 
-def delete_instance(instance: InferenceInstance) -> None:
+def request_instance_stop(instance: InferenceInstance) -> bool:
+    """Record a user stop; stop now, or let the in-flight start cancel itself.
+
+    Returns:
+        True when the instance was stopped synchronously, False when the stop
+        was queued behind another transition on the same slot.
+    """
+    from orchestrator.instance_locks import InstanceSlotBusy
+
+    InferenceInstance.objects.filter(pk=instance.pk).update(
+        desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+    )
+    try:
+        stop_instance(
+            instance,
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+            blocking=False,
+        )
+    except InstanceSlotBusy:
+        return False
+    return True
+
+
+def delete_instance(instance: InferenceInstance, *, blocking: bool = True) -> None:
     """Stop a running instance if needed, then remove its database record."""
-    if instance.status in ("RUNNING", "LOADING"):
-        stop_instance(instance)
-    instance.delete()
+    with instance_slot_lock(instance.port, blocking=blocking):
+        instance.refresh_from_db()
+        if instance.status in _ACTIVE_INSTANCE_STATUSES:
+            stop_instance(instance, desired_state=InferenceInstance.DESIRED_STATE_STOPPED)
+        instance.delete()
 
 
 def update_stopped_instance(
@@ -892,7 +1168,24 @@ def update_stopped_instance(
     server_config: dict[str, Any] | None = None,
 ) -> InferenceInstance:
     """Update port, mode, or config for a stopped or failed instance."""
-    if instance.status in ("RUNNING", "LOADING"):
+    with instance_slot_lock(instance.port, blocking=False):
+        instance.refresh_from_db()
+        return _update_stopped_instance_locked(
+            instance,
+            port=port,
+            launch_mode=launch_mode,
+            server_config=server_config,
+        )
+
+
+def _update_stopped_instance_locked(
+    instance: InferenceInstance,
+    *,
+    port: int | None,
+    launch_mode: LaunchMode | None,
+    server_config: dict[str, Any] | None,
+) -> InferenceInstance:
+    if instance.status in _ACTIVE_INSTANCE_STATUSES:
         raise ValueError("Stop the server before editing its configuration.")
 
     new_port = int(port) if port is not None else instance.port
@@ -926,18 +1219,39 @@ def update_stopped_instance(
     return instance
 
 
-def restart_instance(instance: InferenceInstance) -> InferenceInstance:
-    """Gracefully stop a running instance and relaunch with the same configuration."""
+def restart_instance(
+    instance: InferenceInstance,
+    *,
+    automatic: bool = False,
+    wait_for_slot: bool = True,
+) -> InferenceInstance:
+    """Stop (if active) and relaunch with the same configuration, atomically per slot.
+
+    Args:
+        instance: Row to restart.
+        automatic: Watchdog / startup reconcile caller. Skips rows whose
+            ``desired_state`` is ``stopped`` (re-read under the lock) and never
+            flips that intent back to ``running``.
+        wait_for_slot: Wait for an in-flight transition instead of failing.
+    """
     model_name = validate_model_folder_name(instance.model_name)
     port = validated_launch_port(instance.port)
     launch_mode = parse_launch_mode(instance.launch_mode)
-    server_config = dict(instance.server_config or {})
 
-    if instance.status in ("RUNNING", "LOADING"):
-        stop_instance(instance)
+    with instance_slot_lock(port, blocking=wait_for_slot):
         instance.refresh_from_db()
-
-    return start_instance(model_name, port, launch_mode, server_config)
+        if automatic and instance.desired_state != InferenceInstance.DESIRED_STATE_RUNNING:
+            return instance
+        if instance.status in _ACTIVE_INSTANCE_STATUSES:
+            _stop_instance_locked(instance, desired_state=None)
+        plan = prepare_instance_launch(
+            model_name,
+            port,
+            launch_mode,
+            dict(instance.server_config or {}),
+            mark_desired_running=not automatic,
+        )
+        return launch_prepared_instance(plan)
 
 
 def get_instance_logs(model_name: str, port: int) -> str:

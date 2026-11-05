@@ -63,6 +63,22 @@ class InferenceInstance(models.Model):
         blank=True,
         help_text="Last gateway-proxied request time (UTC); used for idle offload.",
     )
+    DESIRED_STATE_RUNNING = 'running'
+    DESIRED_STATE_STOPPED = 'stopped'
+    desired_state = models.CharField(
+        max_length=10,
+        choices=[
+            (DESIRED_STATE_RUNNING, 'Running'),
+            (DESIRED_STATE_STOPPED, 'Stopped'),
+        ],
+        default=DESIRED_STATE_RUNNING,
+        help_text="Operator/system intent; watchdog and reconcile never override 'stopped'.",
+    )
+    stopping_since = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set while a stop is in progress; considered abandoned after a timeout.",
+    )
 
     def __str__(self):
         return f"{self.model_name} on port {self.port} ({self.launch_mode}, PID: {self.pid})"

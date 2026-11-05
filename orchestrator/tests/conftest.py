@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.machinery
 import os
 import sys
+from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock
 
@@ -82,11 +83,26 @@ _stub_mlx_runtime()
 
 
 @pytest.fixture(autouse=True)
+def _isolate_runtime_dirs(tmp_path):
+    """Keep test logs, lock files and route generation out of the repo checkout."""
+    from django.conf import settings
+    from django.test import override_settings
+
+    overrides = {"NADIR_RUNTIME_STATE_DIR": tmp_path / "runtime"}
+    # Respect class-level LOGS_DIR overrides; only redirect the default repo path.
+    if Path(settings.LOGS_DIR) == Path(settings.BASE_DIR) / "logs":
+        overrides["LOGS_DIR"] = tmp_path / "logs"
+    with override_settings(**overrides):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_gateway_env_from_dotenv(monkeypatch):
     """Keep developer .env gateway values from overriding @override_settings."""
     for key in (
         "NADIR_GATEWAY_HOST",
         "NADIR_GATEWAY_PORT",
         "NADIR_GATEWAY_PUBLIC_BASE_URL",
+        "NADIR_GATEWAY_API_KEY",
     ):
         monkeypatch.delenv(key, raising=False)

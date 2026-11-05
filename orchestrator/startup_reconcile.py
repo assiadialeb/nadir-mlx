@@ -13,8 +13,9 @@ from orchestrator.lifecycle_selectors import (
     LIFECYCLE_MODE_ALWAYS_ON,
     get_lifecycle_mode,
 )
+from orchestrator.instance_locks import InstanceSlotBusy
 from orchestrator.models import InferenceInstance
-from orchestrator.server_manager import is_manual_stop_in_progress, restart_instance
+from orchestrator.server_manager import is_stop_in_progress, restart_instance
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,17 @@ _RECONCILE_START_DELAY_SECONDS = 1.0
 
 
 def _should_restore_on_startup(instance: InferenceInstance) -> bool:
-    """Return True for always_on instances that should come back after boot."""
+    """Return True for always_on instances that were running before the restart.
+
+    An operator stop persists ``desired_state=stopped`` and is never undone here.
+    """
     if get_lifecycle_mode(instance.server_config) != LIFECYCLE_MODE_ALWAYS_ON:
+        return False
+    if instance.desired_state != InferenceInstance.DESIRED_STATE_RUNNING:
         return False
     if instance.status not in _RESTARTABLE_STATUSES:
         return False
-    if is_manual_stop_in_progress(instance):
+    if is_stop_in_progress(instance):
         return False
     return True
 
@@ -39,13 +45,16 @@ def _should_restore_on_startup(instance: InferenceInstance) -> bool:
 def _restore_always_on_instance(instance: InferenceInstance) -> bool:
     """Restart one always_on instance; return True when a restart was attempted."""
     try:
-        restart_instance(instance)
+        restart_instance(instance, automatic=True, wait_for_slot=False)
         logger.info(
             "Startup reconcile restored always_on instance %s on port %s",
             instance.model_name,
             instance.port,
         )
         return True
+    except InstanceSlotBusy:
+        # UI or gateway already handling this slot.
+        return False
     except Exception as exc:
         logger.exception(
             "Startup reconcile failed for instance %s on port %s: %s",

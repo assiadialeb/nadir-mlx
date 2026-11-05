@@ -6,14 +6,10 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from orchestrator.instance_warmup import (
-    clear_warmup_state_for_tests,
-    mark_instance_needs_warmup,
-    maybe_run_load_warmup,
-)
+from orchestrator.instance_warmup import maybe_run_load_warmup
 
 
-def _instance(*, warmup: bool = True, status: str = "RUNNING") -> MagicMock:
+def _instance(*, warmup: bool = True, status: str = "LOADING") -> MagicMock:
     row = MagicMock()
     row.pk = 42
     row.model_name = "demo"
@@ -24,46 +20,46 @@ def _instance(*, warmup: bool = True, status: str = "RUNNING") -> MagicMock:
     return row
 
 
+@patch("orchestrator.instance_warmup._record_warmup_activity")
 class InstanceWarmupTests(SimpleTestCase):
-    def setUp(self) -> None:
-        clear_warmup_state_for_tests()
-
     @patch("orchestrator.instance_warmup.probe_generation_health", return_value=True)
-    @patch("orchestrator.instance_warmup.probe_http_health", return_value=True)
-    def test_warmup_runs_once_per_load(
+    def test_maybe_run_load_warmup_records_activity_on_success(
         self,
-        _mock_http: MagicMock,
         mock_gen: MagicMock,
+        mock_record: MagicMock,
     ) -> None:
         instance = _instance()
-        first = maybe_run_load_warmup(instance)
-        second = maybe_run_load_warmup(instance)
-        self.assertIsNotNone(first)
-        self.assertIsNone(second)
-        mock_gen.assert_called_once()
+        self.assertIsNotNone(maybe_run_load_warmup(instance))
+        mock_gen.assert_called_once_with(instance)
+        mock_record.assert_called_once_with(instance)
 
-    @patch("orchestrator.instance_warmup.probe_generation_health", return_value=True)
-    @patch("orchestrator.instance_warmup.probe_http_health", return_value=True)
-    def test_warmup_reruns_after_mark_needs(
+    @patch("orchestrator.instance_warmup.probe_generation_health", return_value=False)
+    def test_maybe_run_load_warmup_failure_does_not_count_as_activity(
         self,
-        _mock_http: MagicMock,
-        mock_gen: MagicMock,
+        _mock_gen: MagicMock,
+        mock_record: MagicMock,
     ) -> None:
-        instance = _instance()
-        maybe_run_load_warmup(instance)
-        mark_instance_needs_warmup(instance.pk)
-        maybe_run_load_warmup(instance)
-        self.assertEqual(mock_gen.call_count, 2)
+        self.assertIsNotNone(maybe_run_load_warmup(_instance()))
+        mock_record.assert_not_called()
 
-    def test_warmup_skipped_when_disabled(self) -> None:
-        self.assertIsNone(maybe_run_load_warmup(_instance(warmup=False)))
+    @patch(
+        "orchestrator.instance_warmup.probe_generation_health",
+        side_effect=RuntimeError("boom"),
+    )
+    def test_maybe_run_load_warmup_never_raises(
+        self,
+        _mock_gen: MagicMock,
+        mock_record: MagicMock,
+    ) -> None:
+        self.assertIsNotNone(maybe_run_load_warmup(_instance()))
+        mock_record.assert_not_called()
 
     @patch("orchestrator.instance_warmup.probe_generation_health")
-    @patch("orchestrator.instance_warmup.probe_http_health", return_value=False)
-    def test_warmup_skipped_when_health_not_ready(
+    def test_maybe_run_load_warmup_skipped_when_disabled(
         self,
-        _mock_http: MagicMock,
         mock_gen: MagicMock,
+        mock_record: MagicMock,
     ) -> None:
-        self.assertIsNone(maybe_run_load_warmup(_instance()))
+        self.assertIsNone(maybe_run_load_warmup(_instance(warmup=False)))
         mock_gen.assert_not_called()
+        mock_record.assert_not_called()

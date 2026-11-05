@@ -101,6 +101,9 @@ class LifecycleE2ETests(TransactionTestCase):
         delete_instance(instance)
         self.assertFalse(InferenceInstance.objects.filter(pk=instance_id).exists())
 
+    @patch("orchestrator.instance_warmup.maybe_run_load_warmup", return_value=None)
+    @patch("orchestrator.instance_health.probe_http_health", return_value=True)
+    @patch("orchestrator.instance_eviction.ensure_headroom_for_load")
     @patch("orchestrator.gateway.services.http_proxy.get_http_client")
     @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
     @patch("orchestrator.server_manager._detect_log_failure", return_value=None)
@@ -125,6 +128,9 @@ class LifecycleE2ETests(TransactionTestCase):
         _mock_log_failure: MagicMock,
         _mock_probe: MagicMock,
         mock_client_cls: MagicMock,
+        _mock_headroom: MagicMock,
+        _mock_ready_probe: MagicMock,
+        _mock_warmup: MagicMock,
     ) -> None:
         mock_resolve_dir.return_value = Path(settings.MODELS_DIR) / "lifecycle-model"
         process = MagicMock()

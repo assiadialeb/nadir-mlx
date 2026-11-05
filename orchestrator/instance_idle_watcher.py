@@ -16,8 +16,9 @@ from orchestrator.gateway_aliases import instance_gateway_alias
 from orchestrator.instance_health import should_skip_watchdog
 from orchestrator.lifecycle_selectors import instance_idle_minutes, is_on_demand_lifecycle
 from orchestrator.lifecycle_services import instance_activity_at, is_wake_in_progress
+from orchestrator.instance_locks import InstanceSlotBusy
 from orchestrator.models import InferenceInstance
-from orchestrator.server_manager import is_manual_stop_in_progress, stop_instance
+from orchestrator.server_manager import is_stop_in_progress, stop_instance
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _should_skip_idle_offload(instance: InferenceInstance) -> bool:
     # Falling back to created_at would immediately kill freshly started models.
     if instance.last_used_at is None:
         return True
-    if is_manual_stop_in_progress(instance):
+    if is_stop_in_progress(instance):
         return True
     alias = instance_gateway_alias(instance)
     if is_wake_in_progress(alias):
@@ -77,7 +78,12 @@ def _attempt_idle_offload(instance: InferenceInstance) -> None:
 
     alias = instance_gateway_alias(instance)
     try:
-        stop_instance(instance)
+        # Non-blocking: a slot mid-start/stop is not idle; retry next cycle.
+        stop_instance(
+            instance,
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+            blocking=False,
+        )
         clear_gateway_route_cache()
         logger.info(
             "Idle-offloaded instance %s (alias=%s) on port %s",
@@ -85,6 +91,8 @@ def _attempt_idle_offload(instance: InferenceInstance) -> None:
             alias,
             instance.port,
         )
+    except InstanceSlotBusy:
+        return
     except Exception:
         logger.exception(
             "Idle offload failed for instance %s (alias=%s) on port %s",
