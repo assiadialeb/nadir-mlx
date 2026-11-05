@@ -59,20 +59,27 @@ class MlxLmCapabilitiesTests(SimpleTestCase):
         ):
             self.assertTrue(text_kv_quantization_enabled())
 
-    def test_probe_failure_is_not_cached(self) -> None:
+    def test_probe_failure_is_cached_briefly(self) -> None:
+        import subprocess
+
         with patch(
             "orchestrator.mlx_lm_capabilities.subprocess.run",
-            side_effect=TimeoutError("slow"),
-        ):
+            side_effect=subprocess.TimeoutExpired(cmd="mlx", timeout=15),
+        ) as mock_run:
             clear_mlx_lm_capability_cache()
             self.assertEqual(mlx_lm_server_cli_flags(), frozenset())
-            clear_mlx_lm_capability_cache()
-            with patch(
-                "orchestrator.mlx_lm_capabilities.subprocess.run",
-                return_value=type(
-                    "R",
-                    (),
-                    {"stdout": "  --prefill-step-size N\n", "stderr": "", "returncode": 0},
-                )(),
-            ):
-                self.assertIn("prefill-step-size", mlx_lm_server_cli_flags())
+            self.assertEqual(mock_run.call_count, 1)
+            # Second call within TTL must not re-probe.
+            self.assertEqual(mlx_lm_server_cli_flags(), frozenset())
+            self.assertEqual(mock_run.call_count, 1)
+
+        clear_mlx_lm_capability_cache()
+        with patch(
+            "orchestrator.mlx_lm_capabilities.subprocess.run",
+            return_value=type(
+                "R",
+                (),
+                {"stdout": "  --prefill-step-size N\n", "stderr": "", "returncode": 0},
+            )(),
+        ):
+            self.assertIn("prefill-step-size", mlx_lm_server_cli_flags())

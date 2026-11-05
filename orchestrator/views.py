@@ -44,7 +44,8 @@ from .ui_selectors import (
     list_installed_models,
     parse_installed_models_query,
     models_by_server_type_json,
-    SORT_OPTIONS,
+    SORT_OPTIONS_HUB,
+    SORT_OPTIONS_INSTALLED,
 )
 from .benchmark_service import (
     BENCHMARK_MAX_REQUESTS_PER_SCENARIO,
@@ -174,23 +175,28 @@ def models_view(request):
     hf_models: list[dict] = []
     installed_models = installed_models_all
 
+    sort_options = SORT_OPTIONS_INSTALLED
     if active_tab == 'installed':
         filter_query, filter_cap, filter_sort, filter_fits_mac = (
             parse_installed_models_query(request.GET)
         )
+        # Mac-fit sort applies to the Hub catalog only.
+        if filter_sort == 'mac_recommended':
+            filter_sort = 'name_asc'
+        filter_fits_mac = False
         installed_models = apply_installed_models_filters(
             installed_models_all,
             query=filter_query,
             capability=filter_cap,
             sort=filter_sort,
-            fits_mac=filter_fits_mac,
         )
         filter_total = len(installed_models_all)
         filter_count = len(installed_models)
         filter_has_filters = bool(
-            filter_query or filter_cap or filter_sort != 'name_asc' or filter_fits_mac
+            filter_query or filter_cap or filter_sort != 'name_asc'
         )
     elif active_tab == 'hub':
+        sort_options = SORT_OPTIONS_HUB
         filter_query, filter_cap, filter_sort, filter_fits_mac = (
             parse_installed_models_query(request.GET)
         )
@@ -230,7 +236,7 @@ def models_view(request):
         'filter_count': filter_count,
         'filter_has_filters': filter_has_filters,
         'filter_fetch_limit': filter_fetch_limit,
-        'sort_options': SORT_OPTIONS,
+        'sort_options': sort_options,
         'capability_filters': SERVER_TYPES,
         'downloading_models': downloading_models,
         'models': hf_models,

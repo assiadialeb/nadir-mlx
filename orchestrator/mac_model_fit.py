@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import platform
 
 from orchestrator.memory_pressure import (
+    TransformerShape,
     estimate_kv_cache_bytes,
     estimate_prompt_cache_budget_bytes,
     memory_reserve_bytes,
@@ -17,20 +19,54 @@ from orchestrator.memory_pressure import (
     planning_parallel_sequences_cap,
     planning_prompt_prefix_tokens,
 )
-from orchestrator.memory_pressure import TransformerShape
 from orchestrator.prompt_cache import host_total_bytes
 
 MacFitTier = Literal["comfortable", "tight", "too_large", "unknown"]
 BandwidthClass = Literal["low", "medium", "high", "unknown"]
+ChipTier = Literal["base", "pro", "max", "ultra"]
 
 _MOE_ACTIVE_RE = re.compile(r"-A(\d+(?:\.\d+)?)[Bb]")
 _MOE_HINT_RE = re.compile(r"\bmoe\b|experts?", re.I)
 _DWQ_HINT_RE = re.compile(r"\bDWQ\b|dequant", re.I)
+_CHIP_RE = re.compile(
+    r"\bm(\d+)\s*(ultra|max|pro)?\b",
+    re.IGNORECASE,
+)
+
+# Approximate unified-memory bandwidth (GB/s) by Apple Silicon generation + SKU.
+_BANDWIDTH_GBPS: dict[tuple[int, ChipTier], int] = {
+    (1, "base"): 68,
+    (1, "pro"): 200,
+    (1, "max"): 400,
+    (1, "ultra"): 800,
+    (2, "base"): 100,
+    (2, "pro"): 200,
+    (2, "max"): 400,
+    (2, "ultra"): 800,
+    (3, "base"): 100,
+    (3, "pro"): 150,
+    (3, "max"): 400,
+    (3, "ultra"): 800,
+    (4, "base"): 120,
+    (4, "pro"): 273,
+    (4, "max"): 546,
+    (4, "ultra"): 819,
+}
+
+_TIER_FALLBACK_BANDWIDTH: dict[ChipTier, int] = {
+    "base": 120,
+    "pro": 200,
+    "max": 400,
+    "ultra": 800,
+}
 
 _COMFORTABLE_RATIO = 0.55
 _TIGHT_RATIO = 0.85
+# mlx wired GPU pool is typically ~75% of unified RAM on Apple Silicon.
+_GPU_POOL_RATIO = 0.75
 _MIN_FOOTPRINT_BYTES = 2 * 1024**3
 _RUNTIME_WEIGHT_FACTOR = 1.15
+_PROFILE_CACHE_TTL_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -56,24 +92,32 @@ class MacFitAssessment:
     interactive_score: int
 
 
-def load_mac_hardware_profile() -> MacHardwareProfile:
-    """Detect unified RAM and a coarse memory-bandwidth class from the host."""
-    system = platform.system()
-    chip_label = "Unknown host"
-    is_apple = system == "Darwin"
-    if is_apple:
-        chip_label = _darwin_cpu_brand() or "Apple Silicon"
-    elif system == "Linux":
-        chip_label = "Linux (non-Mac)"
+_cached_profile: MacHardwareProfile | None = None
+_cached_profile_at: float = 0.0
 
-    total = host_total_bytes()
-    bandwidth = _bandwidth_class_from_chip(chip_label) if is_apple else "unknown"
-    return MacHardwareProfile(
-        total_ram_bytes=total,
-        chip_label=chip_label,
-        bandwidth_class=bandwidth,
-        is_apple_silicon=is_apple,
-    )
+
+def clear_mac_hardware_profile_cache() -> None:
+    """Tests / process refresh."""
+    global _cached_profile, _cached_profile_at
+    _cached_profile = None
+    _cached_profile_at = 0.0
+
+
+def load_mac_hardware_profile(*, force_refresh: bool = False) -> MacHardwareProfile:
+    """Detect unified RAM and a coarse memory-bandwidth class from the host."""
+    global _cached_profile, _cached_profile_at
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and _cached_profile is not None
+        and (now - _cached_profile_at) < _PROFILE_CACHE_TTL_SECONDS
+    ):
+        return _cached_profile
+
+    profile = _detect_mac_hardware_profile()
+    _cached_profile = profile
+    _cached_profile_at = now
+    return profile
 
 
 def is_moe_model_name(name: str) -> bool:
@@ -84,7 +128,7 @@ def is_moe_model_name(name: str) -> bool:
 
 
 def extract_active_param_size_b(name: str, total_param_size_b: float | None) -> float | None:
-    """MoE names like ``30B-A3B`` use the active expert count for memory."""
+    """Active experts for MoE names like ``30B-A3B`` (speed scoring only)."""
     match = _MOE_ACTIVE_RE.search(name)
     if match:
         return float(match.group(1))
@@ -94,18 +138,20 @@ def extract_active_param_size_b(name: str, total_param_size_b: float | None) -> 
 def estimate_catalog_text_footprint_bytes(
     *,
     param_size_b: float | None,
-    active_param_size_b: float | None,
     bits: int,
 ) -> int:
-    """Weights + planned KV + prompt cache (MLX-127 defaults, generic shape)."""
-    effective_b = active_param_size_b or param_size_b
-    if effective_b is None or effective_b <= 0:
+    """Weights + planned KV + prompt cache (MLX-127 defaults, generic shape).
+
+    MoE checkpoints keep **all** experts resident — weights use total parameters,
+    never the active-expert count from ``-A3B``-style names.
+    """
+    if param_size_b is None or param_size_b <= 0:
         return 0
 
     weights = int(
-        effective_b * 1_000_000_000 * (bits / 8.0) * _RUNTIME_WEIGHT_FACTOR
+        param_size_b * 1_000_000_000 * (bits / 8.0) * _RUNTIME_WEIGHT_FACTOR
     )
-    shape = _generic_transformer_shape(effective_b)
+    shape = _generic_transformer_shape(param_size_b)
     context = planning_context_tokens()
     kv_bits = 16.0
     parallel = planning_parallel_sequences_cap()
@@ -149,7 +195,7 @@ def classify_mac_fit(
         )
 
     comfortable_cap = int(budget * _COMFORTABLE_RATIO)
-    tight_cap = int(budget * _TIGHT_RATIO)
+    tight_cap = _tight_cap_bytes(profile, budget)
     if footprint_bytes <= comfortable_cap:
         tier: MacFitTier = "comfortable"
         label = "Recommended for your Mac"
@@ -186,8 +232,13 @@ def interactive_recommendation_score(
     assessment: MacFitAssessment,
     profile: MacHardwareProfile,
     supports_text: bool,
+    param_size_b: float | None = None,
 ) -> int:
-    """MLX-130 scoring: fit tier + MoE / 4-bit / bandwidth heuristics."""
+    """MLX-130 scoring: fit tier + MoE / 4-bit / bandwidth heuristics.
+
+    Active MoE params improve the **speed** score only — they never shrink
+    the memory footprint used for fit tiers.
+    """
     if not supports_text:
         return assessment.interactive_score
 
@@ -200,9 +251,11 @@ def interactive_recommendation_score(
     if "instruct" in lowered or "chat" in lowered or "-it" in lowered:
         score += 5
 
-    param_match = re.search(r"(\d+(?:\.\d+)?)[Bb]", name)
-    param_b = float(param_match.group(1)) if param_match else 0.0
-    active_b = extract_active_param_size_b(name, param_b) or param_b
+    total_b = param_size_b
+    if total_b is None:
+        param_match = re.search(r"(\d+(?:\.\d+)?)[Bb]", name)
+        total_b = float(param_match.group(1)) if param_match else 0.0
+    active_b = extract_active_param_size_b(name, total_b) or total_b or 0.0
     if profile.bandwidth_class in {"low", "medium"} and active_b >= 24 and not is_moe_model_name(name):
         score -= 20
     if profile.bandwidth_class == "high" and is_moe_model_name(name) and bits <= 4:
@@ -220,12 +273,9 @@ def enrich_hf_model_mac_fit(
     name = str(model.get("name") or "")
     param_size_b = model.get("param_size_b")
     bits = int(model.get("quant_bits") or 16)
-    active_b = extract_active_param_size_b(
-        name, float(param_size_b) if param_size_b is not None else None
-    )
+    total_b = float(param_size_b) if param_size_b is not None else None
     footprint = estimate_catalog_text_footprint_bytes(
-        param_size_b=float(param_size_b) if param_size_b is not None else None,
-        active_param_size_b=active_b,
+        param_size_b=total_b,
         bits=bits,
     )
     assessment = classify_mac_fit(footprint, profile)
@@ -235,6 +285,7 @@ def enrich_hf_model_mac_fit(
         assessment=assessment,
         profile=profile,
         supports_text=bool(model.get("supports_text")),
+        param_size_b=total_b,
     )
     model["is_moe"] = is_moe_model_name(name)
     model["mac_footprint_bytes"] = footprint
@@ -256,7 +307,43 @@ def hub_mac_profile_summary(profile: MacHardwareProfile | None = None) -> str:
         return "Mac profile unknown — RAM estimates are indicative only."
     gib = profile.total_ram_bytes / (1024**3)
     chip = profile.chip_label
-    return f"{chip} · {gib:.0f} GB unified — badges use planned TEXT footprint (weights + KV + cache)."
+    return (
+        f"{chip} · {gib:.0f} GB unified — badges use planned TEXT footprint "
+        f"(all experts for MoE; weights + KV + cache)."
+    )
+
+
+def bandwidth_class_from_chip(chip_label: str) -> BandwidthClass:
+    """Public helper for tests — map a CPU brand string to bandwidth class."""
+    return _bandwidth_class_from_chip(chip_label)
+
+
+def _detect_mac_hardware_profile() -> MacHardwareProfile:
+    system = platform.system()
+    chip_label = "Unknown host"
+    is_apple = system == "Darwin"
+    if is_apple:
+        chip_label = _darwin_cpu_brand() or "Apple Silicon"
+    elif system == "Linux":
+        chip_label = "Linux (non-Mac)"
+
+    total = host_total_bytes()
+    bandwidth = _bandwidth_class_from_chip(chip_label) if is_apple else "unknown"
+    return MacHardwareProfile(
+        total_ram_bytes=total,
+        chip_label=chip_label,
+        bandwidth_class=bandwidth,
+        is_apple_silicon=is_apple,
+    )
+
+
+def _tight_cap_bytes(profile: MacHardwareProfile, budget: int) -> int:
+    """Cap tight tier at min(85% of budget, ~75% of unified RAM)."""
+    ratio_cap = int(budget * _TIGHT_RATIO)
+    if not profile.total_ram_bytes:
+        return ratio_cap
+    gpu_pool_cap = int(profile.total_ram_bytes * _GPU_POOL_RATIO)
+    return min(ratio_cap, gpu_pool_cap)
 
 
 def _generic_transformer_shape(param_b: float) -> TransformerShape:
@@ -297,14 +384,39 @@ def _darwin_cpu_brand() -> str | None:
 
 
 def _bandwidth_class_from_chip(chip_label: str) -> BandwidthClass:
-    label = chip_label.lower()
-    if any(token in label for token in ("ultra", "m4 max", "m3 ultra", "m2 ultra")):
+    parsed = _parse_apple_silicon(chip_label)
+    if parsed is None:
+        if "apple" in chip_label.lower():
+            return "low"
+        return "unknown"
+    generation, tier = parsed
+    gbps = _BANDWIDTH_GBPS.get((generation, tier))
+    if gbps is None:
+        gbps = _TIER_FALLBACK_BANDWIDTH[tier]
+    return _bandwidth_class_from_gbps(gbps)
+
+
+def _parse_apple_silicon(chip_label: str) -> tuple[int, ChipTier] | None:
+    match = _CHIP_RE.search(chip_label)
+    if not match:
+        return None
+    generation = int(match.group(1))
+    raw_tier = (match.group(2) or "base").lower()
+    tier: ChipTier
+    if raw_tier == "ultra":
+        tier = "ultra"
+    elif raw_tier == "max":
+        tier = "max"
+    elif raw_tier == "pro":
+        tier = "pro"
+    else:
+        tier = "base"
+    return generation, tier
+
+
+def _bandwidth_class_from_gbps(gbps: int) -> BandwidthClass:
+    if gbps >= 400:
         return "high"
-    if any(
-        token in label
-        for token in ("m4 pro", "m3 max", "m2 max", "m1 ultra", "m3 pro", "m4")
-    ):
+    if gbps >= 150:
         return "medium"
-    if "apple" in label or "m1" in label or "m2" in label or "m3" in label:
-        return "low"
-    return "unknown"
+    return "low"
