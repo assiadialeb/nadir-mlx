@@ -22,7 +22,7 @@ from .server_manager import (
     get_instance_logs,
 )
 from .instance_background import restart_instance_in_background, start_instance_in_background
-from .instance_locks import InstanceSlotBusy
+from .instance_locks import USER_ACTION_SLOT_WAIT_SECONDS, InstanceSlotBusy
 from .instance_health import refresh_instance_health
 from .server_types import SERVER_TYPES
 from .model_registry import (
@@ -461,7 +461,7 @@ def delete_instance_view(request, instance_id):
         model_name = instance.model_name
         port = instance.port
         try:
-            delete_instance(instance, blocking=False)
+            delete_instance(instance, timeout_seconds=USER_ACTION_SLOT_WAIT_SECONDS)
             messages.success(
                 request,
                 f"Instance {model_name} (port {port}) deleted.",
