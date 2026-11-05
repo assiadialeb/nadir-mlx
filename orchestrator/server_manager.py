@@ -605,6 +605,8 @@ def _build_launch_command(
         "top-p": advanced.get("top_p"),
         "top-k": advanced.get("top_k"),
         "min-p": advanced.get("min_p"),
+        "decode-concurrency": advanced.get("decode_concurrency"),
+        "prompt-concurrency": advanced.get("prompt_concurrency"),
     })
     from orchestrator.prompt_cache import resolve_prompt_cache_cli_flags
 

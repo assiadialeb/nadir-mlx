@@ -248,6 +248,10 @@ NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS = float(
 NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM = int(
     os.environ.get("NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM", "16")
 )
+# Cross-instance cap: concurrent generations on one Mac share GPU bandwidth.
+NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL = int(
+    os.environ.get("NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL", "16")
+)
 NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS = float(
     os.environ.get(
         "NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS",

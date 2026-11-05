@@ -49,6 +49,17 @@ def _instance_max_concurrent_upstream(instance: InferenceInstance) -> int | None
     return int(raw)
 
 
+def _instance_decode_concurrency(instance: InferenceInstance) -> int | None:
+    """mlx-lm ``--decode-concurrency`` for TEXT rows (None = mlx default, no extra cap)."""
+    if instance.launch_mode != "TEXT":
+        return None
+    advanced = (instance.server_config or {}).get("advanced") or {}
+    raw = advanced.get("decode_concurrency")
+    if raw is None or raw == "":
+        return None
+    return int(raw)
+
+
 def _gateway_target_from_instance(instance: InferenceInstance) -> GatewayTarget:
     resolved_alias = instance_gateway_alias(instance)
     api_path = LAUNCH_MODE_API_PATH.get(instance.launch_mode)
@@ -67,6 +78,7 @@ def _gateway_target_from_instance(instance: InferenceInstance) -> GatewayTarget:
         upstream_model=_downstream_model(instance, resolved_alias),
         api_path=api_path,
         max_concurrent_upstream=_instance_max_concurrent_upstream(instance),
+        decode_concurrency=_instance_decode_concurrency(instance),
     )
 
 

@@ -32,6 +32,21 @@ class GatewayRouterTests(TestCase):
         self.assertEqual(target.upstream_model, "default_model")
         self.assertEqual(target.api_path, CHAT_COMPLETIONS_PATH)
         self.assertEqual(target.upstream_url, "http://127.0.0.1:11400/v1/chat/completions")
+        self.assertIsNone(target.decode_concurrency)
+
+    def test_resolve_gateway_target_reads_text_decode_concurrency(self) -> None:
+        InferenceInstance.objects.create(
+            model_name="Llama-3-8B",
+            port=11409,
+            launch_mode="TEXT",
+            server_config={
+                "model_id": "llama-batch",
+                "host": "127.0.0.1",
+                "advanced": {"decode_concurrency": 6},
+            },
+            status="RUNNING",
+        )
+        self.assertEqual(resolve_gateway_target("llama-batch").decode_concurrency, 6)
 
     def test_resolve_gateway_target_maps_embedding_mode(self) -> None:
         InferenceInstance.objects.create(

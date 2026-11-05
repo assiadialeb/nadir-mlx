@@ -60,6 +60,24 @@ class ServerManagerLaunchCommandTests(SimpleTestCase):
         self.assertEqual(command[bytes_index + 1], "3000000")
 
     @patch("orchestrator.server_manager._get_python_bin", return_value="python")
+    def test_build_launch_command_text_passes_concurrency_knobs(
+        self,
+        _mock_python_bin: object,
+    ) -> None:
+        command = _build_launch_command(
+            "/tmp/llama",
+            11400,
+            "TEXT",
+            {
+                "host": "127.0.0.1",
+                "advanced": {"decode_concurrency": 8, "prompt_concurrency": 2},
+            },
+            "llama-model",
+        )
+        self.assertEqual(command[command.index("--decode-concurrency") + 1], "8")
+        self.assertEqual(command[command.index("--prompt-concurrency") + 1], "2")
+
+    @patch("orchestrator.server_manager._get_python_bin", return_value="python")
     def test_build_launch_command_multimodal_includes_mtp_flags(
         self,
         _mock_python_bin: object,

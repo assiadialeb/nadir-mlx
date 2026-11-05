@@ -47,6 +47,7 @@ SQLite is used when no PostgreSQL host is configured.
 | `NADIR_GATEWAY_PORT` | `11380` | Must stay **outside** `11400–11500` |
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
 | `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` | `16` | Max parallel upstream requests per instance (`0` = unlimited) |
+| `NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL` | `16` | Max parallel upstream requests across all instances (`0` = unlimited); instances on one Mac share GPU bandwidth |
 | `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `300` | Max wait in gateway queue |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | Alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
