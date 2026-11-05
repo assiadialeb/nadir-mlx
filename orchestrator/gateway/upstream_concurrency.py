@@ -1,22 +1,21 @@
 """Limit concurrent upstream MLX requests per instance and across the gateway.
 
-Each request takes the **global** slot first, then its instance slot, so a
-batch request waiting on the global cap never blocks interactive traffic on
-the same instance. Both levels serve interactive waiters before batch ones
-(``X-Nadir-Priority: batch``) and honor ``NADIR_GATEWAY_BATCH_MAX_SHARE``.
+A single coordinator reserves **global** and **per-instance** capacity together,
+so a request waiting on a full instance never holds a global slot. Interactive
+waiters are preferred; batch traffic is capped by ``NADIR_GATEWAY_BATCH_MAX_SHARE``.
 """
 
 from __future__ import annotations
 
 import time
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from django.conf import settings
 
 from orchestrator.env_utils import env_float, env_str
 from orchestrator.gateway.gpu_scheduler import (
-    PrioritySlotScheduler,
+    GatewayUpstreamScheduler,
     RequestPriority,
     current_request_priority,
 )
@@ -28,8 +27,7 @@ MSG_QUEUE_TIMEOUT = (
     "NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL or the instance override."
 )
 
-_instance_schedulers: dict[int, PrioritySlotScheduler] = {}
-_global_scheduler: PrioritySlotScheduler | None = None
+_coordinator: GatewayUpstreamScheduler | None = None
 
 
 def _read_positive_int(raw_value: object) -> int | None:
@@ -60,7 +58,7 @@ def global_max_concurrent_upstream() -> int | None:
 
 
 def batch_max_share() -> float:
-    """Fraction of each scheduler's capacity batch traffic may hold (0–1)."""
+    """Fraction of the global pool batch traffic may hold (0–1)."""
     raw = env_str("NADIR_GATEWAY_BATCH_MAX_SHARE", "")
     if not raw:
         value = getattr(settings, "NADIR_GATEWAY_BATCH_MAX_SHARE", 0.5)
@@ -104,76 +102,57 @@ def resolve_max_concurrent_upstream(target: GatewayTarget) -> int | None:
     return min(limit, target.decode_concurrency)
 
 
-def _instance_scheduler(instance_id: int, limit: int) -> PrioritySlotScheduler:
-    share = batch_max_share()
-    scheduler = _instance_schedulers.get(instance_id)
-    if scheduler is None:
-        scheduler = PrioritySlotScheduler(limit, batch_max_share=share)
-        _instance_schedulers[instance_id] = scheduler
-    elif scheduler.capacity != limit or scheduler.batch_max_share != share:
-        scheduler.resize(limit, batch_max_share=share)
-    return scheduler
-
-
-def _shared_global_scheduler(limit: int) -> PrioritySlotScheduler:
-    global _global_scheduler
-    share = batch_max_share()
-    if _global_scheduler is None:
-        _global_scheduler = PrioritySlotScheduler(limit, batch_max_share=share)
-    elif _global_scheduler.capacity != limit or _global_scheduler.batch_max_share != share:
-        _global_scheduler.resize(limit, batch_max_share=share)
-    return _global_scheduler
-
-
-def _schedulers_for(target: GatewayTarget) -> list[PrioritySlotScheduler]:
-    # Global first: a batch waiter must not hold the instance slot while queued
-    # on the shared GPU cap (that would block interactive on the same instance).
-    schedulers: list[PrioritySlotScheduler] = []
+def _get_coordinator() -> GatewayUpstreamScheduler:
+    global _coordinator
     global_limit = global_max_concurrent_upstream()
-    if global_limit is not None:
-        schedulers.append(_shared_global_scheduler(global_limit))
-    instance_limit = resolve_max_concurrent_upstream(target)
-    if instance_limit is not None:
-        schedulers.append(_instance_scheduler(target.instance_id, instance_limit))
-    return schedulers
+    share = batch_max_share()
+    if _coordinator is None:
+        _coordinator = GatewayUpstreamScheduler(global_limit, batch_max_share=share)
+        return _coordinator
+    if _coordinator.global_limit != global_limit or _coordinator.batch_max_share != share:
+        _coordinator = GatewayUpstreamScheduler(global_limit, batch_max_share=share)
+    return _coordinator
 
 
-@asynccontextmanager
-async def _held_slot(
-    scheduler: PrioritySlotScheduler,
-    priority: RequestPriority,
-    deadline: float,
-) -> AsyncIterator[None]:
-    await scheduler.acquire(priority, max(0.0, deadline - time.monotonic()))
-    try:
-        yield
-    finally:
-        scheduler.release(priority)
+def reset_upstream_coordinator_for_tests() -> None:
+    """Drop the process-wide coordinator (tests only)."""
+    global _coordinator
+    _coordinator = None
 
 
 @asynccontextmanager
 async def upstream_concurrency_slot(target: GatewayTarget) -> AsyncIterator[None]:
-    """Acquire instance + global slots; wait in queue until timeout."""
+    """Acquire global + instance slots atomically; wait in queue until timeout."""
     from orchestrator.gateway.request_timing import get_active_collector
 
     collector = get_active_collector()
-    priority = current_request_priority()
+    priority: RequestPriority = current_request_priority()
+    instance_limit = resolve_max_concurrent_upstream(target)
     deadline = time.monotonic() + queue_timeout_seconds()
     if collector is not None:
         collector.mark_queue_enter()
-    async with AsyncExitStack() as stack:
-        try:
-            for scheduler in _schedulers_for(target):
-                await stack.enter_async_context(
-                    _held_slot(scheduler, priority, deadline),
-                )
-        except TimeoutError as exc:
-            if collector is not None:
-                collector.set_error("upstream_queue_timeout")
-            raise UpstreamQueueTimeoutError(MSG_QUEUE_TIMEOUT) from exc
+    coordinator = _get_coordinator()
+    try:
+        await coordinator.acquire(
+            instance_id=target.instance_id,
+            instance_limit=instance_limit,
+            priority=priority,
+            timeout_seconds=max(0.0, deadline - time.monotonic()),
+        )
+    except TimeoutError as exc:
         if collector is not None:
-            collector.mark_queue_acquired()
+            collector.set_error("upstream_queue_timeout")
+        raise UpstreamQueueTimeoutError(MSG_QUEUE_TIMEOUT) from exc
+    if collector is not None:
+        collector.mark_queue_acquired()
+    try:
         yield
+    finally:
+        await coordinator.release(
+            instance_id=target.instance_id,
+            instance_limit=instance_limit,
+            priority=priority,
+        )
 
 
 class UpstreamQueueTimeoutError(Exception):

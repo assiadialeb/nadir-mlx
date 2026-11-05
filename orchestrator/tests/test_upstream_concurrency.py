@@ -13,6 +13,7 @@ from orchestrator.gateway.upstream_concurrency import (
     UpstreamQueueTimeoutError,
     default_max_concurrent_upstream,
     global_max_concurrent_upstream,
+    reset_upstream_coordinator_for_tests,
     resolve_max_concurrent_upstream,
     upstream_concurrency_slot,
 )
@@ -161,10 +162,7 @@ async def _measure_peak(targets: list[GatewayTarget]) -> int:
 
 class GlobalUpstreamConcurrencyTests(SimpleTestCase):
     def setUp(self) -> None:
-        from orchestrator.gateway import upstream_concurrency
-
-        upstream_concurrency._global_scheduler = None
-        upstream_concurrency._instance_schedulers.clear()
+        reset_upstream_coordinator_for_tests()
 
     def test_global_cap_limits_requests_across_instances(self) -> None:
         targets = [_text_target(501), _text_target(502), _text_target(503)] * 2
@@ -220,15 +218,37 @@ class GlobalUpstreamConcurrencyTests(SimpleTestCase):
             asyncio.run(run())
         self.assertEqual(order, ["first", "interactive", "batch"])
 
+    def test_full_instance_queue_does_not_block_other_instance(self) -> None:
+        from orchestrator.gateway.gpu_scheduler import PRIORITY_INTERACTIVE, set_request_priority
 
-    def test_schedulers_acquire_global_before_instance(self) -> None:
-        from orchestrator.gateway import upstream_concurrency as uc
+        target_a = _text_target(601, max_concurrent_upstream=1)
+        target_b = _text_target(602, max_concurrent_upstream=1)
+        order: list[str] = []
 
-        uc._global_scheduler = None
-        uc._instance_schedulers.clear()
-        target = _text_target(551, max_concurrent_upstream=3)
-        with patch.dict(os.environ, {"NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL": "4"}, clear=False):
-            schedulers = uc._schedulers_for(target)
-        self.assertEqual(len(schedulers), 2)
-        self.assertIs(schedulers[0], uc._global_scheduler)
-        self.assertIs(schedulers[1], uc._instance_schedulers[551])
+        async def work(target: GatewayTarget, label: str, hold: float) -> None:
+            set_request_priority(PRIORITY_INTERACTIVE)
+            async with upstream_concurrency_slot(target):
+                order.append(f"{label}-start")
+                await asyncio.sleep(hold)
+                order.append(f"{label}-end")
+
+        async def run() -> None:
+            with patch.dict(
+                os.environ,
+                {
+                    "NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL": "2",
+                    "NADIR_GATEWAY_BATCH_MAX_SHARE": "1",
+                },
+                clear=False,
+            ):
+                reset_upstream_coordinator_for_tests()
+                await asyncio.gather(
+                    work(target_a, "A1", 0.06),
+                    work(target_a, "A2", 0.01),
+                    work(target_a, "A3", 0.01),
+                    work(target_b, "B1", 0.01),
+                )
+
+        asyncio.run(run())
+        self.assertIn("B1-start", order)
+        self.assertLess(order.index("B1-start"), order.index("A2-start"))

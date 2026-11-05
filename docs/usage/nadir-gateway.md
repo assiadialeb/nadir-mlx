@@ -351,7 +351,7 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
     When more clients hit the gateway than MLX can serve in parallel, excess requests **wait in a queue** (like Ollama) instead of failing immediately. Tune `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` for your hardware, or set **Max concurrent upstream requests** per instance in the server form. Use `0` globally or per instance to disable the cap (legacy pass-through).
 
 !!! note "GPU scheduling and priority"
-    Every upstream request takes the **global slot** first (`NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL`, default **8**), then its **instance slot**, under one `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` budget. Global-first avoids a batch waiter holding an instance slot while queued on the shared GPU cap.
+    Every upstream request acquires **global** and **instance** capacity in one step (`NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL`, default **8**), under one `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` budget. A waiter blocked on a full instance never holds a global slot, so other models keep moving.
 
     Freed slots go to **interactive** requests first. Batch traffic is further capped by `NADIR_GATEWAY_BATCH_MAX_SHARE` (default **0.5**) so long-running batch jobs cannot fill every slot. Background clients (report generation, bulk embeddings, evaluations) should send `X-Nadir-Priority: batch`. Any other value, or no header, is interactive.
 
