@@ -450,7 +450,7 @@ Fan-out uses `X-Nadir-Priority: batch` and shares the **global** concurrency sch
 
 Cancel while `validating` stops immediately. Cancel while `in_progress` sets `cancelling`; the worker records any line that already finished, then stops scheduling new lines. In-flight upstream calls still run until they complete or hit `NADIR_BATCH_LINE_TIMEOUT_SECONDS` (default 600s).
 
-Copy-paste upload/create/poll flow: [Integration recipes — Overnight bulk jobs](integration-recipes.md#overnight-bulk-jobs-openai-batch-api).
+E2E validation: [Batch runbook](gateway-runbooks/batch.md). Copy-paste client setup: [Integration recipes — Overnight bulk jobs](integration-recipes.md#overnight-bulk-jobs-openai-batch-api).
 
 ## Troubleshooting
 
@@ -489,5 +489,6 @@ You can still call `http://127.0.0.1:<114xx>/v1` for debugging. **Prefer the gat
 | IMAGE | [gateway-runbooks/image.md](gateway-runbooks/image.md) |
 | TTS | [gateway-runbooks/tts.md](gateway-runbooks/tts.md) |
 | STT | [gateway-runbooks/stt.md](gateway-runbooks/stt.md) |
+| Batch (OpenAI Files + Batches) | [gateway-runbooks/batch.md](gateway-runbooks/batch.md) |
 
 See also the [API coverage matrix](nadir-gateway-coverage-matrix.md) for gaps vs the OpenAI API (streaming, audio formats, etc.).

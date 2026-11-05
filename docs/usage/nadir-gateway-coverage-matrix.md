@@ -150,4 +150,4 @@ Last updated: November 2026 — batch v2 (MLX-133), Anthropic cache usage (MLX-1
 ## References
 
 - Integration guide: [nadir-gateway.md](nadir-gateway.md)
-- E2E runbooks: see [Nadir Gateway — Per-mode runbooks](nadir-gateway.md#per-mode-runbooks-e2e-validation)
+- E2E runbooks: see [Nadir Gateway — Per-mode runbooks](nadir-gateway.md#per-mode-runbooks-e2e-validation) (incl. [batch.md](gateway-runbooks/batch.md))

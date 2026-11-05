@@ -372,7 +372,7 @@ curl http://127.0.0.1:11442/v1/audio/transcriptions \
 
 **Recommended:** point clients at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
 
-See **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)** for curl samples per launch mode, environment variables, and troubleshooting (`404`, `503`, wrong route for mode). For bulk JSONL evals, see **[batch jobs](docs/usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api)** (`/v1/files`, `/v1/batches`, streaming upload, incremental progress).
+See **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)** for curl samples per launch mode, environment variables, and troubleshooting (`404`, `503`, wrong route for mode). For bulk JSONL evals, see the **[batch runbook](docs/usage/gateway-runbooks/batch.md)** and **[integration recipes](docs/usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api)** (`/v1/files`, `/v1/batches`, streaming upload, incremental progress).
 
 #### Direct instance port (debugging)
 

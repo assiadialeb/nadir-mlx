@@ -65,7 +65,7 @@ flowchart TB
 | Install on macOS | [Installation](installation.md) |
 | Environment variables | [Configuration](configuration.md) |
 | Gateway & curl examples | [Nadir Gateway](usage/nadir-gateway.md) |
-| Bulk JSONL / batch jobs | [Integration recipes — Overnight bulk jobs](usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api) |
+| Bulk JSONL / batch jobs | [Batch runbook](usage/gateway-runbooks/batch.md) · [Integration recipes](usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api) |
 | Client integrations | [Integration recipes](usage/integration-recipes.md) |
 | IDE MCP (start/stop) | [MCP server](usage/mcp.md) |
 | Gateway security | [Nadir Gateway — Security](usage/nadir-gateway.md#security) |

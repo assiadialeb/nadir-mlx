@@ -251,7 +251,7 @@ Each JSONL line uses OpenAI batch shape: `custom_id`, `url`, `body` (with gatewa
 !!! note "After a gateway crash"
     On the first worker cycle after restart, orphaned `in_progress` jobs are marked `failed` (fail-closed). Re-submit the input file or use `python manage.py process_gateway_batches --reconcile-stale` if the auto worker is disabled.
 
-Full env knobs and cancel semantics: [Nadir Gateway — Local batch jobs](nadir-gateway.md#local-batch-jobs-openai-compatible). Product scope: [ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md).
+Full env knobs and cancel semantics: [Nadir Gateway — Local batch jobs](nadir-gateway.md#local-batch-jobs-openai-compatible). Step-by-step E2E: [Batch runbook](gateway-runbooks/batch.md). Product scope: [ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md).
 
 For ad-hoc one-offs (no Batch API), shell/`xargs`/cron against `POST /v1/chat/completions` still works.
 

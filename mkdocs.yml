@@ -93,4 +93,5 @@ nav:
           - Image generation: usage/gateway-runbooks/image.md
           - Text-to-speech: usage/gateway-runbooks/tts.md
           - Speech-to-text: usage/gateway-runbooks/stt.md
+          - Batch (Files + Batches): usage/gateway-runbooks/batch.md
   - Contributing: contributing.md
