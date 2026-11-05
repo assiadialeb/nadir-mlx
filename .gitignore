@@ -71,6 +71,7 @@ logs/benchmarks/*
 
 # Ephemeral generated image PNGs (response_format=url)
 data/generated_images/
+data/batch_files/
 data/django_secret_key
 data/runtime/
 

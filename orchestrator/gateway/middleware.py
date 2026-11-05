@@ -83,13 +83,18 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         self.max_body_bytes = max(1, int(max_body_bytes))
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        max_bytes = self.max_body_bytes
+        if request.url.path.startswith("/v1/files"):
+            from orchestrator.batch_file_store import batch_file_max_bytes
+
+            max_bytes = batch_file_max_bytes()
         raw = request.headers.get("content-length")
         if raw:
             try:
                 length = int(raw)
             except ValueError:
                 length = -1
-            if length > self.max_body_bytes:
+            if length > max_bytes:
                 return JSONResponse(
                     status_code=413,
                     content=openai_error_envelope(

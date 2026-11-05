@@ -5,7 +5,7 @@ Status of capabilities exposed via the gateway (`:11380/v1`) and gaps vs OpenAI 
 !!! note "Living document"
     Use this page when planning new gateway or upstream features. Update it when acceptance criteria change.
 
-Last updated: November 2026 — security/heartbeat + files/batches spike (ADR 008).
+Last updated: November 2026 — local `/v1/files` + `/v1/batches` MVP (MLX-132).
 
 ## Cross-cutting (all modes)
 
@@ -29,7 +29,9 @@ Last updated: November 2026 — security/heartbeat + files/batches spike (ADR 00
 | `POST /v1/messages/count_tokens` | ✅ best-effort estimate (no tokenizer load) |
 | Ollama façade | ✅ `/`, `/api/version`, `/api/tags`, `/api/ps`, `/api/show`, `/api/chat`, `/api/generate`, `/api/embed` + legacy `/api/embeddings` |
 | Multi-worker uvicorn | ❌ single process by default |
-| `/v1/files` + `/v1/batches` | ⏸️ spike — [ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md) (conditional go, deferred MVP) |
+| `/v1/files` (`purpose=batch`) | ✅ upload / list / delete / content; `NADIR_BATCH_FILE_MAX_MB` (default 200) |
+| `/v1/batches` (chat JSONL) | ✅ create / get / list / cancel; worker `process_gateway_batches` |
+| Full OpenAI Batch parity | ⏸️ embeddings batch, webhooks, resume — see [ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md) |
 
 ## TEXT
 

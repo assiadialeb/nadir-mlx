@@ -122,6 +122,78 @@ class GatewayRequestMetric(models.Model):
         return f"GatewayTiming {self.request_id} alias={self.alias}"
 
 
+class GatewayBatchFile(models.Model):
+    """OpenAI-compatible file object (``purpose=batch`` only in MVP)."""
+
+    file_id = models.CharField(max_length=128, unique=True, db_index=True)
+    purpose = models.CharField(max_length=32)
+    filename = models.CharField(max_length=512)
+    bytes = models.BigIntegerField()
+    storage_name = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.file_id} ({self.purpose})"
+
+
+class GatewayBatchJob(models.Model):
+    """Local OpenAI Batch job (chat completions JSONL)."""
+
+    STATUS_VALIDATING = "validating"
+    STATUS_IN_PROGRESS = "in_progress"
+    STATUS_COMPLETED = "completed"
+    STATUS_FAILED = "failed"
+    STATUS_CANCELLING = "cancelling"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = [
+        (STATUS_VALIDATING, "Validating"),
+        (STATUS_IN_PROGRESS, "In progress"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLING, "Cancelling"),
+        (STATUS_CANCELLED, "Cancelled"),
+    ]
+
+    batch_id = models.CharField(max_length=128, unique=True, db_index=True)
+    input_file = models.ForeignKey(
+        GatewayBatchFile,
+        on_delete=models.PROTECT,
+        related_name="batch_jobs_as_input",
+    )
+    output_file = models.ForeignKey(
+        GatewayBatchFile,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="batch_jobs_as_output",
+    )
+    error_file = models.ForeignKey(
+        GatewayBatchFile,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="batch_jobs_as_errors",
+    )
+    endpoint = models.CharField(max_length=128)
+    completion_window = models.CharField(max_length=16, default="24h")
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default=STATUS_VALIDATING)
+    errors = models.JSONField(null=True, blank=True)
+    request_counts = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    in_progress_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.batch_id} ({self.status})"
+
+
 class BenchmarkRun(models.Model):
     TARGET_CHOICES = [
         ("INSTANCE", "MLX instance"),
