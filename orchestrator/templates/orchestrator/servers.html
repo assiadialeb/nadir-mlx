@@ -849,7 +849,7 @@ function resolveTextConfigValue(field, existingValue) {
         return formatGatewayAliasesFieldValue(existingValue);
     }
     if (existingValue == null || existingValue === '') {
-        return field.default != null ? field.default : '';
+        return field.default == null ? '' : field.default;
     }
     return existingValue;
 }

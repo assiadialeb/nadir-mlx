@@ -341,56 +341,67 @@ def servers_view(request):
 
 
 
+def _launch_mode_ui_label(launch_mode: str) -> str:
+    labels = {
+        "MULTIMODAL": "Multimodal (mlx_vlm)",
+        "EMBEDDING": "Embeddings (mlx-embeddings)",
+        "RERANKER": "Rerank (local-reranker)",
+        "IMAGE": "Image (mflux)",
+        "TTS": "TTS (mlx-audio / Kokoro)",
+        "STT": "STT (mlx-audio / Whisper)",
+    }
+    return labels.get(launch_mode, "Text (mlx_lm)")
+
+
+def _parse_optional_instance_port(port_raw: str | None) -> int | None:
+    if not port_raw or not str(port_raw).strip():
+        return None
+    return int(port_raw)
+
+
+def _flash_start_instance_outcome(request, plan) -> None:
+    mode_label = _launch_mode_ui_label(plan.launch_mode)
+    if plan.already_active:
+        messages.info(request, f"{mode_label} instance is already active on port {plan.port}.")
+        return
+    messages.info(
+        request,
+        f"{mode_label} instance loading on port {plan.port}. "
+        "Status turns Running once /health answers and warmup completes.",
+    )
+
+
 # Start Instance Trigger
 @login_required
 def start_instance_view(request):
-    if request.method == 'POST':
-        model_name = (request.POST.get('model_name') or '').strip()
-        port_raw = request.POST.get('port')
-        launch_mode_raw = request.POST.get('launch_mode', 'TEXT')
+    if request.method != 'POST':
+        return redirect('servers')
 
-        if not model_name:
-            messages.error(request, "Please select a model.")
-            return redirect('servers')
+    model_name = (request.POST.get('model_name') or '').strip()
+    if not model_name:
+        messages.error(request, "Please select a model.")
+        return redirect('servers')
 
-        port = None
-        if port_raw and port_raw.strip():
-            try:
-                port = int(port_raw)
-            except ValueError:
-                messages.error(request, "The specified port must be a valid number.")
-                return redirect('servers')
+    try:
+        port = _parse_optional_instance_port(request.POST.get('port'))
+    except ValueError:
+        messages.error(request, "The specified port must be a valid number.")
+        return redirect('servers')
 
-        try:
-            launch_mode = parse_launch_mode(launch_mode_raw)
-            server_config = resolve_server_config_from_request(
-                request.POST,
-                launch_mode,
-                model_name,
-            )
-            plan = start_instance_in_background(model_name, port, launch_mode, server_config)
-            mode_labels = {
-                "MULTIMODAL": "Multimodal (mlx_vlm)",
-                "EMBEDDING": "Embeddings (mlx-embeddings)",
-                "RERANKER": "Rerank (local-reranker)",
-                "IMAGE": "Image (mflux)",
-                "TTS": "TTS (mlx-audio / Kokoro)",
-                "STT": "STT (mlx-audio / Whisper)",
-            }
-            mode_label = mode_labels.get(plan.launch_mode, "Text (mlx_lm)")
-            if plan.already_active:
-                messages.info(request, f"{mode_label} instance is already active on port {plan.port}.")
-            else:
-                messages.info(
-                    request,
-                    f"{mode_label} instance loading on port {plan.port}. "
-                    "Status turns Running once /health answers and warmup completes.",
-                )
-        except (ValueError, InstanceSlotBusy) as e:
-            messages.error(request, str(e))
-        except Exception as e:
-            messages.error(request, f"Failed to start instance: {str(e)}")
-            
+    try:
+        launch_mode = parse_launch_mode(request.POST.get('launch_mode', 'TEXT'))
+        server_config = resolve_server_config_from_request(
+            request.POST,
+            launch_mode,
+            model_name,
+        )
+        plan = start_instance_in_background(model_name, port, launch_mode, server_config)
+        _flash_start_instance_outcome(request, plan)
+    except (ValueError, InstanceSlotBusy) as exc:
+        messages.error(request, str(exc))
+    except Exception as exc:
+        messages.error(request, f"Failed to start instance: {str(exc)}")
+
     return redirect('servers')
 
 
