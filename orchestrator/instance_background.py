@@ -6,7 +6,7 @@ import logging
 import threading
 from typing import Any, Callable
 
-from orchestrator.instance_locks import SlotLockHandoff
+from orchestrator.instance_locks import USER_ACTION_SLOT_WAIT_SECONDS, SlotLockHandoff
 from orchestrator.models import InferenceInstance
 from orchestrator.server_manager import (
     InstanceLaunchPlan,
@@ -50,7 +50,7 @@ def start_instance_in_background(
         InstanceSlotBusy: another start/stop is in progress on this port.
     """
     resolved_port = validated_launch_port(int(port)) if port else get_free_port()
-    handoff = SlotLockHandoff(resolved_port)
+    handoff = SlotLockHandoff(resolved_port, timeout_seconds=USER_ACTION_SLOT_WAIT_SECONDS)
     try:
         with handoff.held_by_current_thread():
             plan = prepare_instance_launch(model_name, resolved_port, launch_mode, server_config)
@@ -74,7 +74,7 @@ def restart_instance_in_background(instance: InferenceInstance) -> None:
     Raises:
         InstanceSlotBusy: another start/stop is in progress on this port.
     """
-    handoff = SlotLockHandoff(instance.port)
+    handoff = SlotLockHandoff(instance.port, timeout_seconds=USER_ACTION_SLOT_WAIT_SECONDS)
     _run_with_handoff(
         handoff,
         lambda: restart_instance(instance),

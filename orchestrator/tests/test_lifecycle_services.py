@@ -87,6 +87,7 @@ class EnsureInstanceReadyTests(TestCase):
             11411,
             "TEXT",
             instance.server_config,
+            slot_timeout_seconds=gateway_wake_timeout_seconds(),
         )
 
     @patch("orchestrator.lifecycle_services.start_instance")

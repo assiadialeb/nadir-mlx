@@ -60,3 +60,28 @@ class SpeculativeWakeTests(TestCase):
         maybe_speculative_wake("quiet-chat")
         time.sleep(0.2)
         mock_ensure.assert_not_called()
+
+    @patch("orchestrator.lifecycle_services.probe_http_health", return_value=True)
+    @patch("orchestrator.lifecycle_services.ensure_instance_ready")
+    def test_speculative_probe_on_running_does_not_touch_activity(
+        self,
+        mock_ensure: MagicMock,
+        _mock_probe: MagicMock,
+    ) -> None:
+        instance = InferenceInstance.objects.create(
+            model_name="warm-model",
+            port=11452,
+            launch_mode="TEXT",
+            server_config={
+                "model_id": "warm-chat",
+                "ops": {
+                    "lifecycle_mode": LIFECYCLE_MODE_ON_DEMAND,
+                    "speculative_wake": True,
+                },
+            },
+            status="RUNNING",
+        )
+        maybe_speculative_wake("warm-chat")
+        instance.refresh_from_db()
+        self.assertIsNone(instance.last_used_at)
+        mock_ensure.assert_not_called()

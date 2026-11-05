@@ -292,12 +292,72 @@ class LaunchLifecycleTests(DjangoTestCase):
         instance = _create_instance(port=11474, status="LOADING")
         handoff = SlotLockHandoff(11474)
         try:
-            self.assertFalse(request_instance_stop(instance))
+            with patch("orchestrator.server_manager.USER_ACTION_SLOT_WAIT_SECONDS", 0.05):
+                self.assertFalse(request_instance_stop(instance))
         finally:
             handoff.release()
         instance.refresh_from_db()
         self.assertEqual(instance.desired_state, InferenceInstance.DESIRED_STATE_STOPPED)
         self.assertEqual(instance.status, "LOADING")
+
+
+@patch("orchestrator.server_manager.clear_gateway_route_cache")
+@patch("orchestrator.server_manager._collect_stop_targets", return_value=set())
+@patch("orchestrator.server_manager._ensure_port_released", return_value=[])
+class QueuedStopConvergenceTests(DjangoTestCase):
+    def test_request_instance_stop_waits_for_brief_probe(self, *_mocks: object) -> None:
+        import threading
+
+        from orchestrator.instance_locks import SlotLockHandoff
+        from orchestrator.server_manager import request_instance_stop
+
+        instance = _create_instance(port=11475, status="RUNNING")
+        handoff = SlotLockHandoff(11475)
+        threading.Timer(0.1, handoff.release).start()
+
+        self.assertTrue(request_instance_stop(instance))
+        instance.refresh_from_db()
+        self.assertEqual(instance.status, "STOPPED")
+
+    def test_watchdog_applies_stop_queued_behind_busy_slot(self, *_mocks: object) -> None:
+        import threading
+
+        from orchestrator.instance_locks import SlotLockHandoff
+        from orchestrator.instance_watchdog import run_watchdog_cycle
+        from orchestrator.server_manager import request_instance_stop
+
+        instance = _create_instance(port=11476, status="RUNNING")
+        holder_ready = threading.Event()
+        release_holder = threading.Event()
+
+        def _hold_slot() -> None:
+            handoff = SlotLockHandoff(11476)
+            holder_ready.set()
+            release_holder.wait(timeout=5)
+            handoff.release()
+
+        holder = threading.Thread(target=_hold_slot)
+        holder.start()
+        holder_ready.wait(timeout=5)
+        with patch("orchestrator.server_manager.USER_ACTION_SLOT_WAIT_SECONDS", 0.05):
+            self.assertFalse(request_instance_stop(instance))
+        release_holder.set()
+        holder.join(timeout=5)
+
+        with patch("orchestrator.instance_watchdog.refresh_all_instance_health"):
+            run_watchdog_cycle()
+        instance.refresh_from_db()
+        self.assertEqual(instance.status, "STOPPED")
+        self.assertEqual(instance.desired_state, InferenceInstance.DESIRED_STATE_STOPPED)
+
+    def test_watchdog_leaves_running_intent_alone(self, *_mocks: object) -> None:
+        from orchestrator.instance_watchdog import run_watchdog_cycle
+
+        instance = _create_instance(port=11477, status="RUNNING")
+        with patch("orchestrator.instance_watchdog.refresh_all_instance_health"):
+            run_watchdog_cycle()
+        instance.refresh_from_db()
+        self.assertEqual(instance.status, "RUNNING")
 
 
 class StartInstanceTests(DjangoTestCase):

@@ -15,7 +15,7 @@ from orchestrator.instance_health import refresh_all_instance_health, should_ski
 from orchestrator.instance_locks import InstanceSlotBusy
 from orchestrator.lifecycle_selectors import is_manual_lifecycle
 from orchestrator.models import InferenceInstance
-from orchestrator.server_manager import is_stop_in_progress, restart_instance
+from orchestrator.server_manager import is_stop_in_progress, restart_instance, stop_instance
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +153,41 @@ def _fail_orphaned_benchmarks() -> None:
         logger.warning("Marked %s orphaned benchmark run(s) as FAILED", interrupted)
 
 
+def _converge_stop_intent(instance: InferenceInstance) -> None:
+    """Stop an active row whose operator intent is ``stopped``.
+
+    Covers user stops queued while the slot was briefly held (health probe,
+    start finishing between its last cancel check and RUNNING).
+    """
+    if is_stop_in_progress(instance):
+        return
+    try:
+        stop_instance(
+            instance,
+            desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+            blocking=False,
+        )
+    except InstanceSlotBusy:
+        return
+    except RuntimeError as exc:
+        logger.warning("Queued stop failed for %s on port %s: %s", instance.model_name, instance.port, exc)
+        return
+    logger.info("Applied queued stop for %s on port %s", instance.model_name, instance.port)
+
+
+def _converge_stopped_intents() -> None:
+    pending_stops = InferenceInstance.objects.filter(
+        status__in=("LOADING", "RUNNING"),
+        desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
+    )
+    for instance in pending_stops:
+        _converge_stop_intent(instance)
+
+
 def run_watchdog_cycle() -> None:
-    """One health pass plus auto-restart for eligible instances."""
+    """Health pass, queued-stop convergence, then auto-restart for eligible instances."""
     refresh_all_instance_health()
+    _converge_stopped_intents()
     candidates = InferenceInstance.objects.filter(
         status="FAILED",
         desired_state=InferenceInstance.DESIRED_STATE_RUNNING,

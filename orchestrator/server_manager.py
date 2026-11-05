@@ -17,7 +17,12 @@ from django.utils import timezone
 from orchestrator.gateway.route_cache import clear_gateway_route_cache
 
 from .gateway_aliases import validate_instance_gateway_aliases
-from .instance_locks import instance_slot_lock, is_slot_lock_held_elsewhere
+from .instance_locks import (
+    DEFAULT_SLOT_LOCK_TIMEOUT_SECONDS,
+    USER_ACTION_SLOT_WAIT_SECONDS,
+    instance_slot_lock,
+    is_slot_lock_held_elsewhere,
+)
 from .models import InferenceInstance
 from .server_config_schema import (
     build_default_server_config,
@@ -768,6 +773,7 @@ def prepare_instance_launch(
     *,
     wait_for_slot: bool = True,
     mark_desired_running: bool = True,
+    slot_timeout_seconds: float = DEFAULT_SLOT_LOCK_TIMEOUT_SECONDS,
 ) -> InstanceLaunchPlan:
     """Validate a launch and reserve its DB row (LOADING) under the slot lock.
 
@@ -780,7 +786,11 @@ def prepare_instance_launch(
     model_path = _validated_model_path(safe_model_name, launch_mode)
     resolved_port = validated_launch_port(int(port)) if port else get_free_port()
 
-    with instance_slot_lock(resolved_port, blocking=wait_for_slot):
+    with instance_slot_lock(
+        resolved_port,
+        blocking=wait_for_slot,
+        timeout_seconds=slot_timeout_seconds,
+    ):
         active = _find_active_instance(safe_model_name, resolved_port)
         if active is not None:
             return InstanceLaunchPlan(
@@ -822,12 +832,17 @@ def launch_prepared_instance(
     plan: InstanceLaunchPlan,
     *,
     wait_for_slot: bool = True,
+    slot_timeout_seconds: float = DEFAULT_SLOT_LOCK_TIMEOUT_SECONDS,
 ) -> InferenceInstance:
     """Spawn the process, wait for /health and warmup, then mark RUNNING.
 
     Idempotent: returns the row untouched when its process is already alive.
     """
-    with instance_slot_lock(plan.port, blocking=wait_for_slot):
+    with instance_slot_lock(
+        plan.port,
+        blocking=wait_for_slot,
+        timeout_seconds=slot_timeout_seconds,
+    ):
         instance = InferenceInstance.objects.get(pk=plan.instance_id)
         if instance.status in _ACTIVE_INSTANCE_STATUSES and is_instance_process(
             instance.pid, plan.port
@@ -846,6 +861,7 @@ def start_instance(
     server_config: dict[str, Any] | None = None,
     *,
     wait_for_slot: bool = True,
+    slot_timeout_seconds: float = DEFAULT_SLOT_LOCK_TIMEOUT_SECONDS,
 ) -> InferenceInstance:
     """Launch an inference server and return once it is RUNNING (healthy and warm)."""
     plan = prepare_instance_launch(
@@ -854,8 +870,13 @@ def start_instance(
         launch_mode,
         server_config,
         wait_for_slot=wait_for_slot,
+        slot_timeout_seconds=slot_timeout_seconds,
     )
-    return launch_prepared_instance(plan, wait_for_slot=wait_for_slot)
+    return launch_prepared_instance(
+        plan,
+        wait_for_slot=wait_for_slot,
+        slot_timeout_seconds=slot_timeout_seconds,
+    )
 
 
 def _launch_locked(instance: InferenceInstance, plan: InstanceLaunchPlan) -> InferenceInstance:
@@ -1084,6 +1105,7 @@ def stop_instance(
     *,
     desired_state: str | None = None,
     blocking: bool = True,
+    timeout_seconds: float = DEFAULT_SLOT_LOCK_TIMEOUT_SECONDS,
 ) -> None:
     """Terminate the inference server and ensure the port is released.
 
@@ -1092,12 +1114,13 @@ def stop_instance(
         desired_state: Intent to persist (``stopped`` for user / idle / eviction
             stops); ``None`` for internal stops (restart, failed launch).
         blocking: Wait for an in-flight start/stop on the slot instead of failing.
+        timeout_seconds: Max wait for the slot when ``blocking``.
 
     Raises:
-        InstanceSlotBusy: ``blocking=False`` and another actor holds the slot.
+        InstanceSlotBusy: the slot could not be acquired in time.
         RuntimeError: the port could not be released (row is left FAILED).
     """
-    with instance_slot_lock(instance.port, blocking=blocking):
+    with instance_slot_lock(instance.port, blocking=blocking, timeout_seconds=timeout_seconds):
         _stop_instance_locked(instance, desired_state=desired_state)
 
 
@@ -1129,7 +1152,11 @@ def _stop_instance_locked(instance: InferenceInstance, *, desired_state: str | N
 
 
 def request_instance_stop(instance: InferenceInstance) -> bool:
-    """Record a user stop; stop now, or let the in-flight start cancel itself.
+    """Record a user stop; stop now, or leave it to the in-flight start / watchdog.
+
+    The persisted ``desired_state=stopped`` is the queue: an in-flight start
+    cancels itself, and the watchdog converges any active row still meant to
+    be stopped once the slot is free.
 
     Returns:
         True when the instance was stopped synchronously, False when the stop
@@ -1144,16 +1171,20 @@ def request_instance_stop(instance: InferenceInstance) -> bool:
         stop_instance(
             instance,
             desired_state=InferenceInstance.DESIRED_STATE_STOPPED,
-            blocking=False,
+            timeout_seconds=USER_ACTION_SLOT_WAIT_SECONDS,
         )
     except InstanceSlotBusy:
         return False
     return True
 
 
-def delete_instance(instance: InferenceInstance, *, blocking: bool = True) -> None:
+def delete_instance(
+    instance: InferenceInstance,
+    *,
+    timeout_seconds: float = DEFAULT_SLOT_LOCK_TIMEOUT_SECONDS,
+) -> None:
     """Stop a running instance if needed, then remove its database record."""
-    with instance_slot_lock(instance.port, blocking=blocking):
+    with instance_slot_lock(instance.port, timeout_seconds=timeout_seconds):
         instance.refresh_from_db()
         if instance.status in _ACTIVE_INSTANCE_STATUSES:
             stop_instance(instance, desired_state=InferenceInstance.DESIRED_STATE_STOPPED)
@@ -1167,15 +1198,21 @@ def update_stopped_instance(
     launch_mode: LaunchMode | None = None,
     server_config: dict[str, Any] | None = None,
 ) -> InferenceInstance:
-    """Update port, mode, or config for a stopped or failed instance."""
-    with instance_slot_lock(instance.port, blocking=False):
-        instance.refresh_from_db()
-        return _update_stopped_instance_locked(
-            instance,
-            port=port,
-            launch_mode=launch_mode,
-            server_config=server_config,
-        )
+    """Update port, mode, or config for a stopped or failed instance.
+
+    Holds the slot lock of both the current and the target port so a
+    concurrent start on the new port cannot race the move.
+    """
+    target_port = int(port) if port is not None else instance.port
+    with instance_slot_lock(instance.port, timeout_seconds=USER_ACTION_SLOT_WAIT_SECONDS):
+        with instance_slot_lock(target_port, timeout_seconds=USER_ACTION_SLOT_WAIT_SECONDS):
+            instance.refresh_from_db()
+            return _update_stopped_instance_locked(
+                instance,
+                port=port,
+                launch_mode=launch_mode,
+                server_config=server_config,
+            )
 
 
 def _update_stopped_instance_locked(

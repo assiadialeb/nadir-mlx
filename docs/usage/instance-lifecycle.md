@@ -42,7 +42,7 @@ Recommendations:
 - Large / rarely used chat weights → `manual` (no boot restore, no wake — start from UI when needed)
 - Frequently used secondary chat → `on_demand` + `pinned` + shorter `idle_minutes` (survives LRU, still sleeps)
 - Rare TTS / STT / image → `on_demand` with `idle_minutes` 15–60
-- Enable `speculative_wake` when clients probe `/v1/models/{id}` or Ollama `/api/show` before the first completion
+- Enable `speculative_wake` when clients probe `/v1/models/{id}` or Ollama `/api/show` before the first completion. Probes on a running instance do not count as activity, so clients polling model metadata never keep a model loaded
 
 ## Environment variables
 
@@ -69,7 +69,7 @@ Recommendations:
 
 Three processes act on instances: the UI (`runserver`), the gateway (wake, idle offload, LRU eviction, watchdog, startup reconcile) and the MCP server. They coordinate through two mechanisms ([ADR 009](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/009-instance-slot-lock-desired-state.md)).
 
-**Slot lock.** Every start, stop, restart, edit and delete holds an exclusive `flock` on `NADIR_RUNTIME_STATE_DIR/locks/port-<port>.lock`. The kernel releases it if the holder dies, so a crash never leaves a slot stuck. User-facing actions fail fast with *"A start or stop is already in progress"*; background actors (idle offload, eviction, watchdog, reconcile) skip the slot and retry on their next cycle.
+**Slot lock.** Every start, stop, restart, edit and delete holds an exclusive `flock` on `NADIR_RUNTIME_STATE_DIR/locks/port-<port>.lock`. The kernel releases it if the holder dies, so a crash never leaves a slot stuck. User-facing actions wait up to 2 s for the slot (so sub-millisecond health probes never reject them), then fail with *"A start or stop is already in progress"*; background actors (idle offload, eviction, watchdog, reconcile) skip the slot and retry on their next cycle. A gateway wake waits at most `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` for the slot. Editing the port locks both the current and the target port.
 
 **Desired state.** `InferenceInstance.desired_state` records intent:
 
@@ -90,7 +90,10 @@ An unexpected exit of an `always_on` instance whose intent is `running` becomes 
 
 The Servers page refreshes itself every few seconds while a row is **Loading** or **Working…** (slot locked by another process), unless a modal is open or a form was edited.
 
-**Stop during start.** Clicking Stop while a start is in flight records `desired_state=stopped` and shows *"Stop queued"*; the starter checks the intent between health polls and after warmup, then stops the process instead of marking it Running.
+**Stop during start.** Clicking Stop while a start is in flight records `desired_state=stopped` and shows *"Stop queued"*; the starter checks the intent between health polls and after warmup, then stops the process instead of marking it Running. If the stop could not be applied immediately for any other reason, the watchdog stops every `LOADING`/`RUNNING` row whose intent is `stopped` on its next cycle (`INSTANCE_HEALTH_CHECK_INTERVAL_SECONDS`).
+
+!!! note "Upgrade from versions without `desired_state`"
+    Migration `0015` seeds `desired_state` from the status at upgrade time: `RUNNING`/`LOADING` rows become `running`, every other row (including `FAILED` `always_on` instances) becomes `stopped`. Those instances are no longer restored at boot nor auto-restarted until they are started once from the Servers UI.
 
 **PID identity.** Stored PIDs are trusted only when `ps` shows an `orchestrator.*` launcher bound to `--port <port>`. A recycled PID or a foreign program listening on the port is never signalled; the start fails with *"Port N is already in use by another program"* instead.
 

@@ -203,6 +203,20 @@ class UpdateStoppedInstanceTests(TestCase):
         self.assertEqual(instance.port, 11401)
         instance.save.assert_called_once()
 
+    @patch("orchestrator.server_manager.USER_ACTION_SLOT_WAIT_SECONDS", 0.05)
+    def test_update_stopped_instance_rejects_busy_target_port(self) -> None:
+        from orchestrator.instance_locks import InstanceSlotBusy, SlotLockHandoff
+        from orchestrator.server_manager import update_stopped_instance
+
+        instance = MagicMock(status="STOPPED", port=11402, launch_mode="TEXT", model_name="demo")
+        handoff = SlotLockHandoff(11403)
+        try:
+            with self.assertRaises(InstanceSlotBusy):
+                update_stopped_instance(instance, port=11403)
+        finally:
+            handoff.release()
+        instance.save.assert_not_called()
+
 
 class ServerConfigOpsTests(TestCase):
     @override_settings(MLX_DEFAULT_SERVER_HOST="127.0.0.1")

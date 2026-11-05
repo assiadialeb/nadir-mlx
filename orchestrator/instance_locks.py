@@ -18,6 +18,9 @@ from typing import Iterator
 from django.conf import settings
 
 DEFAULT_SLOT_LOCK_TIMEOUT_SECONDS = 600.0
+# User actions wait briefly so they are not rejected by sub-millisecond lock
+# probes (health refresh, watchdog, Servers page) on the same port.
+USER_ACTION_SLOT_WAIT_SECONDS = 2.0
 _POLL_INTERVAL_SECONDS = 0.1
 _held = threading.local()
 
@@ -107,11 +110,16 @@ class SlotLockHandoff:
     actor could slip in.
     """
 
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, *, timeout_seconds: float = 0.0) -> None:
         self.port = port
         self._fd: int | None = os.open(_slot_lock_path(port), os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            _acquire(self._fd, port, blocking=False, timeout_seconds=0.0)
+            _acquire(
+                self._fd,
+                port,
+                blocking=timeout_seconds > 0,
+                timeout_seconds=timeout_seconds,
+            )
         except InstanceSlotBusy:
             os.close(self._fd)
             self._fd = None

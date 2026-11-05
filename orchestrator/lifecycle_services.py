@@ -167,6 +167,7 @@ def _wake_on_demand_instance(instance: InferenceInstance, alias: str) -> Gateway
             instance.port,
             instance.launch_mode,
             instance.server_config,
+            slot_timeout_seconds=gateway_wake_timeout_seconds(),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         clear_gateway_route_cache()
@@ -266,9 +267,9 @@ def maybe_speculative_wake(alias: str) -> None:
         return
     if not is_on_demand_lifecycle(instance.server_config):
         return
+    # Discovery probes are not usage: clients polling /v1/models must not pin
+    # a model in memory; the real request refreshes last_used_at.
     if instance.status == "RUNNING" and probe_http_health(instance):
-        # A discovery probe announces imminent use: keep idle offload away.
-        touch_instance_last_used_at(instance.pk)
         return
     if instance.status not in ("STOPPED", "FAILED", "LOADING"):
         return
