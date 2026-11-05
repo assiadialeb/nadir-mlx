@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 from django.conf import settings
 
-from orchestrator.batch_file_store import batch_files_dir
 from io import BytesIO
 
 from orchestrator.batch_services import (
@@ -33,13 +32,6 @@ from orchestrator.batch_services import (
 )
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH
 from orchestrator.models import GatewayBatchJob
-
-
-@pytest.fixture
-def batch_files_tmp(tmp_path, settings, monkeypatch):
-    monkeypatch.setenv("NADIR_BATCH_FILES_DIR", str(tmp_path / "batch_files"))
-    batch_files_dir().mkdir(parents=True, exist_ok=True)
-    return tmp_path
 
 
 @pytest.mark.django_db

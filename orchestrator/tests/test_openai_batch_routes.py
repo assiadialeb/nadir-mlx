@@ -8,20 +8,11 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from orchestrator.batch_file_store import batch_files_dir
 from orchestrator.gateway.app import create_app
 
 
 @pytest.fixture
-def batch_files_tmp(tmp_path, monkeypatch):
-    monkeypatch.setenv("NADIR_BATCH_FILES_DIR", str(tmp_path / "batch_files"))
-    batch_files_dir().mkdir(parents=True, exist_ok=True)
-    return tmp_path
-
-
-@pytest.fixture
-def gateway_client(batch_files_tmp, monkeypatch):
-    monkeypatch.setenv("NADIR_BATCH_FILES_DIR", str(batch_files_tmp / "batch_files"))
+def gateway_client(batch_files_tmp):
     return TestClient(create_app())
 
 

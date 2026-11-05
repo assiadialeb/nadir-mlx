@@ -11,6 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from orchestrator.batch_file_store import batch_files_dir
+
 MLX_CORE_MODULE = "mlx.core"
 MLX_AUDIO_STT_UTILS_MODULE = "mlx_audio.stt.utils"
 MLX_AUDIO_IO_MODULE = "mlx_audio.audio_io"
@@ -106,3 +108,11 @@ def _isolate_gateway_env_from_dotenv(monkeypatch):
         "NADIR_GATEWAY_API_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture
+def batch_files_tmp(tmp_path, monkeypatch):
+    """Isolated on-disk batch blob dir for batch_services and gateway route tests."""
+    monkeypatch.setenv("NADIR_BATCH_FILES_DIR", str(tmp_path / "batch_files"))
+    batch_files_dir().mkdir(parents=True, exist_ok=True)
+    return tmp_path
