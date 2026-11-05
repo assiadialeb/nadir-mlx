@@ -271,6 +271,56 @@ def _run_claimed_batch_job(job_pk: int) -> None:
             _fail_job(job, public_error_message(exc, fallback="Batch worker failed."))
 
 
+def _run_batch_line_task(
+    index: int,
+    line: dict[str, Any],
+    *,
+    cancel_event: threading.Event,
+) -> tuple[int, dict[str, Any] | None]:
+    if cancel_event.is_set():
+        return index, None
+    custom_id = str(line.get("custom_id") or f"line-{index + 1}")
+    try:
+        return index, _process_batch_line(line, line_no=index + 1)
+    except Exception as exc:
+        logger.exception("Batch line %s failed", custom_id)
+        return index, {"custom_id": custom_id, "error": {"message": str(exc)}}
+
+
+def _record_batch_line_result(
+    results: list[dict[str, Any] | None],
+    counts: dict[str, int],
+    index: int,
+    result: dict[str, Any] | None,
+) -> bool:
+    """Store one line outcome. Returns True when the worker returned a stop sentinel."""
+    if result is None:
+        return True
+    results[index] = result
+    if result.get("error"):
+        counts["failed"] += 1
+    else:
+        counts["completed"] += 1
+    return False
+
+
+def _serialize_batch_output_lines(
+    results: list[dict[str, Any] | None],
+    *,
+    cancelled: bool,
+) -> list[str]:
+    if cancelled:
+        return [
+            json.dumps(item, separators=(",", ":"))
+            for item in results
+            if item is not None
+        ]
+    return [
+        json.dumps(results[index], separators=(",", ":"))  # type: ignore[arg-type]
+        for index in range(len(results))
+    ]
+
+
 def _execute_batch_lines(
     job_pk: int,
     lines: list[dict[str, Any]],
@@ -284,33 +334,21 @@ def _execute_batch_lines(
     cancelled = False
     cancel_event = threading.Event()
 
-    def run_line(index: int, line: dict[str, Any]) -> tuple[int, dict[str, Any] | None]:
-        if cancel_event.is_set():
-            return index, None
-        custom_id = str(line.get("custom_id") or f"line-{index + 1}")
-        try:
-            return index, _process_batch_line(line, line_no=index + 1)
-        except Exception as exc:
-            logger.exception("Batch line %s failed", custom_id)
-            return index, {"custom_id": custom_id, "error": {"message": str(exc)}}
-
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(run_line, idx, line) for idx, line in enumerate(lines)]
+        futures = [
+            pool.submit(_run_batch_line_task, idx, line, cancel_event=cancel_event)
+            for idx, line in enumerate(lines)
+        ]
         for future in as_completed(futures):
             try:
                 index, result = future.result()
-            except Exception as exc:
+            except Exception:
                 logger.exception("Batch worker thread failed for job %s", job_pk)
                 cancelled = True
                 break
-            if result is None:
+            if _record_batch_line_result(results, counts, index, result):
                 cancelled = True
                 break
-            results[index] = result
-            if result.get("error"):
-                counts["failed"] += 1
-            else:
-                counts["completed"] += 1
             if _batch_cancel_requested(job_pk):
                 cancel_event.set()
                 cancelled = True
@@ -318,17 +356,7 @@ def _execute_batch_lines(
                     pending.cancel()
                 break
 
-    if cancelled:
-        output_lines = [
-            json.dumps(item, separators=(",", ":"))
-            for item in results
-            if item is not None
-        ]
-    else:
-        output_lines = [
-            json.dumps(results[index], separators=(",", ":"))  # type: ignore[arg-type]
-            for index in range(len(results))
-        ]
+    output_lines = _serialize_batch_output_lines(results, cancelled=cancelled)
     return output_lines, counts, cancelled
 
 

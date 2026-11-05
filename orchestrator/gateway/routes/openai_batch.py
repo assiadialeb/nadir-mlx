@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from asgiref.sync import sync_to_async
 
+from orchestrator.gateway.auth import verify_gateway_api_key
 from orchestrator.gateway.routes.common import parse_json_body
 
 from orchestrator.batch_services import (
@@ -25,7 +28,7 @@ from orchestrator.batch_services import (
 )
 from orchestrator.fastapi_openapi import OPENAPI_NOT_FOUND
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_gateway_api_key)])
 
 
 def _service_error(exc: BatchServiceError) -> JSONResponse:
@@ -39,8 +42,8 @@ def _service_error(exc: BatchServiceError) -> JSONResponse:
 
 @router.post("/v1/files")
 def upload_file(
-    purpose: str = Form(...),
-    file: UploadFile = File(...),
+    purpose: Annotated[str, Form()],
+    file: Annotated[UploadFile, File()],
 ):
     data = file.file.read()
     result = create_batch_file(
