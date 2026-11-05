@@ -76,6 +76,7 @@ nav:
       - Integration recipes: usage/integration-recipes.md
       - MCP server: usage/mcp.md
       - Instance lifecycle: usage/instance-lifecycle.md
+      - Mac-fit model catalog: usage/model-catalog-mac-fit.md
       - Server config reference: usage/server-config-reference.md
       - Quality benchmarks: usage/quality-benchmarks.md
       - API coverage matrix: usage/nadir-gateway-coverage-matrix.md

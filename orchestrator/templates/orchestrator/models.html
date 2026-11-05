@@ -21,7 +21,7 @@
             <span class="ml-1 text-xxs px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">{{ installed_models_total }}</span>
             {% endif %}
         </a>
-        <a href="{% url 'models' %}?tab=hub{% if filter_query and active_tab == 'hub' %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_cap and active_tab == 'hub' %}&cap={{ filter_cap }}{% endif %}{% if filter_sort != 'name_asc' and active_tab == 'hub' %}&sort={{ filter_sort }}{% endif %}"
+        <a href="{% url 'models' %}?tab=hub{% if filter_query and active_tab == 'hub' %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_cap and active_tab == 'hub' %}&cap={{ filter_cap }}{% endif %}{% if filter_sort != 'name_asc' and active_tab == 'hub' %}&sort={{ filter_sort }}{% endif %}{% if filter_fits_mac and active_tab == 'hub' %}&fits_mac=1{% endif %}"
             class="px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-all {% if active_tab == 'hub' %}bg-white border border-b-white border-slate-200 text-indigo-700 -mb-px{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
             Hugging Face
         </a>
@@ -111,6 +111,15 @@
     {% else %}
     <!-- Hugging Face tab -->
     <div class="space-y-6">
+        <div class="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 text-sm text-slate-700 space-y-2">
+            <p class="font-semibold text-indigo-900">Mac-aware recommendations</p>
+            <p class="text-slate-600">{{ hub_mac_summary }}</p>
+            <p class="text-xs text-slate-500">
+                <strong class="text-slate-600">TTFT</strong> (time to first token) improves with warm instances, prompt cache, and smaller active weights (MoE).
+                <strong class="text-slate-600">Tok/s</strong> is mostly bandwidth-bound — prefer MoE + 4-bit for interactive chat; speculative decode / MTP helps generation speed, not cold TTFT.
+                Estimates are advisory — peak runtime may exceed the planned footprint.
+            </p>
+        </div>
         {% include 'orchestrator/partials/models_filters.html' with filter_tab='hub' filter_search_placeholder='Search (e.g. llama, flux, kokoro)…' %}
 
         {% if models %}

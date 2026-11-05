@@ -34,21 +34,24 @@ def _sample_models() -> list[dict]:
 
 
 def test_parse_installed_models_query_defaults() -> None:
-    query, cap, sort = parse_installed_models_query({})
+    query, cap, sort, fits_mac = parse_installed_models_query({})
     assert query == ""
     assert cap == ""
     assert sort == "name_asc"
+    assert fits_mac is False
 
 
 def test_parse_installed_models_query_rejects_invalid_cap_and_sort() -> None:
-    query, cap, sort = parse_installed_models_query({
+    query, cap, sort, fits_mac = parse_installed_models_query({
         "q": "  llama ",
         "cap": "INVALID",
         "sort": "bad",
+        "fits_mac": "1",
     })
     assert query == "llama"
     assert cap == ""
     assert sort == "name_asc"
+    assert fits_mac is True
 
 
 def test_filter_installed_models_by_name() -> None:
