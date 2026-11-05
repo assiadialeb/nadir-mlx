@@ -214,9 +214,46 @@ Keep `NADIR_GATEWAY_HOST=127.0.0.1` and only expose LiteLLM on the LAN (with its
 
 ---
 
-## Overnight bulk jobs (interim)
+## Overnight bulk jobs (OpenAI Batch API)
 
-Nadir does **not** yet expose OpenAI `/v1/files` + `/v1/batches`. Until a dedicated MVP lands ([ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md)), run bulk work with shell/`xargs`/cron against `http://127.0.0.1:11380/v1`, or put LiteLLM in front for team keys — keep JSONL on the Mac.
+Nadir exposes a **local** OpenAI-compatible **`/v1/files`** + **`/v1/batches`** surface for chat JSONL evals — JSONL never leaves the Mac. The batch worker runs inside `python manage.py run_gateway` / `serve` (same cross-process lock as `process_gateway_batches`).
+
+1. Upload input (streamed to disk, up to `NADIR_BATCH_FILE_MAX_MB`, default 200):
+
+```bash
+curl -sS http://127.0.0.1:11380/v1/files \
+  -H "Authorization: Bearer sk-local" \
+  -F purpose=batch \
+  -F file=@requests.jsonl
+```
+
+2. Create a batch (`endpoint` must be `/v1/chat/completions` in v1):
+
+```bash
+curl -sS http://127.0.0.1:11380/v1/batches \
+  -H "Authorization: Bearer sk-local" \
+  -H "Content-Type: application/json" \
+  -d '{"input_file_id":"file-…","endpoint":"/v1/chat/completions"}'
+```
+
+3. Poll status — `request_counts` updates while `in_progress`; download output/error file IDs when `completed`:
+
+```bash
+curl -sS http://127.0.0.1:11380/v1/batches/batch_… \
+  -H "Authorization: Bearer sk-local"
+```
+
+Each JSONL line uses OpenAI batch shape: `custom_id`, `url`, `body` (with gateway **alias** in `body.model`). Fan-out calls the gateway with `X-Nadir-Priority: batch` so interactive chat keeps priority under load.
+
+!!! tip "Same input file, new batch job"
+    Reusing an `input_file_id` for a second batch is supported. Retention purge only deletes blobs when **no** job still references that file.
+
+!!! note "After a gateway crash"
+    On the first worker cycle after restart, orphaned `in_progress` jobs are marked `failed` (fail-closed). Re-submit the input file or use `python manage.py process_gateway_batches --reconcile-stale` if the auto worker is disabled.
+
+Full env knobs and cancel semantics: [Nadir Gateway — Local batch jobs](nadir-gateway.md#local-batch-jobs-openai-compatible). Product scope: [ADR 008](https://github.com/assiadialeb/nadir-mlx/blob/main/adr/008-files-batches-spike.md).
+
+For ad-hoc one-offs (no Batch API), shell/`xargs`/cron against `POST /v1/chat/completions` still works.
 
 ---
 

@@ -117,7 +117,7 @@ flowchart TB
     Benchmark --> Instances
 ```
 
-See [Nadir Gateway](docs/usage/nadir-gateway.md) for the control-plane vs data-plane split. Ollama-like wake on demand and idle offload: [instance lifecycle](docs/usage/instance-lifecycle.md). Client recipes (Open WebUI, Continue, Cursor, Claude Code, n8n, LiteLLM): [integration recipes](docs/usage/integration-recipes.md).
+See [Nadir Gateway](docs/usage/nadir-gateway.md) for the control-plane vs data-plane split. Ollama-like wake on demand and idle offload: [instance lifecycle](docs/usage/instance-lifecycle.md). Client recipes (Open WebUI, Continue, Cursor, Claude Code, n8n, LiteLLM): [integration recipes](docs/usage/integration-recipes.md). Overnight chat evals: local OpenAI [`/v1/files` + `/v1/batches`](docs/usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api) (JSONL on disk, auto worker with `serve`).
 
 **Port allocation**
 
@@ -357,7 +357,7 @@ curl http://127.0.0.1:11442/v1/audio/transcriptions \
 
 **Recommended:** point clients at the **Nadir Gateway** (`http://127.0.0.1:11380/v1`) using gateway aliases — one `api_base` for TEXT, EMBEDDING, RERANKER, IMAGE, TTS, and STT.
 
-See **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)** for curl samples per launch mode, environment variables, and troubleshooting (`404`, `503`, wrong route for mode).
+See **[docs/usage/nadir-gateway.md](docs/usage/nadir-gateway.md)** for curl samples per launch mode, environment variables, and troubleshooting (`404`, `503`, wrong route for mode). For bulk JSONL evals, see **[batch jobs](docs/usage/integration-recipes.md#overnight-bulk-jobs-openai-batch-api)** (`/v1/files`, `/v1/batches`, streaming upload, incremental progress).
 
 #### Direct instance port (debugging)
 
@@ -506,6 +506,7 @@ Check `./logs/` and the Downloads section on the dashboard. Incomplete folders i
 - [ ] Hugging Face search filters for embedding / rerank models
 - [x] Health checks and auto-restart for crashed instances
 - [x] API key auth on the Nadir Gateway (optional on loopback; required off-loopback)
+- [x] Local OpenAI `/v1/files` + `/v1/batches` for chat JSONL (MLX-132 / MLX-133)
 - [ ] Native auth on third-party mlx-lm / mlx-vlm servers (today: loopback + gateway only)
 
 ---

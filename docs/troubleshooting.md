@@ -63,6 +63,17 @@ WAV and MP3 work in memory. M4A, FLAC, OGG, Opus, and WebM require **ffmpeg** on
 brew install ffmpeg
 ```
 
+## Batch jobs (`/v1/batches`)
+
+| Symptom | Action |
+|---------|--------|
+| Job stays `validating` | Ensure `run_gateway` / `serve` is running and `NADIR_GATEWAY_BATCH_WORKER_ENABLED=true`, or run `python manage.py process_gateway_batches` |
+| Job `failed` — input missing | Re-upload JSONL; do not delete the input file while another batch still references the same `input_file_id` |
+| Job stuck `in_progress` after gateway killed | Restart gateway (first worker cycle marks orphans `failed`) or `process_gateway_batches --reconcile-stale` |
+| Slow under load | Batch shares the global GPU cap; interactive traffic wins. Tune `NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL` / `NADIR_GATEWAY_BATCH_MAX_SHARE` |
+
+See [Nadir Gateway — Local batch jobs](usage/nadir-gateway.md#local-batch-jobs-openai-compatible).
+
 ## Quality benchmark failures
 
 - Install `requirements-quality.txt` for industry presets
