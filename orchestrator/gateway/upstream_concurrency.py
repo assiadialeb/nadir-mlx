@@ -13,7 +13,7 @@ from typing import AsyncIterator
 
 from django.conf import settings
 
-from orchestrator.env_utils import env_float, env_str
+from orchestrator.env_utils import env_float, env_int, env_str
 from orchestrator.gateway.gpu_scheduler import (
     GatewayUpstreamScheduler,
     RequestPriority,
@@ -55,6 +55,19 @@ def default_max_concurrent_upstream() -> int | None:
 def global_max_concurrent_upstream() -> int | None:
     """Cross-instance cap from NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL (0 = unlimited)."""
     return _limit_from_env("NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL")
+
+
+def batch_line_parallelism() -> int:
+    """Parallel upstream calls a batch worker should use (matches scheduler batch pool)."""
+    global_limit = global_max_concurrent_upstream()
+    if global_limit is None:
+        return max(1, env_int("NADIR_BATCH_LINE_CONCURRENCY", 4))
+    share = batch_max_share()
+    if share <= 0.0:
+        return 1
+    if share >= 1.0:
+        return global_limit
+    return max(1, int(global_limit * share))
 
 
 def batch_max_share() -> float:

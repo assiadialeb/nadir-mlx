@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+from django.conf import settings
+
 from orchestrator.batch_file_store import (
     batch_file_max_bytes,
     delete_storage_blob,
@@ -22,9 +26,10 @@ from orchestrator.batch_file_store import (
 from orchestrator.env_utils import env_float
 from orchestrator.gateway.gpu_scheduler import PRIORITY_HEADER, PRIORITY_BATCH
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH
+from orchestrator.gateway.upstream_concurrency import batch_line_parallelism
 from orchestrator.gateway_client_auth import gateway_api_key
-from orchestrator.image_assets import gateway_public_base_url
 from orchestrator.models import GatewayBatchFile, GatewayBatchJob
+from orchestrator.security_utils import validated_gateway_chat_completions_url
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +144,14 @@ def cancel_batch_job(batch_id: str) -> GatewayBatchJob | BatchServiceError:
         GatewayBatchJob.STATUS_CANCELLED,
     }:
         return BatchServiceError("Batch already finished.", status_code=400)
+    if job.status == GatewayBatchJob.STATUS_CANCELLING:
+        return job
+    now = datetime.now(timezone.utc)
+    if job.status == GatewayBatchJob.STATUS_VALIDATING:
+        job.status = GatewayBatchJob.STATUS_CANCELLED
+        job.cancelled_at = now
+        job.save(update_fields=["status", "cancelled_at"])
+        return job
     job.status = GatewayBatchJob.STATUS_CANCELLING
     job.save(update_fields=["status"])
     return job
@@ -185,29 +198,40 @@ def batch_to_openai_dict(job: GatewayBatchJob) -> dict[str, Any]:
 def process_pending_batch_jobs(*, max_jobs: int = 1) -> int:
     """Run up to ``max_jobs`` validating jobs (management command / cron)."""
     processed = 0
-    for _ in range(max(1, max_jobs)):
+    attempts = 0
+    cap = max(1, max_jobs)
+    while processed < cap and attempts < cap * 3:
+        attempts += 1
         job = (
             GatewayBatchJob.objects.filter(status=GatewayBatchJob.STATUS_VALIDATING)
-            .select_related("input_file")
             .order_by("created_at")
             .first()
         )
         if job is None:
             break
-        _execute_batch_job(job.pk)
+        if not _claim_batch_job(job.pk):
+            continue
+        _run_claimed_batch_job(job.pk)
         processed += 1
     return processed
 
 
-def _execute_batch_job(job_pk: int) -> None:
-    job = GatewayBatchJob.objects.select_related("input_file").filter(pk=job_pk).first()
-    if job is None or job.status != GatewayBatchJob.STATUS_VALIDATING:
-        return
-
+def _claim_batch_job(job_pk: int) -> bool:
     now = datetime.now(timezone.utc)
-    job.status = GatewayBatchJob.STATUS_IN_PROGRESS
-    job.in_progress_at = now
-    job.save(update_fields=["status", "in_progress_at"])
+    updated = GatewayBatchJob.objects.filter(
+        pk=job_pk,
+        status=GatewayBatchJob.STATUS_VALIDATING,
+    ).update(
+        status=GatewayBatchJob.STATUS_IN_PROGRESS,
+        in_progress_at=now,
+    )
+    return updated == 1
+
+
+def _run_claimed_batch_job(job_pk: int) -> None:
+    job = GatewayBatchJob.objects.select_related("input_file").filter(pk=job_pk).first()
+    if job is None or job.status != GatewayBatchJob.STATUS_IN_PROGRESS:
+        return
 
     raw = read_batch_file_content(job.input_file)
     if raw is None:
@@ -220,21 +244,69 @@ def _execute_batch_job(job_pk: int) -> None:
         _fail_job(job, str(exc))
         return
 
-    output_lines: list[str] = []
-    counts = {"total": len(lines), "completed": 0, "failed": 0}
-    for line_no, line in enumerate(lines, start=1):
-        job.refresh_from_db(fields=["status"])
-        if job.status == GatewayBatchJob.STATUS_CANCELLING:
-            _cancel_job(job, output_lines, counts)
-            return
-        result = _process_batch_line(line, line_no=line_no)
-        output_lines.append(json.dumps(result, separators=(",", ":")))
-        if result.get("error"):
-            counts["failed"] += 1
-        else:
-            counts["completed"] += 1
-
+    output_lines, counts, cancelled = _execute_batch_lines(job.pk, lines)
+    if cancelled:
+        _cancel_job(job, output_lines, counts)
+        return
     _complete_job(job, output_lines, counts)
+
+
+def _execute_batch_lines(
+    job_pk: int,
+    lines: list[dict[str, Any]],
+) -> tuple[list[str], dict[str, int], bool]:
+    counts = {"total": len(lines), "completed": 0, "failed": 0}
+    if not lines:
+        return [], counts, False
+
+    workers = max(1, min(batch_line_parallelism(), len(lines)))
+    results: list[dict[str, Any] | None] = [None] * len(lines)
+    cancelled = False
+    cancel_event = threading.Event()
+
+    def run_line(index: int, line: dict[str, Any]) -> tuple[int, dict[str, Any] | None]:
+        if cancel_event.is_set():
+            return index, None
+        return index, _process_batch_line(line, line_no=index + 1)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(run_line, idx, line) for idx, line in enumerate(lines)]
+        for future in as_completed(futures):
+            if _batch_cancel_requested(job_pk):
+                cancel_event.set()
+                cancelled = True
+                for pending in futures:
+                    pending.cancel()
+                break
+            index, result = future.result()
+            if result is None:
+                cancelled = True
+                break
+            results[index] = result
+            if result.get("error"):
+                counts["failed"] += 1
+            else:
+                counts["completed"] += 1
+
+    if cancelled:
+        output_lines = [
+            json.dumps(item, separators=(",", ":"))
+            for item in results
+            if item is not None
+        ]
+    else:
+        output_lines = [
+            json.dumps(results[index], separators=(",", ":"))  # type: ignore[arg-type]
+            for index in range(len(results))
+        ]
+    return output_lines, counts, cancelled
+
+
+def _batch_cancel_requested(job_pk: int) -> bool:
+    return GatewayBatchJob.objects.filter(
+        pk=job_pk,
+        status=GatewayBatchJob.STATUS_CANCELLING,
+    ).exists()
 
 
 def _parse_jsonl_lines(raw: bytes) -> list[dict[str, Any]]:
@@ -270,9 +342,16 @@ def _process_batch_line(line: dict[str, Any], *, line_no: int) -> dict[str, Any]
     return _post_chat_completion(custom_id, body)
 
 
+def _gateway_batch_chat_url() -> str:
+    host = str(settings.NADIR_GATEWAY_HOST or "127.0.0.1").strip() or "127.0.0.1"
+    if host in {"0.0.0.0", "::"}:
+        host = "127.0.0.1"
+    return validated_gateway_chat_completions_url(host, int(settings.NADIR_GATEWAY_PORT))
+
+
 def _post_chat_completion(custom_id: str, body: dict[str, Any]) -> dict[str, Any]:
     timeout = env_float("NADIR_BATCH_LINE_TIMEOUT_SECONDS", 600.0)
-    url = f"{gateway_public_base_url().rstrip('/')}{CHAT_COMPLETIONS_PATH}"
+    url = _gateway_batch_chat_url()
     headers = {"Content-Type": "application/json", PRIORITY_HEADER: PRIORITY_BATCH}
     api_key = gateway_api_key()
     if api_key:
@@ -300,8 +379,8 @@ def _complete_job(
     output_lines: list[str],
     counts: dict[str, int],
 ) -> None:
-    output_bytes = ("\n".join(output_lines) + "\n").encode("utf-8")
-    output_file = _persist_output_file(job.batch_id, "output", output_bytes)
+    output_bytes = ("\n".join(output_lines) + "\n").encode("utf-8") if output_lines else b""
+    output_file = _persist_output_file(job.batch_id, "output", output_bytes) if output_lines else None
     now = datetime.now(timezone.utc)
     job.output_file = output_file
     job.request_counts = counts

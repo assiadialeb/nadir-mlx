@@ -35,6 +35,10 @@ class InstanceSlotBusy(RuntimeError):
         self.port = port
 
 
+class BatchWorkerBusy(RuntimeError):
+    """Another process is already running the gateway batch worker."""
+
+
 def runtime_state_dir() -> Path:
     """Return (and create) the directory holding lock files and runtime stamps."""
     path = Path(settings.NADIR_RUNTIME_STATE_DIR)
@@ -46,6 +50,12 @@ def _slot_lock_path(port: int) -> Path:
     locks_dir = runtime_state_dir() / "locks"
     locks_dir.mkdir(parents=True, exist_ok=True)
     return locks_dir / f"port-{int(port)}.lock"
+
+
+def _batch_worker_lock_path() -> Path:
+    locks_dir = runtime_state_dir() / "locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    return locks_dir / "gateway-batch-worker.lock"
 
 
 def _held_counts() -> dict[int, int]:
@@ -66,6 +76,22 @@ def _acquire(fd: int, port: int, *, blocking: bool, timeout_seconds: float) -> N
             if not blocking or time.monotonic() >= deadline:
                 raise InstanceSlotBusy(port) from None
             time.sleep(_POLL_INTERVAL_SECONDS)
+
+
+@contextlib.contextmanager
+def gateway_batch_worker_lock(*, blocking: bool = False) -> Iterator[None]:
+    """Exclusive lock for ``process_gateway_batches`` (one worker process at a time)."""
+    fd = os.open(_batch_worker_lock_path(), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+        try:
+            fcntl.flock(fd, flags)
+        except BlockingIOError:
+            raise BatchWorkerBusy() from None
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 @contextlib.contextmanager

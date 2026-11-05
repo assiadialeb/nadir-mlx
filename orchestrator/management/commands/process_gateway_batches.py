@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.core.management.base import BaseCommand
 
 from orchestrator.batch_services import process_pending_batch_jobs, reconcile_stale_in_progress_jobs
+from orchestrator.instance_locks import BatchWorkerBusy, gateway_batch_worker_lock
 
 
 class Command(BaseCommand):
@@ -24,6 +25,13 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options) -> None:
+        try:
+            with gateway_batch_worker_lock(blocking=False):
+                self._run(options)
+        except BatchWorkerBusy:
+            self.stdout.write("Another batch worker is running; exiting.")
+
+    def _run(self, options: dict) -> None:
         if options["reconcile_stale"]:
             count = reconcile_stale_in_progress_jobs()
             if count:
