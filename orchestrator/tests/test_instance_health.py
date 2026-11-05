@@ -1,5 +1,6 @@
 """Tests for instance health probing and watchdog helpers."""
 
+import os
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, override_settings
@@ -140,12 +141,32 @@ class InstanceHealthTests(TestCase):
         with patch.dict("os.environ", {"MLX_DISABLE_INSTANCE_WATCHDOG": "1"}):
             self.assertTrue(should_skip_watchdog())
 
-    def test_should_skip_watchdog_for_serve_and_run_mcp(self) -> None:
-        with patch.dict("os.environ", {"MLX_DISABLE_INSTANCE_WATCHDOG": "0"}, clear=False):
-            with patch("sys.argv", ["manage.py", "serve"]):
-                self.assertTrue(should_skip_watchdog())
-            with patch("sys.argv", ["manage.py", "run_mcp", "--port", "11381"]):
-                self.assertTrue(should_skip_watchdog())
+    def test_should_skip_watchdog_outside_runserver_and_gateway(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MLX_DISABLE_INSTANCE_WATCHDOG": "0"},
+            clear=False,
+        ):
+            os.environ.pop("NADIR_BACKGROUND_OWNER", None)
+            for argv in (
+                ["manage.py", "serve"],
+                ["manage.py", "run_mcp", "--port", "11381"],
+                ["manage.py", "createsuperuser"],
+                ["manage.py", "check"],
+                ["python", "-c", "django.setup()"],
+            ):
+                with patch("sys.argv", argv):
+                    self.assertTrue(should_skip_watchdog(), msg=argv)
+
+    def test_should_allow_watchdog_for_standalone_runserver(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MLX_DISABLE_INSTANCE_WATCHDOG": "0"},
+            clear=False,
+        ):
+            os.environ.pop("NADIR_BACKGROUND_OWNER", None)
+            with patch("sys.argv", ["manage.py", "runserver", "127.0.0.1:8000"]):
+                self.assertFalse(should_skip_watchdog())
 
     def test_should_skip_watchdog_when_owner_gateway_and_not_gateway(self) -> None:
         with patch.dict(

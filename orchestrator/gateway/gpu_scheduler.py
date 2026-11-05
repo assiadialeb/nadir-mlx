@@ -37,30 +37,43 @@ def current_request_priority() -> RequestPriority:
 class PrioritySlotScheduler:
     """Counting semaphore that grants freed slots to interactive waiters first.
 
-    Batch waiters are only served when no interactive request is queued, so
-    background jobs never delay an agent or chat turn. The capacity can change
-    at runtime without losing track of slots already in flight.
+    Batch waiters are served only when no interactive request is queued and the
+    batch share of capacity is not exhausted (``batch_max_share``). Capacity can
+    change at runtime without losing track of slots already in flight.
     """
 
-    def __init__(self, capacity: int) -> None:
+    def __init__(self, capacity: int, *, batch_max_share: float = 1.0) -> None:
         self.capacity = max(1, int(capacity))
+        self.batch_max_share = _clamp_share(batch_max_share)
         self.in_use = 0
+        self._in_use_by: dict[RequestPriority, int] = {
+            PRIORITY_INTERACTIVE: 0,
+            PRIORITY_BATCH: 0,
+        }
         self._waiters: dict[RequestPriority, deque[asyncio.Future[None]]] = {
             PRIORITY_INTERACTIVE: deque(),
             PRIORITY_BATCH: deque(),
         }
 
-    def resize(self, capacity: int) -> None:
+    def resize(self, capacity: int, *, batch_max_share: float | None = None) -> None:
         self.capacity = max(1, int(capacity))
+        if batch_max_share is not None:
+            self.batch_max_share = _clamp_share(batch_max_share)
         self._grant_free_slots()
 
     def queued(self, priority: RequestPriority) -> int:
         return sum(1 for waiter in self._waiters[priority] if not waiter.done())
 
+    def batch_capacity(self) -> int:
+        """Max slots batch traffic may hold (0 = batch always waits for free interactive)."""
+        if self.batch_max_share >= 1.0:
+            return self.capacity
+        return max(0, int(self.capacity * self.batch_max_share))
+
     async def acquire(self, priority: RequestPriority, timeout_seconds: float) -> None:
         """Take a slot or wait for one; raise ``TimeoutError`` after ``timeout_seconds``."""
         if self._can_take_immediately(priority):
-            self.in_use += 1
+            self._take(priority)
             return
         waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._waiters[priority].append(waiter)
@@ -71,21 +84,31 @@ class PrioritySlotScheduler:
             self._abandon(waiter, priority)
             raise
 
-    def release(self) -> None:
+    def release(self, priority: RequestPriority) -> None:
+        if self._in_use_by[priority] > 0:
+            self._in_use_by[priority] -= 1
         self.in_use = max(0, self.in_use - 1)
         self._grant_free_slots()
+
+    def _take(self, priority: RequestPriority) -> None:
+        self.in_use += 1
+        self._in_use_by[priority] += 1
 
     def _can_take_immediately(self, priority: RequestPriority) -> bool:
         if self.in_use >= self.capacity:
             return False
         if self.queued(PRIORITY_INTERACTIVE):
             return False
-        return priority == PRIORITY_INTERACTIVE or not self.queued(PRIORITY_BATCH)
+        if priority == PRIORITY_INTERACTIVE:
+            return True
+        if self._in_use_by[PRIORITY_BATCH] >= self.batch_capacity():
+            return False
+        return not self.queued(PRIORITY_BATCH)
 
     def _abandon(self, waiter: asyncio.Future[None], priority: RequestPriority) -> None:
         if waiter.done() and not waiter.cancelled():
             # Slot was granted just as the caller gave up: hand it on.
-            self.release()
+            self.release(priority)
             return
         waiter.cancel()
         try:
@@ -93,19 +116,30 @@ class PrioritySlotScheduler:
         except ValueError:
             pass
 
-    def _next_waiter(self) -> asyncio.Future[None] | None:
+    def _next_waiter(self) -> tuple[RequestPriority, asyncio.Future[None]] | None:
         for priority in (PRIORITY_INTERACTIVE, PRIORITY_BATCH):
+            if priority == PRIORITY_BATCH and self._in_use_by[PRIORITY_BATCH] >= self.batch_capacity():
+                continue
             queue = self._waiters[priority]
             while queue:
                 waiter = queue.popleft()
                 if not waiter.done():
-                    return waiter
+                    return priority, waiter
         return None
 
     def _grant_free_slots(self) -> None:
         while self.in_use < self.capacity:
-            waiter = self._next_waiter()
-            if waiter is None:
+            nxt = self._next_waiter()
+            if nxt is None:
                 return
-            self.in_use += 1
+            priority, waiter = nxt
+            self._take(priority)
             waiter.set_result(None)
+
+
+def _clamp_share(value: float) -> float:
+    try:
+        share = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    return min(1.0, max(0.0, share))

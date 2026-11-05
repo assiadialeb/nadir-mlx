@@ -250,7 +250,10 @@ NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM = int(
 )
 # Cross-instance cap: concurrent generations on one Mac share GPU bandwidth.
 NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL = int(
-    os.environ.get("NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL", "16")
+    os.environ.get("NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL", "8")
+)
+NADIR_GATEWAY_BATCH_MAX_SHARE = float(
+    os.environ.get("NADIR_GATEWAY_BATCH_MAX_SHARE", "0.5")
 )
 NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS = float(
     os.environ.get(
