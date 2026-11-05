@@ -277,6 +277,8 @@ mlx-lm keeps an LRU of **prefix KV caches** (`--prompt-cache-size` / `--prompt-c
 | Tool order | Clients must keep the **tools array order** identical across turns. |
 | Façades | Anthropic / OpenAI / Responses / Ollama canonicalize nested JSON object keys (schemas + tool arguments) so translation does not reshuffle the shared prefix. |
 | Observability | mlx-lm reports `usage.prompt_tokens_details.cached_tokens`. Gateway telemetry (MLX-123) stores it; Servers UI shows per-request Cache and a recent **hit rate**. |
+| Anthropic clients | `/v1/messages` maps `cached_tokens` → `usage.cache_read_input_tokens` and sets `input_tokens` to non-cached prompt tokens (Claude Code / SDK parity). |
+| Manual cache replay | `NADIR_GATEWAY_MODEL=<alias> python scripts/gateway_anthropic_cache_replay.py` — three stable-prefix turns; expect high `cache_read_input_tokens` on turns 2–3. |
 
 !!! warning "What breaks the cache"
     Per-turn noise in the shared prefix (timestamps in the system prompt, reordered tools, unstable JSON key order in tool schemas) forces a full prefill. Keep system+tools byte-stable; put turn-specific context only in user/assistant messages.

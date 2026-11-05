@@ -310,8 +310,7 @@ def _close_anthropic_stream(state: _AnthropicStreamState) -> list[bytes]:
     events.append(
         anthropic_stream_message_delta(
             state.stop_reason,
-            output_tokens=int(state.usage.get("completion_tokens") or 0),
-            input_tokens=int(state.usage.get("prompt_tokens") or 0),
+            chat_usage=state.usage,
         )
     )
     events.append(anthropic_stream_message_stop())

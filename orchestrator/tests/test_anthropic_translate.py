@@ -6,9 +6,11 @@ from orchestrator.gateway.protocol.anthropic_translate import (
     anthropic_error_envelope,
     anthropic_error_type_for_code,
     anthropic_request_to_chat,
+    anthropic_stream_message_delta,
     chat_completion_to_anthropic,
     chat_sse_delta_text,
     chat_sse_finish_reason,
+    chat_usage_to_anthropic_usage,
     estimate_anthropic_token_count,
     openai_finish_to_anthropic_stop,
 )
@@ -195,6 +197,48 @@ class AnthropicTranslateTests(SimpleTestCase):
         self.assertEqual(payload["content"][0]["text"], "Hello")
         self.assertEqual(payload["model"], "demo")
         self.assertEqual(payload["stop_reason"], "end_turn")
+        self.assertEqual(payload["usage"]["input_tokens"], 2)
+        self.assertNotIn("cache_read_input_tokens", payload["usage"])
+
+    def test_chat_usage_to_anthropic_usage_maps_cache_hits(self) -> None:
+        usage = chat_usage_to_anthropic_usage(
+            {
+                "prompt_tokens": 4523,
+                "completion_tokens": 12,
+                "prompt_tokens_details": {"cached_tokens": 4485},
+            }
+        )
+        self.assertEqual(usage["input_tokens"], 38)
+        self.assertEqual(usage["output_tokens"], 12)
+        self.assertEqual(usage["cache_read_input_tokens"], 4485)
+
+    def test_chat_to_anthropic_includes_cache_read_in_usage(self) -> None:
+        payload = chat_completion_to_anthropic(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {
+                    "prompt_tokens": 4580,
+                    "completion_tokens": 3,
+                    "prompt_tokens_details": {"cached_tokens": 4555},
+                },
+            },
+            client_model_alias="demo",
+        )
+        self.assertEqual(payload["usage"]["input_tokens"], 25)
+        self.assertEqual(payload["usage"]["cache_read_input_tokens"], 4555)
+
+    def test_stream_message_delta_includes_cache_usage(self) -> None:
+        raw = anthropic_stream_message_delta(
+            "end_turn",
+            chat_usage={
+                "prompt_tokens": 4523,
+                "completion_tokens": 5,
+                "prompt_tokens_details": {"cached_tokens": 4485},
+            },
+        ).decode()
+        compact = raw.replace(" ", "")
+        self.assertIn('"cache_read_input_tokens":4485', compact)
+        self.assertIn('"input_tokens":38', compact)
 
     def test_chat_to_anthropic_thinking_and_tool_use(self) -> None:
         payload = chat_completion_to_anthropic(
