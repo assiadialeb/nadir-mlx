@@ -1,0 +1,4 @@
+name: Nadir MLX CodeQL
+packs:
+  - codeql/python-queries
+  - ./.github/codeql/extensions/nadir-sanitizers

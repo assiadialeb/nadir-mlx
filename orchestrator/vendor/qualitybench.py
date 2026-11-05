@@ -11,10 +11,8 @@ import httpx
 
 from orchestrator.gateway_client_auth import gateway_auth_headers
 from orchestrator.security_utils import (
-    build_validated_http_url,
-    validated_launch_port,
+    validated_gateway_chat_completions_url,
     validated_subprocess_model_reference,
-    validate_outbound_http_host,
 )
 
 SUITE_DIR = Path(__file__).resolve().parent.parent / "data" / "quality_suites"
@@ -125,10 +123,8 @@ def run_suite_case(
     timeout_seconds: float = 120.0,
 ) -> dict[str, Any]:
     """Execute one suite case against the chat-completions API."""
-    safe_host = validate_outbound_http_host(host)
-    safe_port = validated_launch_port(port)
     safe_model = validated_subprocess_model_reference(model)
-    chat_url = build_validated_http_url(safe_host, safe_port, "/v1/chat/completions")
+    chat_url = validated_gateway_chat_completions_url(host, port)
     payload = {
         "model": safe_model,
         "messages": [{"role": "user", "content": case["prompt"]}],
