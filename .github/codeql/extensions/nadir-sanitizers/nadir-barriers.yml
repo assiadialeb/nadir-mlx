@@ -21,3 +21,5 @@ extensions:
       - ["orchestrator.model_utils", "Function[resolve_log_file_path].ReturnValue", "path-injection"]
       - ["orchestrator.model_utils", "Function[get_model_path].ReturnValue", "path-injection"]
       - ["orchestrator.image_assets", "Function[resolve_image_png_path].ReturnValue", "path-injection"]
+      - ["orchestrator.vendor.lm_eval_runner", "Function[build_lm_eval_command].ReturnValue", "command-line-injection"]
+      - ["orchestrator.server_manager", "Function[_build_launch_command].ReturnValue", "command-line-injection"]

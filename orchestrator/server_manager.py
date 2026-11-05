@@ -898,11 +898,12 @@ def _launch_locked(instance: InferenceInstance, plan: InstanceLaunchPlan) -> Inf
         raise ValueError(f"Port {plan.port} is already in use by another program.")
 
     os.makedirs(settings.LOGS_DIR, exist_ok=True)
-    log_file_path = str(resolve_log_file_path(instance.model_name, plan.port))
+    safe_model_name = validate_model_folder_name(instance.model_name)
+    log_file_path = resolve_log_file_path(safe_model_name, plan.port)
     try:
         with open(log_file_path, "w", encoding="utf-8") as log_file:
             process = _spawn_instance_process(instance, plan, log_file)
-        _wait_until_healthy(instance, process, log_file_path)
+        _wait_until_healthy(instance, process, str(log_file_path))
         from orchestrator.instance_warmup import maybe_run_load_warmup
 
         maybe_run_load_warmup(instance)
