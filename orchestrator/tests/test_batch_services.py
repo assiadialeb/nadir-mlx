@@ -12,6 +12,7 @@ from orchestrator.batch_file_store import batch_files_dir
 from orchestrator.batch_services import (
     BatchServiceError,
     _claim_batch_job,
+    _run_claimed_batch_job,
     cancel_batch_job,
     create_batch_file,
     create_batch_job,
@@ -130,3 +131,69 @@ def test_claim_batch_job_allows_only_one_worker(batch_files_tmp) -> None:
     job.refresh_from_db()
     assert job.status == GatewayBatchJob.STATUS_IN_PROGRESS
     assert _claim_batch_job(job.pk) is False
+
+
+@pytest.mark.django_db
+def test_line_exception_completes_batch_with_failed_line(batch_files_tmp) -> None:
+    line = {
+        "custom_id": "req-1",
+        "url": CHAT_COMPLETIONS_PATH,
+        "body": {"model": "demo", "messages": []},
+    }
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=(json.dumps(line) + "\n").encode("utf-8"),
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+
+    with patch(
+        "orchestrator.batch_services._post_chat_completion",
+        side_effect=TypeError("probe"),
+    ):
+        process_pending_batch_jobs(max_jobs=1)
+
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_COMPLETED
+    assert job.request_counts.get("failed") == 1
+
+
+@pytest.mark.django_db
+def test_unexpected_worker_failure_marks_batch_failed(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    assert _claim_batch_job(job.pk)
+
+    with patch(
+        "orchestrator.batch_services._execute_batch_lines",
+        side_effect=RuntimeError("worker boom"),
+    ):
+        _run_claimed_batch_job(job.pk)
+
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_FAILED
+
+
+@pytest.mark.django_db
+def test_cancel_while_in_progress_uses_cancelling(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    GatewayBatchJob.objects.filter(pk=job.pk).update(
+        status=GatewayBatchJob.STATUS_IN_PROGRESS,
+    )
+
+    result = cancel_batch_job(job.batch_id)
+    assert not isinstance(result, BatchServiceError)
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_CANCELLING
