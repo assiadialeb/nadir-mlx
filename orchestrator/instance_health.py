@@ -178,28 +178,20 @@ def refresh_all_instance_health() -> dict[str, int]:
 
 
 def should_skip_watchdog() -> bool:
-    """Avoid background health loops during tests or non-owner processes.
+    """Avoid background health loops outside the designated owner process.
 
-    Under ``manage.py serve``, only the gateway child owns reconcile / watchdog /
-    idle-offload (via ``NADIR_BACKGROUND_OWNER=gateway``). Standalone
-    ``runserver`` / ``run_gateway`` keep the previous autonomous behaviour when
-    that env var is unset.
+    Only ``runserver`` and ``run_gateway`` may start watchdog / idle-offload /
+    startup reconcile. Under ``manage.py serve``, ``NADIR_BACKGROUND_OWNER=gateway``
+    further restricts ownership to the gateway child so the UI process stays idle.
     """
     import sys
 
     if os.environ.get("MLX_DISABLE_INSTANCE_WATCHDOG") == "1":
         return True
-    # Parent supervisor and dedicated MCP must never start background loops.
-    blocked = {
-        "test",
-        "migrate",
-        "makemigrations",
-        "shell",
-        "collectstatic",
-        "serve",
-        "run_mcp",
-    }
-    if any(arg in sys.argv for arg in blocked):
+    # Whitelist: scripts, migrate, shell, createsuperuser, MCP, etc. never own loops.
+    # (pytest is filtered in AppConfig.ready — keep this function unit-testable.)
+    allowed = {"runserver", "run_gateway"}
+    if not any(arg in sys.argv for arg in allowed):
         return True
     owner = (os.environ.get("NADIR_BACKGROUND_OWNER") or "").strip().lower()
     if owner == "gateway":

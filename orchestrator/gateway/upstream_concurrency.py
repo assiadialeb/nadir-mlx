@@ -1,8 +1,9 @@
 """Limit concurrent upstream MLX requests per instance and across the gateway.
 
-Each request takes its instance slot first, then a global slot, so a request
-queued behind a busy instance never holds global capacity. Both levels serve
-interactive waiters before batch ones (``X-Nadir-Priority: batch``).
+Each request takes the **global** slot first, then its instance slot, so a
+batch request waiting on the global cap never blocks interactive traffic on
+the same instance. Both levels serve interactive waiters before batch ones
+(``X-Nadir-Priority: batch``) and honor ``NADIR_GATEWAY_BATCH_MAX_SHARE``.
 """
 
 from __future__ import annotations
@@ -58,6 +59,19 @@ def global_max_concurrent_upstream() -> int | None:
     return _limit_from_env("NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL")
 
 
+def batch_max_share() -> float:
+    """Fraction of each scheduler's capacity batch traffic may hold (0–1)."""
+    raw = env_str("NADIR_GATEWAY_BATCH_MAX_SHARE", "")
+    if not raw:
+        value = getattr(settings, "NADIR_GATEWAY_BATCH_MAX_SHARE", 0.5)
+    else:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = 0.5
+    return min(1.0, max(0.0, float(value)))
+
+
 def queue_timeout_seconds() -> float:
     raw = env_str("NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS", "")
     if not raw:
@@ -91,32 +105,36 @@ def resolve_max_concurrent_upstream(target: GatewayTarget) -> int | None:
 
 
 def _instance_scheduler(instance_id: int, limit: int) -> PrioritySlotScheduler:
+    share = batch_max_share()
     scheduler = _instance_schedulers.get(instance_id)
     if scheduler is None:
-        scheduler = PrioritySlotScheduler(limit)
+        scheduler = PrioritySlotScheduler(limit, batch_max_share=share)
         _instance_schedulers[instance_id] = scheduler
-    elif scheduler.capacity != limit:
-        scheduler.resize(limit)
+    elif scheduler.capacity != limit or scheduler.batch_max_share != share:
+        scheduler.resize(limit, batch_max_share=share)
     return scheduler
 
 
 def _shared_global_scheduler(limit: int) -> PrioritySlotScheduler:
     global _global_scheduler
+    share = batch_max_share()
     if _global_scheduler is None:
-        _global_scheduler = PrioritySlotScheduler(limit)
-    elif _global_scheduler.capacity != limit:
-        _global_scheduler.resize(limit)
+        _global_scheduler = PrioritySlotScheduler(limit, batch_max_share=share)
+    elif _global_scheduler.capacity != limit or _global_scheduler.batch_max_share != share:
+        _global_scheduler.resize(limit, batch_max_share=share)
     return _global_scheduler
 
 
 def _schedulers_for(target: GatewayTarget) -> list[PrioritySlotScheduler]:
+    # Global first: a batch waiter must not hold the instance slot while queued
+    # on the shared GPU cap (that would block interactive on the same instance).
     schedulers: list[PrioritySlotScheduler] = []
-    instance_limit = resolve_max_concurrent_upstream(target)
-    if instance_limit is not None:
-        schedulers.append(_instance_scheduler(target.instance_id, instance_limit))
     global_limit = global_max_concurrent_upstream()
     if global_limit is not None:
         schedulers.append(_shared_global_scheduler(global_limit))
+    instance_limit = resolve_max_concurrent_upstream(target)
+    if instance_limit is not None:
+        schedulers.append(_instance_scheduler(target.instance_id, instance_limit))
     return schedulers
 
 
@@ -130,7 +148,7 @@ async def _held_slot(
     try:
         yield
     finally:
-        scheduler.release()
+        scheduler.release(priority)
 
 
 @asynccontextmanager

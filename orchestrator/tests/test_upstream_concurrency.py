@@ -164,6 +164,7 @@ class GlobalUpstreamConcurrencyTests(SimpleTestCase):
         from orchestrator.gateway import upstream_concurrency
 
         upstream_concurrency._global_scheduler = None
+        upstream_concurrency._instance_schedulers.clear()
 
     def test_global_cap_limits_requests_across_instances(self) -> None:
         targets = [_text_target(501), _text_target(502), _text_target(503)] * 2
@@ -208,6 +209,26 @@ class GlobalUpstreamConcurrencyTests(SimpleTestCase):
             interactive = asyncio.create_task(request(PRIORITY_INTERACTIVE, "interactive"))
             await asyncio.gather(holder, batch, interactive)
 
-        with patch.dict(os.environ, {"NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL": "0"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL": "0",
+                "NADIR_GATEWAY_BATCH_MAX_SHARE": "1",
+            },
+            clear=False,
+        ):
             asyncio.run(run())
         self.assertEqual(order, ["first", "interactive", "batch"])
+
+
+    def test_schedulers_acquire_global_before_instance(self) -> None:
+        from orchestrator.gateway import upstream_concurrency as uc
+
+        uc._global_scheduler = None
+        uc._instance_schedulers.clear()
+        target = _text_target(551, max_concurrent_upstream=3)
+        with patch.dict(os.environ, {"NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL": "4"}, clear=False):
+            schedulers = uc._schedulers_for(target)
+        self.assertEqual(len(schedulers), 2)
+        self.assertIs(schedulers[0], uc._global_scheduler)
+        self.assertIs(schedulers[1], uc._instance_schedulers[551])

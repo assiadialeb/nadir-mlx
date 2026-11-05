@@ -18,7 +18,7 @@ async def _hold(scheduler: PrioritySlotScheduler, priority: str, order: list[str
     await scheduler.acquire(priority, timeout_seconds=1.0)
     order.append(label)
     await asyncio.sleep(0.01)
-    scheduler.release()
+    scheduler.release(PRIORITY_INTERACTIVE)
 
 
 class PrioritySlotSchedulerTests(SimpleTestCase):
@@ -38,7 +38,7 @@ class PrioritySlotSchedulerTests(SimpleTestCase):
                 _hold(scheduler, PRIORITY_INTERACTIVE, order, "interactive"),
             )
             await asyncio.sleep(0)
-            scheduler.release()
+            scheduler.release(PRIORITY_INTERACTIVE)
             await asyncio.gather(batch, interactive)
             return order
 
@@ -50,7 +50,7 @@ class PrioritySlotSchedulerTests(SimpleTestCase):
             await scheduler.acquire(PRIORITY_INTERACTIVE, timeout_seconds=1.0)
             with self.assertRaises(TimeoutError):
                 await scheduler.acquire(PRIORITY_BATCH, timeout_seconds=0.01)
-            scheduler.release()
+            scheduler.release(PRIORITY_INTERACTIVE)
             return scheduler.in_use, scheduler.queued(PRIORITY_BATCH)
 
         self.assertEqual(asyncio.run(run()), (0, 0))
@@ -67,19 +67,36 @@ class PrioritySlotSchedulerTests(SimpleTestCase):
 
         self.assertEqual(asyncio.run(run()), 2)
 
-    def test_slot_granted_at_cancel_time_is_handed_on(self) -> None:
+    def test_abandon_after_grant_releases_slot(self) -> None:
         async def run() -> int:
             scheduler = PrioritySlotScheduler(1)
             await scheduler.acquire(PRIORITY_INTERACTIVE, timeout_seconds=1.0)
-            cancelled = asyncio.create_task(scheduler.acquire(PRIORITY_INTERACTIVE, timeout_seconds=1.0))
-            await asyncio.sleep(0)
-            scheduler.release()
-            cancelled.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await cancelled
+            waiter = asyncio.get_running_loop().create_future()
+            scheduler._waiters[PRIORITY_INTERACTIVE].append(waiter)
+            scheduler.release(PRIORITY_INTERACTIVE)  # grants waiter
+            self.assertTrue(waiter.done())
+            scheduler._abandon(waiter, PRIORITY_INTERACTIVE)
             return scheduler.in_use
 
         self.assertEqual(asyncio.run(run()), 0)
+
+
+    def test_batch_share_reserves_capacity_for_interactive(self) -> None:
+        async def run() -> str:
+            scheduler = PrioritySlotScheduler(2, batch_max_share=0.5)
+            await scheduler.acquire(PRIORITY_BATCH, timeout_seconds=1.0)
+            # Second batch must wait: only 1 of 2 slots may be batch (50%).
+            batch2 = asyncio.create_task(scheduler.acquire(PRIORITY_BATCH, timeout_seconds=1.0))
+            await asyncio.sleep(0)
+            await scheduler.acquire(PRIORITY_INTERACTIVE, timeout_seconds=1.0)
+            self.assertFalse(batch2.done())
+            scheduler.release(PRIORITY_INTERACTIVE)
+            scheduler.release(PRIORITY_BATCH)
+            await batch2
+            scheduler.release(PRIORITY_BATCH)
+            return "ok"
+
+        self.assertEqual(asyncio.run(run()), "ok")
 
 
 class RequestPriorityMiddlewareTests(SimpleTestCase):
