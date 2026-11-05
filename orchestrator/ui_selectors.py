@@ -39,6 +39,16 @@ InstalledSort = Literal[
 HF_FETCH_LIMIT_DEFAULT = 24
 HF_FETCH_LIMIT_FILTERED = 100
 
+# HF ``expand`` replaces the default field set — request every field we use.
+HF_HUB_MODEL_EXPAND_FIELDS: tuple[str, ...] = (
+    "safetensors",
+    "tags",
+    "pipeline_tag",
+    "likes",
+    "downloads",
+    "library_name",
+)
+
 SORT_OPTIONS_INSTALLED: tuple[tuple[str, str], ...] = (
     ("name_asc", "Name A → Z"),
     ("name_desc", "Name Z → A"),
@@ -286,7 +296,7 @@ def fetch_hf_models(query: str = "", *, limit: int = HF_FETCH_LIMIT_DEFAULT) -> 
         "sort": "downloads",
         "direction": "-1",
         "limit": limit,
-        "expand": "safetensors",
+        "expand": list(HF_HUB_MODEL_EXPAND_FIELDS),
     }
     if safe_query:
         params["search"] = safe_query
