@@ -12,6 +12,7 @@ from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH, GatewayTarget
 from orchestrator.gateway.upstream_concurrency import (
     UpstreamQueueTimeoutError,
     default_max_concurrent_upstream,
+    global_max_concurrent_upstream,
     resolve_max_concurrent_upstream,
     upstream_concurrency_slot,
 )
@@ -125,3 +126,88 @@ class UpstreamConcurrencyTests(SimpleTestCase):
             await task
 
         asyncio.run(wait_forever())
+
+
+def _text_target(instance_id: int, **overrides: object) -> GatewayTarget:
+    fields: dict[str, object] = {
+        "alias": f"model-{instance_id}",
+        "instance_id": instance_id,
+        "launch_mode": "TEXT",
+        "host": "127.0.0.1",
+        "port": 11400 + instance_id % 100,
+        "upstream_model": "default_model",
+        "api_path": CHAT_COMPLETIONS_PATH,
+        "max_concurrent_upstream": 0,
+    }
+    fields.update(overrides)
+    return GatewayTarget(**fields)
+
+
+async def _measure_peak(targets: list[GatewayTarget]) -> int:
+    active = 0
+    peak = 0
+
+    async def worker(target: GatewayTarget) -> None:
+        nonlocal active, peak
+        async with upstream_concurrency_slot(target):
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.02)
+            active -= 1
+
+    await asyncio.gather(*(worker(target) for target in targets))
+    return peak
+
+
+class GlobalUpstreamConcurrencyTests(SimpleTestCase):
+    def setUp(self) -> None:
+        from orchestrator.gateway import upstream_concurrency
+
+        upstream_concurrency._global_scheduler = None
+
+    def test_global_cap_limits_requests_across_instances(self) -> None:
+        targets = [_text_target(501), _text_target(502), _text_target(503)] * 2
+        with patch.dict(os.environ, {"NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL": "2"}, clear=False):
+            peak = asyncio.run(_measure_peak(targets))
+        self.assertEqual(peak, 2)
+
+    def test_zero_global_cap_is_unlimited(self) -> None:
+        targets = [_text_target(511), _text_target(512), _text_target(513)]
+        with patch.dict(os.environ, {"NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL": "0"}, clear=False):
+            self.assertIsNone(global_max_concurrent_upstream())
+            peak = asyncio.run(_measure_peak(targets))
+        self.assertEqual(peak, 3)
+
+    def test_decode_concurrency_bounds_instance_cap(self) -> None:
+        bounded = _text_target(521, max_concurrent_upstream=16, decode_concurrency=4)
+        unlimited = _text_target(522, max_concurrent_upstream=0, decode_concurrency=6)
+        self.assertEqual(resolve_max_concurrent_upstream(bounded), 4)
+        self.assertEqual(resolve_max_concurrent_upstream(unlimited), 6)
+
+    def test_batch_request_waits_behind_interactive(self) -> None:
+        from orchestrator.gateway.gpu_scheduler import (
+            PRIORITY_BATCH,
+            PRIORITY_INTERACTIVE,
+            set_request_priority,
+        )
+
+        target = _text_target(531, max_concurrent_upstream=1)
+        order: list[str] = []
+
+        async def request(priority: str, label: str) -> None:
+            set_request_priority(priority)
+            async with upstream_concurrency_slot(target):
+                order.append(label)
+                await asyncio.sleep(0.01)
+
+        async def run() -> None:
+            holder = asyncio.create_task(request(PRIORITY_INTERACTIVE, "first"))
+            await asyncio.sleep(0)
+            batch = asyncio.create_task(request(PRIORITY_BATCH, "batch"))
+            await asyncio.sleep(0)
+            interactive = asyncio.create_task(request(PRIORITY_INTERACTIVE, "interactive"))
+            await asyncio.gather(holder, batch, interactive)
+
+        with patch.dict(os.environ, {"NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL": "0"}, clear=False):
+            asyncio.run(run())
+        self.assertEqual(order, ["first", "interactive", "batch"])

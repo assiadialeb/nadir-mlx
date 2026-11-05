@@ -1,23 +1,34 @@
-"""Limit concurrent upstream MLX requests per instance (queue + backpressure)."""
+"""Limit concurrent upstream MLX requests per instance and across the gateway.
+
+Each request takes its instance slot first, then a global slot, so a request
+queued behind a busy instance never holds global capacity. Both levels serve
+interactive waiters before batch ones (``X-Nadir-Priority: batch``).
+"""
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
+import time
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import AsyncIterator
 
 from django.conf import settings
 
 from orchestrator.env_utils import env_float, env_str
+from orchestrator.gateway.gpu_scheduler import (
+    PrioritySlotScheduler,
+    RequestPriority,
+    current_request_priority,
+)
 from orchestrator.gateway.router import GatewayTarget
 
 MSG_QUEUE_TIMEOUT = (
     "Timed out waiting for an upstream inference slot. "
-    "Increase NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM or the instance override."
+    "Increase NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM, "
+    "NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL or the instance override."
 )
 
-_semaphores: dict[int, asyncio.Semaphore] = {}
-_semaphore_limits: dict[int, int] = {}
+_instance_schedulers: dict[int, PrioritySlotScheduler] = {}
+_global_scheduler: PrioritySlotScheduler | None = None
 
 
 def _read_positive_int(raw_value: object) -> int | None:
@@ -30,12 +41,21 @@ def _read_positive_int(raw_value: object) -> int | None:
     return value if value > 0 else None
 
 
-def default_max_concurrent_upstream() -> int | None:
-    """Global gateway default from NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM (0 = unlimited)."""
-    raw = env_str("NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM", "")
+def _limit_from_env(name: str) -> int | None:
+    raw = env_str(name, "")
     if not raw:
-        return _read_positive_int(settings.NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM)
+        return _read_positive_int(getattr(settings, name))
     return _read_positive_int(raw)
+
+
+def default_max_concurrent_upstream() -> int | None:
+    """Per-instance default from NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM (0 = unlimited)."""
+    return _limit_from_env("NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM")
+
+
+def global_max_concurrent_upstream() -> int | None:
+    """Cross-instance cap from NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL (0 = unlimited)."""
+    return _limit_from_env("NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL")
 
 
 def queue_timeout_seconds() -> float:
@@ -48,53 +68,94 @@ def queue_timeout_seconds() -> float:
     return float(raw)
 
 
+def _configured_instance_limit(target: GatewayTarget) -> int | None:
+    if target.max_concurrent_upstream is None:
+        return default_max_concurrent_upstream()
+    if target.max_concurrent_upstream == 0:
+        return None
+    return target.max_concurrent_upstream
+
+
 def resolve_max_concurrent_upstream(target: GatewayTarget) -> int | None:
-    """Return the concurrency cap for an instance, or None when unlimited."""
-    if target.max_concurrent_upstream is not None:
-        if target.max_concurrent_upstream == 0:
-            return None
-        return target.max_concurrent_upstream
-    return default_max_concurrent_upstream()
+    """Return the per-instance cap, or None when unlimited.
+
+    Never exceeds the instance ``decode_concurrency``: requests above it would
+    queue inside mlx-lm, outside the gateway priority ordering.
+    """
+    limit = _configured_instance_limit(target)
+    if target.decode_concurrency is None:
+        return limit
+    if limit is None:
+        return target.decode_concurrency
+    return min(limit, target.decode_concurrency)
 
 
-def _get_semaphore(instance_id: int, limit: int) -> asyncio.Semaphore:
-    current_limit = _semaphore_limits.get(instance_id)
-    if current_limit != limit:
-        _semaphores[instance_id] = asyncio.Semaphore(limit)
-        _semaphore_limits[instance_id] = limit
-    return _semaphores[instance_id]
+def _instance_scheduler(instance_id: int, limit: int) -> PrioritySlotScheduler:
+    scheduler = _instance_schedulers.get(instance_id)
+    if scheduler is None:
+        scheduler = PrioritySlotScheduler(limit)
+        _instance_schedulers[instance_id] = scheduler
+    elif scheduler.capacity != limit:
+        scheduler.resize(limit)
+    return scheduler
+
+
+def _shared_global_scheduler(limit: int) -> PrioritySlotScheduler:
+    global _global_scheduler
+    if _global_scheduler is None:
+        _global_scheduler = PrioritySlotScheduler(limit)
+    elif _global_scheduler.capacity != limit:
+        _global_scheduler.resize(limit)
+    return _global_scheduler
+
+
+def _schedulers_for(target: GatewayTarget) -> list[PrioritySlotScheduler]:
+    schedulers: list[PrioritySlotScheduler] = []
+    instance_limit = resolve_max_concurrent_upstream(target)
+    if instance_limit is not None:
+        schedulers.append(_instance_scheduler(target.instance_id, instance_limit))
+    global_limit = global_max_concurrent_upstream()
+    if global_limit is not None:
+        schedulers.append(_shared_global_scheduler(global_limit))
+    return schedulers
+
+
+@asynccontextmanager
+async def _held_slot(
+    scheduler: PrioritySlotScheduler,
+    priority: RequestPriority,
+    deadline: float,
+) -> AsyncIterator[None]:
+    await scheduler.acquire(priority, max(0.0, deadline - time.monotonic()))
+    try:
+        yield
+    finally:
+        scheduler.release()
 
 
 @asynccontextmanager
 async def upstream_concurrency_slot(target: GatewayTarget) -> AsyncIterator[None]:
-    """Acquire an upstream slot; wait in queue until timeout."""
+    """Acquire instance + global slots; wait in queue until timeout."""
     from orchestrator.gateway.request_timing import get_active_collector
 
     collector = get_active_collector()
-    limit = resolve_max_concurrent_upstream(target)
-    if limit is None:
-        if collector is not None:
-            collector.mark_queue_enter()
-            collector.mark_queue_acquired()
-        yield
-        return
-
-    semaphore = _get_semaphore(target.instance_id, limit)
+    priority = current_request_priority()
+    deadline = time.monotonic() + queue_timeout_seconds()
     if collector is not None:
         collector.mark_queue_enter()
-    try:
-        async with asyncio.timeout(queue_timeout_seconds()):
-            await semaphore.acquire()
-    except TimeoutError as exc:
+    async with AsyncExitStack() as stack:
+        try:
+            for scheduler in _schedulers_for(target):
+                await stack.enter_async_context(
+                    _held_slot(scheduler, priority, deadline),
+                )
+        except TimeoutError as exc:
+            if collector is not None:
+                collector.set_error("upstream_queue_timeout")
+            raise UpstreamQueueTimeoutError(MSG_QUEUE_TIMEOUT) from exc
         if collector is not None:
-            collector.set_error("upstream_queue_timeout")
-        raise UpstreamQueueTimeoutError(MSG_QUEUE_TIMEOUT) from exc
-    if collector is not None:
-        collector.mark_queue_acquired()
-    try:
+            collector.mark_queue_acquired()
         yield
-    finally:
-        semaphore.release()
 
 
 class UpstreamQueueTimeoutError(Exception):

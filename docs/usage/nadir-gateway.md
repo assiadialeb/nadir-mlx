@@ -331,6 +331,7 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 | `NADIR_GATEWAY_PUBLIC_BASE_URL` | `http://127.0.0.1:11380` | Base URL for generated image links |
 | `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` | `300` | Upstream proxy timeout |
 | `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` | `16` | Max parallel upstream requests per instance (`0` = unlimited) |
+| `NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL` | `16` | Max parallel upstream requests across all instances (`0` = unlimited); instances on one Mac share GPU bandwidth |
 | `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `300` | Max wait in gateway queue when all slots are busy |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
@@ -347,6 +348,20 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 
 !!! tip "Upstream concurrency queue"
     When more clients hit the gateway than MLX can serve in parallel, excess requests **wait in a queue** (like Ollama) instead of failing immediately. Tune `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` for your hardware, or set **Max concurrent upstream requests** per instance in the server form. Use `0` globally or per instance to disable the cap (legacy pass-through).
+
+!!! note "GPU scheduling and priority"
+    Every upstream request takes its **instance slot** first, then a **global slot** (`NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL`), within a single `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` budget. A request waiting on a busy instance never holds global capacity.
+
+    Freed slots go to **interactive** requests first. Background clients (report generation, bulk embeddings, evaluations) should send `X-Nadir-Priority: batch`; they are served only when no interactive request is queued, so they can hit `upstream_queue_timeout` under sustained interactive load. Any other value, or no header, is interactive.
+
+    ```bash
+    curl -s http://127.0.0.1:11380/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "X-Nadir-Priority: batch" \
+      -d '{"model": "qwen-chat", "messages": [{"role": "user", "content": "Summarize"}]}'
+    ```
+
+    For TEXT instances the per-instance cap is also bounded by `decode_concurrency` (Advanced JSON) so requests never queue inside mlx-lm, out of reach of the priority order.
 
 !!! tip "Route cache"
     The gateway caches alias → instance resolution and `GET /v1/models` in memory for `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` (default 20s). After starting or stopping an instance, new routes may take up to one TTL window to appear. Lower the TTL in dev if you need faster feedback.
@@ -419,7 +434,7 @@ pytest -m contract orchestrator/tests/contracts -q
 | `503 model_waking_timeout` | `on_demand` cold start exceeded wake timeout | Increase `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` and client timeout |
 | `400 unsupported_endpoint` | Wrong route for launch mode | Use embeddings route for EMBEDDING alias, etc. |
 | `502 bad_gateway` | MLX process down or port closed | Check instance status and logs |
-| `503 upstream_queue_timeout` | Too many parallel gateway requests | Raise per-instance max concurrent or global queue timeout |
+| `503 upstream_queue_timeout` | Too many parallel gateway requests | Raise the per-instance or global concurrency cap, or the queue timeout; `batch` requests wait behind every queued interactive one |
 | `504 gateway_timeout` | Inference slower than proxy timeout | Increase `NADIR_GATEWAY_PROXY_TIMEOUT_SECONDS` |
 | `400` on every request with custom Host | Trusted Host reject | Add host to `NADIR_GATEWAY_ALLOWED_HOSTS` or use `localhost` / `127.0.0.1` |
 | `403` from a browser app | Origin not allowlisted | Add the page origin to `NADIR_GATEWAY_CORS_ORIGINS` |

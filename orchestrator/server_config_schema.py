@@ -294,6 +294,8 @@ ADVANCED_WHITELIST: dict[str, frozenset[str]] = {
         "min_p",
         "prompt_cache_size",
         "prompt_cache_bytes",
+        "decode_concurrency",
+        "prompt_concurrency",
     }),
     "MULTIMODAL": frozenset({
         "adapter_path",
@@ -417,6 +419,18 @@ ADVANCED_FIELD_SPECS: dict[str, AdvancedFieldSpec] = {
         modes=frozenset({"TEXT"}),
         min_value=1_000_000,
         max_value=64 * 1024**3,
+    ),
+    "decode_concurrency": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"TEXT"}),
+        min_value=1,
+        max_value=256,
+    ),
+    "prompt_concurrency": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"TEXT"}),
+        min_value=1,
+        max_value=64,
     ),
 }
 

@@ -53,7 +53,7 @@ All whitelisted `advanced` keys are forwarded at instance **Start** via `server_
 
 | Launch mode | Allowed keys | Wired |
 |-------------|--------------|-------|
-| TEXT | `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`, `prompt_cache_size`, `prompt_cache_bytes` | Yes → `mlx_lm.server` CLI |
+| TEXT | `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`, `prompt_cache_size`, `prompt_cache_bytes`, `decode_concurrency`, `prompt_concurrency` | Yes → `mlx_lm.server` CLI |
 | MULTIMODAL | `adapter_path`, `draft_model`, `draft_kind`, `draft_block_size`, `kv_bits`, `kv_quant_scheme`, `kv_group_size`, `enable_thinking`, `thinking_budget` | Yes → `mlx_vlm.server` CLI |
 | IMAGE | `quantize_override` | Yes → `image_server` (`apply_quantize_override`) |
 | TTS | `response_format` | Yes → `tts_server` default codec |
@@ -133,7 +133,7 @@ See [instance-lifecycle.md](instance-lifecycle.md) for gateway wake behaviour.
 
 ## Advanced JSON — TEXT (`mlx-lm`)
 
-Allowed keys: `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`, `prompt_cache_size`, `prompt_cache_bytes`.
+Allowed keys: `adapter_path`, `draft_model`, `num_draft_tokens`, `chat_template_args`, `temp`, `top_p`, `top_k`, `min_p`, `prompt_cache_size`, `prompt_cache_bytes`, `decode_concurrency`, `prompt_concurrency`.
 
 Each key maps to a `--kebab-case` CLI flag on `mlx_lm.server` at instance start.
 
@@ -149,6 +149,8 @@ Each key maps to a `--kebab-case` CLI flag on `mlx_lm.server` at instance start.
 | `min_p` | `--min-p` | float | Min-p sampling (0 = disabled). |
 | `prompt_cache_size` | `--prompt-cache-size` | int (1–128) | Max distinct prefix KV caches in the mlx-lm LRU. New TEXT configs default from host unified memory (10–32). |
 | `prompt_cache_bytes` | `--prompt-cache-bytes` | int (≥1e6) | Optional hard byte budget. **Omitted by default** (mlx-lm unlimited) so a large agent prefix is not immediately LRU-evicted. Set explicitly only when you want a cap. |
+| `decode_concurrency` | `--decode-concurrency` | int (1–256) | Requests decoded in one batch (mlx-lm default 32). Also caps the gateway per-instance slots so excess requests queue in the gateway, where interactive traffic is served first. Each concurrent request holds its own KV cache: lower it for long contexts on 32–48 GB Macs. |
+| `prompt_concurrency` | `--prompt-concurrency` | int (1–64) | Prompts prefilled in one batch (mlx-lm default 8). Lower it when long agent prompts arrive together and TTFT spikes. |
 
 !!! tip "Thinking on TEXT models"
     There is **no** `enable_thinking` key for TEXT in Nadir. Use `chat_template_args` when the mlx-lm chat template supports it, or rely on model-native thinking tokens in the stream (`delta.reasoning`).

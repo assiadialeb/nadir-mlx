@@ -19,6 +19,11 @@ from starlette.responses import Response
 
 from orchestrator.env_utils import env_float, env_str
 from orchestrator.gateway.errors import openai_error_envelope
+from orchestrator.gateway.gpu_scheduler import (
+    PRIORITY_HEADER,
+    parse_request_priority,
+    set_request_priority,
+)
 from orchestrator.security_utils import is_loopback_bind_host
 
 REQUEST_ID_HEADER = "x-request-id"
@@ -35,6 +40,14 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers[REQUEST_ID_HEADER] = request_id
         return response
+
+
+class RequestPriorityMiddleware(BaseHTTPMiddleware):
+    """Expose ``X-Nadir-Priority`` (interactive | batch) to the upstream scheduler."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        set_request_priority(parse_request_priority(request.headers.get(PRIORITY_HEADER)))
+        return await call_next(request)
 
 
 class OriginGuardMiddleware(BaseHTTPMiddleware):
@@ -152,6 +165,7 @@ def install_gateway_middleware(
 
     # Last added runs first on the request path. CORS must be outermost so
     # preflight OPTIONS can short-circuit before TrustedHost / body limits.
+    app.add_middleware(RequestPriorityMiddleware)
     app.add_middleware(RequestIdMiddleware)
     if origins != ["*"]:
         app.add_middleware(OriginGuardMiddleware, allowed_origins=origins)
