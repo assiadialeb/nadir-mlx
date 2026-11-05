@@ -2,6 +2,7 @@
     <form method="GET" action="{% url 'models' %}" class="flex flex-col lg:flex-row gap-3 lg:items-end">
         <input type="hidden" name="tab" value="{{ filter_tab }}">
         {% if filter_cap %}<input type="hidden" name="cap" value="{{ filter_cap }}">{% endif %}
+        {% if filter_tab == 'hub' and filter_fits_mac %}<input type="hidden" name="fits_mac" value="1">{% endif %}
         <div class="flex-grow">
             <label for="models-filter-q" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Search</label>
             <div class="relative">
@@ -22,6 +23,13 @@
                 {% endfor %}
             </select>
         </div>
+        {% if filter_tab == 'hub' %}
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700 pb-2 lg:pb-0">
+            <input type="checkbox" name="fits_mac" value="1" {% if filter_fits_mac %}checked{% endif %}
+                class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+            Fits my Mac
+        </label>
+        {% endif %}
         <button type="submit"
             class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-all">
             Apply
@@ -31,12 +39,12 @@
     <div>
         <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Capability</p>
         <div class="flex flex-wrap gap-2">
-            <a href="{% url 'models' %}?tab={{ filter_tab }}{% if filter_query %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_sort != 'name_asc' %}&sort={{ filter_sort }}{% endif %}"
+            <a href="{% url 'models' %}?tab={{ filter_tab }}{% if filter_query %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_sort != 'name_asc' %}&sort={{ filter_sort }}{% endif %}{% if filter_tab == 'hub' and filter_fits_mac %}&fits_mac=1{% endif %}"
                 class="px-2.5 py-1 rounded-full text-xxs font-semibold border transition-all {% if not filter_cap %}bg-indigo-50 text-indigo-700 border-indigo-200{% else %}bg-white text-slate-600 border-slate-200 hover:border-slate-300{% endif %}">
                 All
             </a>
             {% for cap in capability_filters %}
-            <a href="{% url 'models' %}?tab={{ filter_tab }}&cap={{ cap.id }}{% if filter_query %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_sort != 'name_asc' %}&sort={{ filter_sort }}{% endif %}"
+            <a href="{% url 'models' %}?tab={{ filter_tab }}&cap={{ cap.id }}{% if filter_query %}&q={{ filter_query|urlencode }}{% endif %}{% if filter_sort != 'name_asc' %}&sort={{ filter_sort }}{% endif %}{% if filter_tab == 'hub' and filter_fits_mac %}&fits_mac=1{% endif %}"
                 class="px-2.5 py-1 rounded-full text-xxs font-semibold border transition-all {% if filter_cap == cap.id %}bg-indigo-50 text-indigo-700 border-indigo-200{% else %}bg-white text-slate-600 border-slate-200 hover:border-slate-300{% endif %}">
                 {{ cap.short_label }}
             </a>

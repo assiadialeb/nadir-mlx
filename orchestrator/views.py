@@ -40,6 +40,7 @@ from .ui_selectors import (
     apply_installed_models_filters,
     fetch_hf_models,
     hf_fetch_limit_for_filters,
+    hub_mac_context,
     list_installed_models,
     parse_installed_models_query,
     models_by_server_type_json,
@@ -163,29 +164,46 @@ def models_view(request):
     filter_query = ""
     filter_cap = ""
     filter_sort = "name_asc"
+    filter_fits_mac = False
     filter_total = 0
     filter_count = 0
     filter_has_filters = False
     filter_fetch_limit = 0
+    hub_mac: dict = {}
     downloading_models = ModelDownload.objects.filter(status='DOWNLOADING').order_by('-created_at')
     hf_models: list[dict] = []
     installed_models = installed_models_all
 
     if active_tab == 'installed':
-        filter_query, filter_cap, filter_sort = parse_installed_models_query(request.GET)
+        filter_query, filter_cap, filter_sort, filter_fits_mac = (
+            parse_installed_models_query(request.GET)
+        )
         installed_models = apply_installed_models_filters(
             installed_models_all,
             query=filter_query,
             capability=filter_cap,
             sort=filter_sort,
+            fits_mac=filter_fits_mac,
         )
         filter_total = len(installed_models_all)
         filter_count = len(installed_models)
-        filter_has_filters = bool(filter_query or filter_cap or filter_sort != 'name_asc')
+        filter_has_filters = bool(
+            filter_query or filter_cap or filter_sort != 'name_asc' or filter_fits_mac
+        )
     elif active_tab == 'hub':
-        filter_query, filter_cap, filter_sort = parse_installed_models_query(request.GET)
-        filter_fetch_limit = hf_fetch_limit_for_filters(filter_query, filter_cap, filter_sort)
-        filter_has_filters = bool(filter_query or filter_cap or filter_sort != 'name_asc')
+        filter_query, filter_cap, filter_sort, filter_fits_mac = (
+            parse_installed_models_query(request.GET)
+        )
+        filter_fetch_limit = hf_fetch_limit_for_filters(
+            filter_query,
+            filter_cap,
+            filter_sort,
+            fits_mac=filter_fits_mac,
+        )
+        filter_has_filters = bool(
+            filter_query or filter_cap or filter_sort != 'name_asc' or filter_fits_mac
+        )
+        hub_mac = hub_mac_context()
         try:
             hf_models_all = fetch_hf_models(filter_query, limit=filter_fetch_limit)
             hf_models = apply_installed_models_filters(
@@ -193,6 +211,7 @@ def models_view(request):
                 query=filter_query,
                 capability=filter_cap,
                 sort=filter_sort,
+                fits_mac=filter_fits_mac,
             )
             filter_total = len(hf_models_all)
             filter_count = len(hf_models)
@@ -206,6 +225,7 @@ def models_view(request):
         'filter_query': filter_query,
         'filter_cap': filter_cap,
         'filter_sort': filter_sort,
+        'filter_fits_mac': filter_fits_mac,
         'filter_total': filter_total,
         'filter_count': filter_count,
         'filter_has_filters': filter_has_filters,
@@ -214,6 +234,7 @@ def models_view(request):
         'capability_filters': SERVER_TYPES,
         'downloading_models': downloading_models,
         'models': hf_models,
+        **hub_mac,
     })
 
 

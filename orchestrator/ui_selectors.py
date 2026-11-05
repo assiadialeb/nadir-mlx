@@ -21,9 +21,20 @@ from orchestrator.models import InferenceInstance, ModelDownload
 from orchestrator.registry_builder import infer_family_id
 from orchestrator.huggingface_client import huggingface_get
 from orchestrator.security_utils import sanitize_hf_search_query, validate_huggingface_api_url
+from orchestrator.mac_model_fit import (
+    enrich_hf_model_mac_fit,
+    hub_mac_profile_summary,
+    load_mac_hardware_profile,
+)
 from orchestrator.server_types import SERVER_TYPES
 
-InstalledSort = Literal["name_asc", "name_desc", "size_asc", "size_desc"]
+InstalledSort = Literal[
+    "name_asc",
+    "name_desc",
+    "size_asc",
+    "size_desc",
+    "mac_recommended",
+]
 
 HF_FETCH_LIMIT_DEFAULT = 24
 HF_FETCH_LIMIT_FILTERED = 100
@@ -31,6 +42,7 @@ HF_FETCH_LIMIT_FILTERED = 100
 SORT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("name_asc", "Name A → Z"),
     ("name_desc", "Name Z → A"),
+    ("mac_recommended", "Recommended for Mac"),
     ("size_desc", "Size (largest)"),
     ("size_asc", "Size (smallest)"),
 )
@@ -207,7 +219,9 @@ def parse_hf_model_from_api(
         "repo_id": repo_id,
         "name": name,
         "param_size": f"{param_size}B" if param_size else "Unknown",
+        "param_size_b": param_size,
         "bits": f"{bits}bit",
+        "quant_bits": bits,
         "use_case": _detect_use_case(name, tags),
         "ram_est": _estimate_ram_gb(param_size, bits),
         "estimated_size_bytes": estimated_size_bytes,
@@ -216,6 +230,7 @@ def parse_hf_model_from_api(
         "likes": model_data.get("likes", 0),
         **infer_hf_model_capabilities(name, pipeline_tag=pipeline_tag, tags=tags),
     }
+    enrich_hf_model_mac_fit(parsed)
 
     download_record = download_records.get(repo_id)
     if download_record:
@@ -297,8 +312,10 @@ def list_installed_models() -> list[dict[str, Any]]:
     return models
 
 
-def parse_installed_models_query(params: dict[str, Any]) -> tuple[str, str, str]:
-    """Parse q, cap, and sort query params for the installed models tab."""
+def parse_installed_models_query(
+    params: dict[str, Any],
+) -> tuple[str, str, str, bool]:
+    """Parse q, cap, sort, and fits_mac query params for the models tabs."""
     query = str(params.get("q") or "").strip()
     capability = str(params.get("cap") or "").strip().upper()
     if capability and capability not in CAPABILITY_FILTER_IDS:
@@ -309,7 +326,13 @@ def parse_installed_models_query(params: dict[str, Any]) -> tuple[str, str, str]
     if sort not in valid_sorts:
         sort = "name_asc"
 
-    return query, capability, sort
+    fits_mac = str(params.get("fits_mac") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    return query, capability, sort, fits_mac
 
 
 def filter_installed_models(
@@ -317,6 +340,7 @@ def filter_installed_models(
     *,
     query: str = "",
     capability: str = "",
+    fits_mac: bool = False,
 ) -> list[dict[str, Any]]:
     """Filter models by folder/repo name and capability."""
     filtered = models
@@ -331,6 +355,13 @@ def filter_installed_models(
     if capability:
         capability_key = CAPABILITY_TO_KEY[capability]
         filtered = [model for model in filtered if model.get(capability_key)]
+
+    if fits_mac:
+        filtered = [
+            model
+            for model in filtered
+            if model.get("mac_fit_tier") in {"comfortable", "tight"}
+        ]
 
     return filtered
 
@@ -353,6 +384,15 @@ def sort_installed_models(
             models,
             key=lambda model: (_model_size_bytes(model), model["name"].lower()),
         )
+    if sort == "mac_recommended":
+        return sorted(
+            models,
+            key=lambda model: (
+                -int(model.get("interactive_recommendation_score") or 0),
+                -int(model.get("downloads") or 0),
+                model["name"].lower(),
+            ),
+        )
     return sorted(models, key=lambda model: model["name"].lower())
 
 
@@ -362,9 +402,15 @@ def apply_installed_models_filters(
     query: str = "",
     capability: str = "",
     sort: str = "name_asc",
+    fits_mac: bool = False,
 ) -> list[dict[str, Any]]:
     """Filter then sort the installed models list."""
-    filtered = filter_installed_models(models, query=query, capability=capability)
+    filtered = filter_installed_models(
+        models,
+        query=query,
+        capability=capability,
+        fits_mac=fits_mac,
+    )
     return sort_installed_models(filtered, sort)
 
 
@@ -391,6 +437,7 @@ def build_models_tab_query(
     query: str = "",
     capability: str = "",
     sort: str = "name_asc",
+    fits_mac: bool = False,
     **overrides: str,
 ) -> str:
     """Build a query string for a models page tab."""
@@ -401,15 +448,32 @@ def build_models_tab_query(
         params["cap"] = capability
     if sort and sort != "name_asc":
         params["sort"] = sort
+    if fits_mac:
+        params["fits_mac"] = "1"
     params.update({key: value for key, value in overrides.items() if value})
     return urlencode(params)
 
 
-def hf_fetch_limit_for_filters(query: str, capability: str, sort: str) -> int:
+def hf_fetch_limit_for_filters(
+    query: str,
+    capability: str,
+    sort: str,
+    *,
+    fits_mac: bool = False,
+) -> int:
     """Use a larger HF page size when local filters are active."""
-    if query or capability or sort != "name_asc":
+    if query or capability or sort != "name_asc" or fits_mac:
         return HF_FETCH_LIMIT_FILTERED
     return HF_FETCH_LIMIT_DEFAULT
+
+
+def hub_mac_context() -> dict[str, Any]:
+    """Context for the Hugging Face catalog Mac-fit banner."""
+    profile = load_mac_hardware_profile()
+    return {
+        "hub_mac_profile": profile,
+        "hub_mac_summary": hub_mac_profile_summary(profile),
+    }
 
 
 def format_disk_size(size_bytes: int) -> str:

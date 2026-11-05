@@ -1,0 +1,310 @@
+"""Mac-fit tiers and interactive catalog scoring for HF models (MLX-130 / MLX-131)."""
+
+from __future__ import annotations
+
+import re
+import subprocess
+from dataclasses import dataclass
+from typing import Any, Literal
+
+import platform
+
+from orchestrator.memory_pressure import (
+    estimate_kv_cache_bytes,
+    estimate_prompt_cache_budget_bytes,
+    memory_reserve_bytes,
+    planning_context_tokens,
+    planning_parallel_sequences_cap,
+    planning_prompt_prefix_tokens,
+)
+from orchestrator.memory_pressure import TransformerShape
+from orchestrator.prompt_cache import host_total_bytes
+
+MacFitTier = Literal["comfortable", "tight", "too_large", "unknown"]
+BandwidthClass = Literal["low", "medium", "high", "unknown"]
+
+_MOE_ACTIVE_RE = re.compile(r"-A(\d+(?:\.\d+)?)[Bb]")
+_MOE_HINT_RE = re.compile(r"\bmoe\b|experts?", re.I)
+_DWQ_HINT_RE = re.compile(r"\bDWQ\b|dequant", re.I)
+
+_COMFORTABLE_RATIO = 0.55
+_TIGHT_RATIO = 0.85
+_MIN_FOOTPRINT_BYTES = 2 * 1024**3
+_RUNTIME_WEIGHT_FACTOR = 1.15
+
+
+@dataclass(frozen=True)
+class MacHardwareProfile:
+    """Local Apple Silicon / host memory profile for catalog hints."""
+
+    total_ram_bytes: int | None
+    chip_label: str
+    bandwidth_class: BandwidthClass
+    is_apple_silicon: bool
+
+
+@dataclass(frozen=True)
+class MacFitAssessment:
+    """Result of comparing a catalog footprint to the local Mac."""
+
+    tier: MacFitTier
+    label: str
+    badge_classes: str
+    footprint_bytes: int
+    footprint_label: str
+    usable_budget_bytes: int
+    interactive_score: int
+
+
+def load_mac_hardware_profile() -> MacHardwareProfile:
+    """Detect unified RAM and a coarse memory-bandwidth class from the host."""
+    system = platform.system()
+    chip_label = "Unknown host"
+    is_apple = system == "Darwin"
+    if is_apple:
+        chip_label = _darwin_cpu_brand() or "Apple Silicon"
+    elif system == "Linux":
+        chip_label = "Linux (non-Mac)"
+
+    total = host_total_bytes()
+    bandwidth = _bandwidth_class_from_chip(chip_label) if is_apple else "unknown"
+    return MacHardwareProfile(
+        total_ram_bytes=total,
+        chip_label=chip_label,
+        bandwidth_class=bandwidth,
+        is_apple_silicon=is_apple,
+    )
+
+
+def is_moe_model_name(name: str) -> bool:
+    """Return True when the repo name suggests a mixture-of-experts checkpoint."""
+    if _MOE_ACTIVE_RE.search(name):
+        return True
+    return bool(_MOE_HINT_RE.search(name.lower()))
+
+
+def extract_active_param_size_b(name: str, total_param_size_b: float | None) -> float | None:
+    """MoE names like ``30B-A3B`` use the active expert count for memory."""
+    match = _MOE_ACTIVE_RE.search(name)
+    if match:
+        return float(match.group(1))
+    return total_param_size_b
+
+
+def estimate_catalog_text_footprint_bytes(
+    *,
+    param_size_b: float | None,
+    active_param_size_b: float | None,
+    bits: int,
+) -> int:
+    """Weights + planned KV + prompt cache (MLX-127 defaults, generic shape)."""
+    effective_b = active_param_size_b or param_size_b
+    if effective_b is None or effective_b <= 0:
+        return 0
+
+    weights = int(
+        effective_b * 1_000_000_000 * (bits / 8.0) * _RUNTIME_WEIGHT_FACTOR
+    )
+    shape = _generic_transformer_shape(effective_b)
+    context = planning_context_tokens()
+    kv_bits = 16.0
+    parallel = planning_parallel_sequences_cap()
+    per_sequence = estimate_kv_cache_bytes(
+        shape, context_tokens=context, kv_bits=kv_bits
+    )
+    kv_bytes = per_sequence * parallel
+    prefix_tokens = min(context, planning_prompt_prefix_tokens()) if context else 0
+    prompt_cache = estimate_prompt_cache_budget_bytes(
+        shape,
+        server_config=None,
+        kv_bits=kv_bits,
+        prefix_tokens=prefix_tokens,
+        launch_mode="TEXT",
+    )
+    return max(_MIN_FOOTPRINT_BYTES, weights + kv_bytes + prompt_cache)
+
+
+def usable_memory_budget_bytes(profile: MacHardwareProfile) -> int:
+    """Bytes treated as available for one TEXT instance after OS reserve."""
+    if not profile.total_ram_bytes:
+        return 0
+    return max(0, profile.total_ram_bytes - memory_reserve_bytes())
+
+
+def classify_mac_fit(
+    footprint_bytes: int,
+    profile: MacHardwareProfile,
+) -> MacFitAssessment:
+    """Map footprint to comfort tiers; never blocks download."""
+    budget = usable_memory_budget_bytes(profile)
+    if footprint_bytes <= 0 or budget <= 0:
+        return MacFitAssessment(
+            tier="unknown",
+            label="",
+            badge_classes="",
+            footprint_bytes=footprint_bytes,
+            footprint_label=_format_gib(footprint_bytes),
+            usable_budget_bytes=budget,
+            interactive_score=0,
+        )
+
+    comfortable_cap = int(budget * _COMFORTABLE_RATIO)
+    tight_cap = int(budget * _TIGHT_RATIO)
+    if footprint_bytes <= comfortable_cap:
+        tier: MacFitTier = "comfortable"
+        label = "Recommended for your Mac"
+        badge_classes = (
+            "bg-emerald-50 text-emerald-800 border border-emerald-200"
+        )
+        score = 100
+    elif footprint_bytes <= tight_cap:
+        tier = "tight"
+        label = "May fit — tight"
+        badge_classes = "bg-amber-50 text-amber-800 border border-amber-200"
+        score = 40
+    else:
+        tier = "too_large"
+        label = "Likely too large"
+        badge_classes = "bg-rose-50 text-rose-800 border border-rose-200"
+        score = 0
+
+    return MacFitAssessment(
+        tier=tier,
+        label=label,
+        badge_classes=badge_classes,
+        footprint_bytes=footprint_bytes,
+        footprint_label=_format_gib(footprint_bytes),
+        usable_budget_bytes=budget,
+        interactive_score=score,
+    )
+
+
+def interactive_recommendation_score(
+    *,
+    name: str,
+    bits: int,
+    assessment: MacFitAssessment,
+    profile: MacHardwareProfile,
+    supports_text: bool,
+) -> int:
+    """MLX-130 scoring: fit tier + MoE / 4-bit / bandwidth heuristics."""
+    if not supports_text:
+        return assessment.interactive_score
+
+    score = assessment.interactive_score
+    lowered = name.lower()
+    if is_moe_model_name(name):
+        score += 25
+    if bits <= 4 or _DWQ_HINT_RE.search(name):
+        score += 15
+    if "instruct" in lowered or "chat" in lowered or "-it" in lowered:
+        score += 5
+
+    param_match = re.search(r"(\d+(?:\.\d+)?)[Bb]", name)
+    param_b = float(param_match.group(1)) if param_match else 0.0
+    active_b = extract_active_param_size_b(name, param_b) or param_b
+    if profile.bandwidth_class in {"low", "medium"} and active_b >= 24 and not is_moe_model_name(name):
+        score -= 20
+    if profile.bandwidth_class == "high" and is_moe_model_name(name) and bits <= 4:
+        score += 10
+    return max(0, score)
+
+
+def enrich_hf_model_mac_fit(
+    model: dict[str, Any],
+    *,
+    profile: MacHardwareProfile | None = None,
+) -> dict[str, Any]:
+    """Add Mac-fit and recommendation fields to a parsed HF model dict."""
+    profile = profile or load_mac_hardware_profile()
+    name = str(model.get("name") or "")
+    param_size_b = model.get("param_size_b")
+    bits = int(model.get("quant_bits") or 16)
+    active_b = extract_active_param_size_b(
+        name, float(param_size_b) if param_size_b is not None else None
+    )
+    footprint = estimate_catalog_text_footprint_bytes(
+        param_size_b=float(param_size_b) if param_size_b is not None else None,
+        active_param_size_b=active_b,
+        bits=bits,
+    )
+    assessment = classify_mac_fit(footprint, profile)
+    score = interactive_recommendation_score(
+        name=name,
+        bits=bits,
+        assessment=assessment,
+        profile=profile,
+        supports_text=bool(model.get("supports_text")),
+    )
+    model["is_moe"] = is_moe_model_name(name)
+    model["mac_footprint_bytes"] = footprint
+    model["mac_fit_tier"] = assessment.tier
+    model["mac_fit_label"] = assessment.label
+    model["mac_fit_badge_classes"] = assessment.badge_classes
+    model["mac_fit_footprint_label"] = assessment.footprint_label
+    model["interactive_recommendation_score"] = score
+    if footprint > 0:
+        model["ram_est"] = f"{assessment.footprint_label} (plan.)"
+        model["estimated_size_bytes"] = footprint
+    return model
+
+
+def hub_mac_profile_summary(profile: MacHardwareProfile | None = None) -> str:
+    """One-line copy for the HF catalog header."""
+    profile = profile or load_mac_hardware_profile()
+    if not profile.total_ram_bytes:
+        return "Mac profile unknown — RAM estimates are indicative only."
+    gib = profile.total_ram_bytes / (1024**3)
+    chip = profile.chip_label
+    return f"{chip} · {gib:.0f} GB unified — badges use planned TEXT footprint (weights + KV + cache)."
+
+
+def _generic_transformer_shape(param_b: float) -> TransformerShape:
+    if param_b <= 4:
+        layers, ctx = 32, 8192
+    elif param_b <= 14:
+        layers, ctx = 40, 8192
+    elif param_b <= 30:
+        layers, ctx = 48, 32768
+    else:
+        layers, ctx = 64, 32768
+    return TransformerShape(
+        num_layers=layers,
+        num_kv_heads=8,
+        head_dim=128,
+        max_position_embeddings=ctx,
+    )
+
+
+def _format_gib(size_bytes: int) -> str:
+    if size_bytes <= 0:
+        return "Unknown"
+    gib = size_bytes / (1024**3)
+    return f"{gib:.1f} GB"
+
+
+def _darwin_cpu_brand() -> str | None:
+    try:
+        raw = subprocess.check_output(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            text=True,
+            encoding="utf-8",
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return None
+    return raw or None
+
+
+def _bandwidth_class_from_chip(chip_label: str) -> BandwidthClass:
+    label = chip_label.lower()
+    if any(token in label for token in ("ultra", "m4 max", "m3 ultra", "m2 ultra")):
+        return "high"
+    if any(
+        token in label
+        for token in ("m4 pro", "m3 max", "m2 max", "m1 ultra", "m3 pro", "m4")
+    ):
+        return "medium"
+    if "apple" in label or "m1" in label or "m2" in label or "m3" in label:
+        return "low"
+    return "unknown"
