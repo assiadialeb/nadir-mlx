@@ -128,6 +128,7 @@ def run_suite_case(
     safe_host = validate_outbound_http_host(host)
     safe_port = validated_launch_port(port)
     safe_model = validated_subprocess_model_reference(model)
+    chat_url = build_validated_http_url(safe_host, safe_port, "/v1/chat/completions")
     payload = {
         "model": safe_model,
         "messages": [{"role": "user", "content": case["prompt"]}],
@@ -135,7 +136,7 @@ def run_suite_case(
         "max_tokens": int(case.get("max_tokens", 128)),
     }
     response = httpx.post(
-        build_validated_http_url(safe_host, safe_port, "/v1/chat/completions"),
+        chat_url,
         json=payload,
         headers=gateway_auth_headers(),
         timeout=timeout_seconds,
