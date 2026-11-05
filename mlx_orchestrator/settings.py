@@ -287,6 +287,13 @@ NADIR_LRU_EVICTION_ENABLED = os.environ.get("NADIR_LRU_EVICTION_ENABLED", "true"
 }
 # Keep this much free memory (GiB) when deciding whether to LRU-evict on_demand instances.
 NADIR_MEMORY_RESERVE_GB = float(os.environ.get("NADIR_MEMORY_RESERVE_GB", "4"))
+# Planning context for KV + prompt-cache footprint (MLX-127); caps huge max_position.
+NADIR_MEMORY_PLANNING_CONTEXT_TOKENS = int(
+    os.environ.get("NADIR_MEMORY_PLANNING_CONTEXT_TOKENS", "8192")
+)
+NADIR_MEMORY_PLANNING_PROMPT_PREFIX_TOKENS = int(
+    os.environ.get("NADIR_MEMORY_PLANNING_PROMPT_PREFIX_TOKENS", "4096")
+)
 NADIR_GATEWAY_PUBLIC_BASE_URL = os.environ.get(
     "NADIR_GATEWAY_PUBLIC_BASE_URL",
     f"http://{NADIR_GATEWAY_HOST}:{NADIR_GATEWAY_PORT}",

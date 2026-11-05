@@ -55,12 +55,20 @@ Recommendations:
 | `NADIR_LRU_EVICTION_GRACE_SECONDS` | `60` | Min idle age before LRU eviction; floored to `2 ×` heartbeat |
 | `NADIR_GATEWAY_ACTIVITY_HEARTBEAT_SECONDS` | `15` | Refresh `last_used_at` during long requests / streams |
 | `NADIR_MEMORY_RESERVE_GB` | `4` | Free-memory headroom (GiB) kept when deciding to evict |
+| `NADIR_MEMORY_PLANNING_CONTEXT_TOKENS` | `8192` | Tokens of KV assumed resident when estimating footprint before load |
+| `NADIR_MEMORY_PLANNING_PROMPT_PREFIX_TOKENS` | `4096` | Tokens per prompt-cache entry when no `prompt_cache_bytes` cap is set |
 | `MLX_INSTANCE_STARTUP_RECONCILE_ENABLED` | `true` | Restore `always_on` instances after process/host restart |
 | `MLX_INSTANCE_READY_TIMEOUT_SECONDS` | `300` | Max wait for `/health` after spawn before the start is marked `FAILED` |
 | `NADIR_RUNTIME_STATE_DIR` | `data/runtime` | Slot lock files and route-cache generation stamp shared by UI, gateway and MCP |
 
 !!! note "LRU victims"
     Only **unpinned** `lifecycle_mode=on_demand` instances are LRU candidates. `always_on` and `ops.pinned=true` are never stopped for memory headroom.
+
+!!! note "Memory footprint (MLX-127)"
+    Before loading a model, Nadir estimates **weights** (on-disk × 1.15) **+ active KV** (planning context × layers × KV heads × head dim × dtype) **+ prompt-cache budget** (explicit `prompt_cache_bytes`, or `prompt_cache_size` × assumed prefix KV). That total is compared to free unified memory minus `NADIR_MEMORY_RESERVE_GB`. Without the KV/cache terms, LRU fired too late and macOS swap crushed prefill/decode.
+
+!!! warning "Advanced — `iogpu.wired_limit_mb` (dedicated Macs only)"
+    mlx-lm may wire ~75% of RAM. On a **dedicated** inference Mac you can raise the wired limit (`sudo sysctl iogpu.wired_limit_mb=…`) so large models stay out of swap — this is optional, host-wide, and easy to misconfigure on a laptop that still runs a desktop session. Prefer Nadir's estimator + eviction first; only tune the sysctl when you understand the trade-off.
 
 !!! tip "Long generations stay protected"
     `last_used_at` is updated at request start, on a mid-request heartbeat (JSON background task and SSE, including mlx-lm prefill before the first token), and at request/stream end. That keeps active instances outside the eviction grace and idle-offload windows without a multi-minute lockout after every call. Heartbeat failures are best-effort (logged, never abort inference).
