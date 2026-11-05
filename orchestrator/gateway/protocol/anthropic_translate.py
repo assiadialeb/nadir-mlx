@@ -44,6 +44,30 @@ def anthropic_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     return chat
 
 
+def chat_usage_to_anthropic_usage(usage: dict[str, Any]) -> dict[str, Any]:
+    """Map OpenAI-style chat ``usage`` to Anthropic Messages ``usage``."""
+    prompt_raw = usage.get("prompt_tokens")
+    completion_raw = usage.get("completion_tokens")
+    prompt_tokens = prompt_raw if isinstance(prompt_raw, int) else 0
+    output_tokens = completion_raw if isinstance(completion_raw, int) else 0
+
+    cached_read = 0
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict):
+        cached_raw = details.get("cached_tokens")
+        if isinstance(cached_raw, int) and cached_raw > 0:
+            cached_read = min(cached_raw, prompt_tokens)
+
+    input_tokens = max(0, prompt_tokens - cached_read)
+    anthropic_usage: dict[str, Any] = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
+    if cached_read > 0:
+        anthropic_usage["cache_read_input_tokens"] = cached_read
+    return anthropic_usage
+
+
 def chat_completion_to_anthropic(
     chat_payload: dict[str, Any],
     *,
@@ -62,10 +86,7 @@ def chat_completion_to_anthropic(
         "content": content,
         "stop_reason": stop_reason,
         "stop_sequence": None,
-        "usage": {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-        },
+        "usage": chat_usage_to_anthropic_usage(usage),
     }
 
 
@@ -565,18 +586,15 @@ def anthropic_stream_content_block_stop(*, index: int = 0) -> bytes:
 def anthropic_stream_message_delta(
     stop_reason: str,
     *,
-    output_tokens: int = 0,
-    input_tokens: int = 0,
+    chat_usage: dict[str, Any] | None = None,
 ) -> bytes:
+    usage = chat_usage_to_anthropic_usage(chat_usage or {})
     return anthropic_sse_event(
         "message_delta",
         {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-            "usage": {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-            },
+            "usage": usage,
         },
     )
 
