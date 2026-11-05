@@ -296,6 +296,7 @@ ADVANCED_WHITELIST: dict[str, frozenset[str]] = {
         "prompt_cache_bytes",
         "decode_concurrency",
         "prompt_concurrency",
+        "prefill_step_size",
     }),
     "MULTIMODAL": frozenset({
         "adapter_path",
@@ -316,6 +317,7 @@ ADVANCED_WHITELIST: dict[str, frozenset[str]] = {
 }
 
 TEXT_MTP_PREVIEW_KEYS = frozenset({"draft_kind", "draft_block_size"})
+TEXT_KV_QUANT_KEYS = frozenset({"kv_bits", "kv_quant_scheme", "kv_group_size"})
 
 AdvancedValueType = Literal["string", "int", "float", "bool", "object", "enum"]
 
@@ -432,6 +434,12 @@ ADVANCED_FIELD_SPECS: dict[str, AdvancedFieldSpec] = {
         min_value=1,
         max_value=64,
     ),
+    "prefill_step_size": AdvancedFieldSpec(
+        value_type="int",
+        modes=frozenset({"TEXT"}),
+        min_value=256,
+        max_value=32768,
+    ),
 }
 
 
@@ -443,9 +451,13 @@ def text_mtp_preview_enabled() -> bool:
 
 
 def advanced_whitelist_for_mode(launch_mode: str) -> frozenset[str]:
+    from orchestrator.mlx_lm_capabilities import text_kv_quantization_enabled
+
     allowed = set(ADVANCED_WHITELIST.get(launch_mode, frozenset()))
     if launch_mode == "TEXT" and text_mtp_preview_enabled():
         allowed.update(TEXT_MTP_PREVIEW_KEYS)
+    if launch_mode == "TEXT" and text_kv_quantization_enabled():
+        allowed.update(TEXT_KV_QUANT_KEYS)
     return frozenset(allowed)
 
 
@@ -501,6 +513,11 @@ def _validate_advanced_value(key: str, value: Any, launch_mode: str) -> Any:
     applicable_modes = set(spec.modes)
     if text_mtp_preview_enabled() and key in TEXT_MTP_PREVIEW_KEYS:
         applicable_modes.add("TEXT")
+    if key in TEXT_KV_QUANT_KEYS:
+        from orchestrator.mlx_lm_capabilities import text_kv_quantization_enabled
+
+        if text_kv_quantization_enabled():
+            applicable_modes.add("TEXT")
     if launch_mode not in applicable_modes:
         return value
 
@@ -840,6 +857,11 @@ def advanced_schema_for_ui_json() -> str:
         }
         if text_mtp_preview_enabled() and key in TEXT_MTP_PREVIEW_KEYS:
             entry["modes"] = sorted(set(entry["modes"]) | {"TEXT"})
+        if key in TEXT_KV_QUANT_KEYS:
+            from orchestrator.mlx_lm_capabilities import text_kv_quantization_enabled
+
+            if text_kv_quantization_enabled():
+                entry["modes"] = sorted(set(entry["modes"]) | {"TEXT"})
         if spec.choices:
             entry["choices"] = sorted(spec.choices)
         if spec.min_value is not None:

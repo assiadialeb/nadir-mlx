@@ -78,6 +78,43 @@ class ServerManagerLaunchCommandTests(SimpleTestCase):
         self.assertEqual(command[command.index("--prompt-concurrency") + 1], "2")
 
     @patch("orchestrator.server_manager._get_python_bin", return_value="python")
+    def test_build_launch_command_text_passes_prefill_step_size(
+        self,
+        _mock_python_bin: object,
+    ) -> None:
+        command = _build_launch_command(
+            "/tmp/llama",
+            11400,
+            "TEXT",
+            {
+                "host": "127.0.0.1",
+                "advanced": {"prefill_step_size": 1024},
+            },
+            "llama-model",
+        )
+        self.assertEqual(command[command.index("--prefill-step-size") + 1], "1024")
+
+    @patch("orchestrator.mlx_lm_capabilities.text_kv_quantization_enabled", return_value=True)
+    @patch("orchestrator.server_manager._get_python_bin", return_value="python")
+    def test_build_launch_command_text_passes_kv_when_supported(
+        self,
+        _mock_python_bin: object,
+        _mock_kv: object,
+    ) -> None:
+        command = _build_launch_command(
+            "/tmp/llama",
+            11400,
+            "TEXT",
+            {
+                "host": "127.0.0.1",
+                "advanced": {"kv_bits": 4, "kv_group_size": 32},
+            },
+            "llama-model",
+        )
+        self.assertEqual(command[command.index("--kv-bits") + 1], "4")
+        self.assertEqual(command[command.index("--kv-group-size") + 1], "32")
+
+    @patch("orchestrator.server_manager._get_python_bin", return_value="python")
     def test_build_launch_command_multimodal_includes_mtp_flags(
         self,
         _mock_python_bin: object,
