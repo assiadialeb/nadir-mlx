@@ -8,13 +8,14 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, BinaryIO
 
 import httpx
 from django.conf import settings
 
 from orchestrator.batch_file_store import (
+    append_jsonl_bytes,
     batch_file_max_bytes,
     delete_storage_blob,
     is_valid_batch_file_id,
@@ -22,6 +23,7 @@ from orchestrator.batch_file_store import (
     new_storage_name,
     read_file_bytes,
     write_upload_bytes,
+    write_upload_stream,
 )
 from orchestrator.env_utils import env_float
 from orchestrator.gateway.gpu_scheduler import PRIORITY_HEADER, PRIORITY_BATCH
@@ -32,6 +34,8 @@ from orchestrator.models import GatewayBatchFile, GatewayBatchJob
 from orchestrator.security_utils import public_error_message, validated_gateway_chat_completions_url
 
 logger = logging.getLogger(__name__)
+
+_progress_lock = threading.Lock()
 
 ALLOWED_FILE_PURPOSES = frozenset({"batch"})
 ALLOWED_BATCH_ENDPOINTS = frozenset({CHAT_COMPLETIONS_PATH})
@@ -65,6 +69,38 @@ def create_batch_file(*, purpose: str, filename: str, data: bytes) -> GatewayBat
         storage_name=storage_name,
     )
     return record
+
+
+def create_batch_file_from_stream(
+    *,
+    purpose: str,
+    filename: str,
+    readable: BinaryIO,
+) -> GatewayBatchFile | BatchServiceError:
+    if purpose not in ALLOWED_FILE_PURPOSES:
+        return BatchServiceError(
+            f"Unsupported purpose '{purpose}'. Only 'batch' is supported.",
+            status_code=400,
+        )
+    storage_name = new_storage_name()
+    try:
+        total = write_upload_stream(
+            storage_name,
+            readable,
+            max_bytes=batch_file_max_bytes(),
+        )
+    except ValueError:
+        return BatchServiceError("File too large.", code="payload_too_large", status_code=413)
+    if total == 0:
+        delete_storage_blob(storage_name)
+        return BatchServiceError("Empty file.", status_code=400)
+    return GatewayBatchFile.objects.create(
+        file_id=new_file_id(),
+        purpose=purpose,
+        filename=filename or "upload.jsonl",
+        bytes=total,
+        storage_name=storage_name,
+    )
 
 
 def get_batch_file(file_id: str) -> GatewayBatchFile | None:
@@ -193,7 +229,7 @@ def batch_to_openai_dict(job: GatewayBatchJob) -> dict[str, Any]:
         "id": job.batch_id,
         "object": "batch",
         "endpoint": job.endpoint,
-        "errors": job.errors,
+        "errors": _normalize_batch_errors(job.errors),
         "input_file_id": job.input_file.file_id,
         "completion_window": job.completion_window,
         "status": job.status,
@@ -259,11 +295,13 @@ def _run_claimed_batch_job(job_pk: int) -> None:
             _fail_job(job, str(exc))
             return
 
-        output_lines, counts, cancelled = _execute_batch_lines(job.pk, lines)
+        counts = {"total": len(lines), "completed": 0, "failed": 0}
+        GatewayBatchJob.objects.filter(pk=job.pk).update(request_counts=counts)
+        _, counts, cancelled = _execute_batch_lines(job.pk, lines, counts)
         if cancelled:
-            _cancel_job(job, output_lines, counts)
+            _cancel_job(job, counts)
             return
-        _complete_job(job, output_lines, counts)
+        _complete_job(job, counts)
     except Exception as exc:
         logger.exception("Batch job %s failed unexpectedly", job_pk)
         job.refresh_from_db()
@@ -324,8 +362,8 @@ def _serialize_batch_output_lines(
 def _execute_batch_lines(
     job_pk: int,
     lines: list[dict[str, Any]],
+    counts: dict[str, int],
 ) -> tuple[list[str], dict[str, int], bool]:
-    counts = {"total": len(lines), "completed": 0, "failed": 0}
     if not lines:
         return [], counts, False
 
@@ -349,6 +387,8 @@ def _execute_batch_lines(
             if _record_batch_line_result(results, counts, index, result):
                 cancelled = True
                 break
+            if result is not None:
+                _persist_batch_line(job_pk, result, counts)
             if _batch_cancel_requested(job_pk):
                 cancel_event.set()
                 cancelled = True
@@ -432,41 +472,25 @@ def _post_chat_completion(custom_id: str, body: dict[str, Any]) -> dict[str, Any
     return {"custom_id": custom_id, "response": {"status_code": response.status_code, "body": payload}}
 
 
-def _complete_job(
-    job: GatewayBatchJob,
-    output_lines: list[str],
-    counts: dict[str, int],
-) -> None:
-    output_bytes = ("\n".join(output_lines) + "\n").encode("utf-8") if output_lines else b""
-    output_file = _persist_output_file(job.batch_id, "output", output_bytes) if output_lines else None
+def _complete_job(job: GatewayBatchJob, counts: dict[str, int]) -> None:
     now = datetime.now(timezone.utc)
-    job.output_file = output_file
     job.request_counts = counts
     job.status = GatewayBatchJob.STATUS_COMPLETED
     job.completed_at = now
-    job.save(update_fields=["output_file", "request_counts", "status", "completed_at"])
+    job.save(update_fields=["request_counts", "status", "completed_at"])
 
 
-def _cancel_job(
-    job: GatewayBatchJob,
-    output_lines: list[str],
-    counts: dict[str, int],
-) -> None:
-    if output_lines:
-        output_bytes = ("\n".join(output_lines) + "\n").encode("utf-8")
-        job.output_file = _persist_output_file(job.batch_id, "output", output_bytes)
+def _cancel_job(job: GatewayBatchJob, counts: dict[str, int]) -> None:
     now = datetime.now(timezone.utc)
     job.status = GatewayBatchJob.STATUS_CANCELLED
     job.cancelled_at = now
     job.request_counts = counts
-    job.save(
-        update_fields=["output_file", "status", "cancelled_at", "request_counts"]
-    )
+    job.save(update_fields=["status", "cancelled_at", "request_counts"])
 
 
 def _fail_job(job: GatewayBatchJob, message: str) -> None:
     job.status = GatewayBatchJob.STATUS_FAILED
-    job.errors = {"message": message}
+    job.errors = _batch_errors_payload(message)
     job.completed_at = datetime.now(timezone.utc)
     job.save(update_fields=["status", "errors", "completed_at"])
 
@@ -488,6 +512,124 @@ def _new_batch_id() -> str:
     return f"batch_{uuid.uuid4().hex}"
 
 
+def _new_batch_line_id() -> str:
+    return f"batch_req_{uuid.uuid4().hex[:24]}"
+
+
+def _batch_errors_payload(message: str, *, code: str = "batch_failed") -> dict[str, Any]:
+    return {
+        "object": "list",
+        "data": [
+            {
+                "code": code,
+                "message": message,
+                "param": None,
+                "line": None,
+            }
+        ],
+    }
+
+
+def _normalize_batch_errors(errors: Any) -> Any:
+    if errors is None:
+        return None
+    if isinstance(errors, dict) and errors.get("object") == "list":
+        return errors
+    if isinstance(errors, dict) and "message" in errors:
+        return _batch_errors_payload(str(errors["message"]))
+    return errors
+
+
+def _format_openai_batch_line(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": _new_batch_line_id(),
+        "custom_id": result.get("custom_id"),
+        "response": result.get("response"),
+        "error": result.get("error"),
+    }
+
+
+def _get_or_create_side_file(job: GatewayBatchJob, *, side: str) -> GatewayBatchFile:
+    if side == "output" and job.output_file_id:
+        return job.output_file  # type: ignore[return-value]
+    if side == "error" and job.error_file_id:
+        return job.error_file  # type: ignore[return-value]
+    storage_name = new_storage_name()
+    write_upload_bytes(storage_name, b"")
+    filename = f"{job.batch_id}_{side}.jsonl"
+    record = GatewayBatchFile.objects.create(
+        file_id=new_file_id(),
+        purpose="batch",
+        filename=filename,
+        bytes=0,
+        storage_name=storage_name,
+    )
+    if side == "output":
+        job.output_file = record
+        job.save(update_fields=["output_file"])
+    else:
+        job.error_file = record
+        job.save(update_fields=["error_file"])
+    return record
+
+
+def _persist_batch_line(
+    job_pk: int,
+    result: dict[str, Any],
+    counts: dict[str, int],
+) -> None:
+    line = _format_openai_batch_line(result)
+    encoded = json.dumps(line, separators=(",", ":")).encode("utf-8")
+    with _progress_lock:
+        job = GatewayBatchJob.objects.select_related("output_file", "error_file").filter(
+            pk=job_pk
+        ).first()
+        if job is None or job.status not in {
+            GatewayBatchJob.STATUS_IN_PROGRESS,
+            GatewayBatchJob.STATUS_CANCELLING,
+        }:
+            return
+        side = "error" if result.get("error") else "output"
+        record = _get_or_create_side_file(job, side=side)
+        new_size = append_jsonl_bytes(record.storage_name, encoded)
+        GatewayBatchFile.objects.filter(pk=record.pk).update(bytes=new_size)
+        GatewayBatchJob.objects.filter(pk=job_pk).update(request_counts=counts)
+
+
+def purge_expired_batch_jobs() -> int:
+    """Delete terminal batch jobs and blobs older than ``NADIR_BATCH_RETENTION_DAYS``."""
+    days = env_float("NADIR_BATCH_RETENTION_DAYS", 30.0)
+    if days <= 0:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    terminal = [
+        GatewayBatchJob.STATUS_COMPLETED,
+        GatewayBatchJob.STATUS_FAILED,
+        GatewayBatchJob.STATUS_CANCELLED,
+    ]
+    candidates = GatewayBatchJob.objects.filter(status__in=terminal).select_related(
+        "input_file",
+        "output_file",
+        "error_file",
+    )
+    removed = 0
+    for job in candidates:
+        finished = job.completed_at or job.cancelled_at or job.created_at
+        if finished.tzinfo is None:
+            finished = finished.replace(tzinfo=timezone.utc)
+        if finished >= cutoff:
+            continue
+        files = [job.input_file, job.output_file, job.error_file]
+        job.delete()
+        for record in files:
+            if record is None:
+                continue
+            delete_storage_blob(record.storage_name)
+            record.delete()
+        removed += 1
+    return removed
+
+
 def reconcile_stale_in_progress_jobs() -> int:
     """Mark orphaned in_progress jobs failed after gateway restart (fail-closed v1)."""
     stale = GatewayBatchJob.objects.filter(status=GatewayBatchJob.STATUS_IN_PROGRESS)
@@ -495,6 +637,6 @@ def reconcile_stale_in_progress_jobs() -> int:
     if count:
         stale.update(
             status=GatewayBatchJob.STATUS_FAILED,
-            errors={"message": "Batch interrupted; re-submit input file."},
+            errors=_batch_errors_payload("Batch interrupted; re-submit input file."),
         )
     return count

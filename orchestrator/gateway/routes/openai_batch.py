@@ -16,7 +16,7 @@ from orchestrator.batch_services import (
     BatchServiceError,
     batch_to_openai_dict,
     cancel_batch_job,
-    create_batch_file,
+    create_batch_file_from_stream,
     create_batch_job,
     delete_batch_file,
     file_to_openai_dict,
@@ -45,11 +45,10 @@ def upload_file(
     purpose: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
 ):
-    data = file.file.read()
-    result = create_batch_file(
+    result = create_batch_file_from_stream(
         purpose=purpose.strip(),
         filename=file.filename or "upload.jsonl",
-        data=data,
+        readable=file.file,
     )
     if isinstance(result, BatchServiceError):
         return _service_error(result)

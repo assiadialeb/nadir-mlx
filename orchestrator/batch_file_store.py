@@ -65,6 +65,41 @@ def write_upload_bytes(storage_name: str, data: bytes) -> Path:
     return path
 
 
+def write_upload_stream(storage_name: str, readable, *, max_bytes: int) -> int:
+    """Stream ``readable.read(chunk)`` to disk; return total bytes or raise ``ValueError``."""
+    path = storage_path_for_name(storage_name)
+    if path is None:
+        raise ValueError("Invalid storage name")
+    total = 0
+    chunk_size = 1024 * 1024
+    with path.open("wb") as handle:
+        while True:
+            chunk = readable.read(chunk_size)
+            if not chunk:
+                break
+            if not isinstance(chunk, bytes):
+                chunk = bytes(chunk)
+            total += len(chunk)
+            if total > max_bytes:
+                handle.close()
+                path.unlink(missing_ok=True)
+                raise ValueError("File too large.")
+            handle.write(chunk)
+    return total
+
+
+def append_jsonl_bytes(storage_name: str, line: bytes) -> int:
+    """Append one JSONL line (including newline); return new file size."""
+    path = storage_path_for_name(storage_name)
+    if path is None:
+        raise ValueError("Invalid storage name")
+    if not line.endswith(b"\n"):
+        line = line + b"\n"
+    with path.open("ab") as handle:
+        handle.write(line)
+    return path.stat().st_size
+
+
 def read_file_bytes(storage_name: str) -> bytes | None:
     path = storage_path_for_name(storage_name)
     if path is None or not path.is_file():
