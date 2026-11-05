@@ -50,8 +50,8 @@ def _read_route_generation() -> int:
 def _bump_route_generation() -> None:
     path = _generation_path()
     try:
-        with open(path, "a", encoding="utf-8"):
-            pass
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("")
         now_ns = time.time_ns()
         os.utime(path, ns=(now_ns, now_ns))
     except OSError:

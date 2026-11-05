@@ -61,6 +61,8 @@ _STOP_IN_PROGRESS_STALE_SECONDS = 60.0
 
 logger = logging.getLogger(__name__)
 
+START_CANCELLED_STOP_REQUESTED_MSG = "Start cancelled: a stop was requested."
+
 
 class InstanceStartCancelled(RuntimeError):
     """A stop was requested while the instance was loading."""
@@ -861,7 +863,7 @@ def launch_prepared_instance(
             return instance
         if instance.desired_state == InferenceInstance.DESIRED_STATE_STOPPED:
             _persist_stop_outcome(instance, "STOPPED")
-            raise InstanceStartCancelled("Start cancelled: a stop was requested.")
+            raise InstanceStartCancelled(START_CANCELLED_STOP_REQUESTED_MSG)
         return _launch_locked(instance, plan)
 
 
@@ -908,7 +910,7 @@ def _launch_locked(instance: InferenceInstance, plan: InstanceLaunchPlan) -> Inf
 
         maybe_run_load_warmup(instance)
         if _stop_requested(instance.pk):
-            raise InstanceStartCancelled("Start cancelled: a stop was requested.")
+            raise InstanceStartCancelled(START_CANCELLED_STOP_REQUESTED_MSG)
         _mark_instance_running(instance)
         return instance
     except InstanceStartCancelled:
@@ -977,7 +979,7 @@ def _wait_until_healthy(
         if process.poll() is not None:
             raise RuntimeError("Server failed to start: Process exited unexpectedly.")
         if _stop_requested(instance.pk):
-            raise InstanceStartCancelled("Start cancelled: a stop was requested.")
+            raise InstanceStartCancelled(START_CANCELLED_STOP_REQUESTED_MSG)
         if probe_http_health(instance):
             return
         if time.monotonic() >= deadline:
@@ -1094,7 +1096,7 @@ def _settle_orphan_loading(instance: InferenceInstance) -> str:
     if _detect_log_failure(_instance_log_path(instance)):
         try:
             stop_instance(instance, blocking=False)
-        except (InstanceSlotBusy, RuntimeError):
+        except InstanceSlotBusy:
             return instance.status
         _persist_stop_outcome(instance, "FAILED")
         return "FAILED"

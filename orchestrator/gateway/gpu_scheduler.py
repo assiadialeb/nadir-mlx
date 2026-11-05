@@ -293,7 +293,7 @@ class GatewayUpstreamScheduler:
 
     def _pick_grantable_waiter(self) -> _UpstreamWaiter | None:
         for queue in (self._interactive, self._batch):
-            for waiter in list(queue):
+            for waiter in queue:
                 if not self._can_grant(
                     waiter.instance_id,
                     waiter.instance_limit,
