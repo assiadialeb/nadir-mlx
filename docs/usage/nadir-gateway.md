@@ -333,6 +333,9 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 | `NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM` | `16` | Max parallel upstream requests per instance (`0` = unlimited) |
 | `NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL` | `8` | Cross-instance GPU cap (`0` = unlimited). Default 8 on 48 GB class Macs so interactive traffic queues ahead of batch under load |
 | `NADIR_GATEWAY_BATCH_MAX_SHARE` | `0.5` | Max share of the **global** pool for `X-Nadir-Priority: batch` (interactive keeps the rest). Per-instance caps are not batch-limited unless the global cap binds first. |
+| `NADIR_BATCH_FILE_MAX_MB` | `200` | Max upload for `POST /v1/files` (multipart JSONL) |
+| `NADIR_BATCH_FILES_DIR` | `data/batch_files` | Local blob store for batch input/output |
+| `NADIR_BATCH_LINE_TIMEOUT_SECONDS` | `600` | Per-line timeout when the batch worker calls `/v1/chat/completions` |
 | `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `300` | Max wait in gateway queue when all slots are busy |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
@@ -427,6 +430,17 @@ OpenAPI contract tests assert error shape for `model_not_found` (404) and `model
 ```bash
 pytest -m contract orchestrator/tests/contracts -q
 ```
+
+## Local batch jobs (OpenAI-compatible)
+
+Privacy-first overnight eval: upload JSONL, create a batch, run the worker (cron or manual).
+
+1. `POST /v1/files` with `purpose=batch` and a JSONL file (OpenAI batch line shape: `custom_id`, `url`, `body`).
+2. `POST /v1/batches` with `input_file_id` and `endpoint: /v1/chat/completions`.
+3. `python manage.py process_gateway_batches --max-jobs 1` (add `--reconcile-stale` after a gateway crash).
+4. Poll `GET /v1/batches/{id}`; download `GET /v1/files/{output_file_id}/content`.
+
+Fan-out uses `X-Nadir-Priority: batch` and shares the global scheduler with interactive traffic.
 
 ## Troubleshooting
 
