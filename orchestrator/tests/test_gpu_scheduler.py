@@ -9,6 +9,7 @@ from django.test import SimpleTestCase
 from orchestrator.gateway.gpu_scheduler import (
     PRIORITY_BATCH,
     PRIORITY_INTERACTIVE,
+    GatewayUpstreamScheduler,
     PrioritySlotScheduler,
     parse_request_priority,
 )
@@ -81,6 +82,16 @@ class PrioritySlotSchedulerTests(SimpleTestCase):
         self.assertEqual(asyncio.run(run()), 0)
 
 
+    def test_batch_capacity_at_least_one_when_share_positive(self) -> None:
+        scheduler = PrioritySlotScheduler(1, batch_max_share=0.5)
+        self.assertEqual(scheduler.batch_capacity(), 1)
+
+        async def run() -> None:
+            await scheduler.acquire(PRIORITY_BATCH, timeout_seconds=0.5)
+            scheduler.release(PRIORITY_BATCH)
+
+        asyncio.run(run())
+
     def test_batch_share_reserves_capacity_for_interactive(self) -> None:
         async def run() -> str:
             scheduler = PrioritySlotScheduler(2, batch_max_share=0.5)
@@ -97,6 +108,45 @@ class PrioritySlotSchedulerTests(SimpleTestCase):
             return "ok"
 
         self.assertEqual(asyncio.run(run()), "ok")
+
+
+
+class GatewayUpstreamSchedulerTests(SimpleTestCase):
+    def test_saturated_instance_does_not_block_other_model(self) -> None:
+        async def run() -> list[str]:
+            scheduler = GatewayUpstreamScheduler(2, batch_max_share=1.0)
+            order: list[str] = []
+
+            async def hold(instance_id: int, label: str, delay: float) -> None:
+                await scheduler.acquire(
+                    instance_id=instance_id,
+                    instance_limit=1,
+                    priority=PRIORITY_INTERACTIVE,
+                    timeout_seconds=2.0,
+                )
+                order.append(f"{label}-start")
+                await asyncio.sleep(delay)
+                order.append(f"{label}-end")
+                await scheduler.release(
+                    instance_id=instance_id,
+                    instance_limit=1,
+                    priority=PRIORITY_INTERACTIVE,
+                )
+
+            tasks = [
+                asyncio.create_task(hold(1, "A1", 0.08)),
+                asyncio.create_task(hold(1, "A2", 0.01)),
+                asyncio.create_task(hold(1, "A3", 0.01)),
+                asyncio.create_task(hold(2, "B1", 0.01)),
+            ]
+            await asyncio.gather(*tasks)
+            return order
+
+        order = asyncio.run(run())
+        self.assertIn("B1-start", order)
+        b_index = order.index("B1-start")
+        a2_index = order.index("A2-start")
+        self.assertLess(b_index, a2_index)
 
 
 class RequestPriorityMiddlewareTests(SimpleTestCase):

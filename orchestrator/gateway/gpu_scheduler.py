@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Literal
 
 RequestPriority = Literal["interactive", "batch"]
@@ -35,11 +36,10 @@ def current_request_priority() -> RequestPriority:
 
 
 class PrioritySlotScheduler:
-    """Counting semaphore that grants freed slots to interactive waiters first.
+    """Single-pool counting semaphore (used in unit tests and legacy paths).
 
     Batch waiters are served only when no interactive request is queued and the
-    batch share of capacity is not exhausted (``batch_max_share``). Capacity can
-    change at runtime without losing track of slots already in flight.
+    batch share of capacity is not exhausted (``batch_max_share``).
     """
 
     def __init__(self, capacity: int, *, batch_max_share: float = 1.0) -> None:
@@ -65,10 +65,12 @@ class PrioritySlotScheduler:
         return sum(1 for waiter in self._waiters[priority] if not waiter.done())
 
     def batch_capacity(self) -> int:
-        """Max slots batch traffic may hold (0 = batch always waits for free interactive)."""
+        """Max slots batch traffic may hold."""
+        if self.batch_max_share <= 0.0:
+            return 0
         if self.batch_max_share >= 1.0:
             return self.capacity
-        return max(0, int(self.capacity * self.batch_max_share))
+        return max(1, int(self.capacity * self.batch_max_share))
 
     async def acquire(self, priority: RequestPriority, timeout_seconds: float) -> None:
         """Take a slot or wait for one; raise ``TimeoutError`` after ``timeout_seconds``."""
@@ -107,7 +109,6 @@ class PrioritySlotScheduler:
 
     def _abandon(self, waiter: asyncio.Future[None], priority: RequestPriority) -> None:
         if waiter.done() and not waiter.cancelled():
-            # Slot was granted just as the caller gave up: hand it on.
             self.release(priority)
             return
         waiter.cancel()
@@ -135,6 +136,173 @@ class PrioritySlotScheduler:
             priority, waiter = nxt
             self._take(priority)
             waiter.set_result(None)
+
+
+@dataclass
+class _UpstreamWaiter:
+    instance_id: int
+    instance_limit: int | None
+    priority: RequestPriority
+    future: asyncio.Future[None] = field(repr=False)
+
+
+class GatewayUpstreamScheduler:
+    """Reserves global + per-instance capacity atomically for one upstream request.
+
+    Waiters blocked on a full instance do not hold global slots. Interactive
+    waiters are preferred over batch; within a class, skip waiters whose instance
+    is full so other models can proceed.
+    """
+
+    def __init__(
+        self,
+        global_limit: int | None,
+        *,
+        batch_max_share: float = 0.5,
+    ) -> None:
+        self.global_limit = global_limit if global_limit is None else max(1, int(global_limit))
+        self.batch_max_share = _clamp_share(batch_max_share)
+        self.global_in_use = 0
+        self.global_batch_in_use = 0
+        self.instance_in_use: dict[int, int] = {}
+        self._interactive: deque[_UpstreamWaiter] = deque()
+        self._batch: deque[_UpstreamWaiter] = deque()
+        self._lock = asyncio.Lock()
+
+    def global_batch_capacity(self) -> int:
+        if self.global_limit is None:
+            return 0
+        if self.batch_max_share <= 0.0:
+            return 0
+        if self.batch_max_share >= 1.0:
+            return self.global_limit
+        return max(1, int(self.global_limit * self.batch_max_share))
+
+    async def acquire(
+        self,
+        *,
+        instance_id: int,
+        instance_limit: int | None,
+        priority: RequestPriority,
+        timeout_seconds: float,
+    ) -> None:
+        async with self._lock:
+            if self._can_grant(instance_id, instance_limit, priority):
+                self._grant(instance_id, instance_limit, priority)
+                return
+            waiter = _UpstreamWaiter(
+                instance_id=instance_id,
+                instance_limit=instance_limit,
+                priority=priority,
+                future=asyncio.get_running_loop().create_future(),
+            )
+            if priority == PRIORITY_INTERACTIVE:
+                self._interactive.append(waiter)
+            else:
+                self._batch.append(waiter)
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                await waiter.future
+        except BaseException:
+            async with self._lock:
+                self._remove_waiter(waiter)
+                if waiter.future.done() and not waiter.future.cancelled():
+                    self._release(instance_id, instance_limit, priority)
+            raise
+
+    async def release(
+        self,
+        *,
+        instance_id: int,
+        instance_limit: int | None,
+        priority: RequestPriority,
+    ) -> None:
+        async with self._lock:
+            self._release(instance_id, instance_limit, priority)
+            self._grant_waiters()
+
+    def _can_grant(
+        self,
+        instance_id: int,
+        instance_limit: int | None,
+        priority: RequestPriority,
+    ) -> bool:
+        if not self._global_has_room(priority):
+            return False
+        return self._instance_has_room(instance_id, instance_limit)
+
+    def _global_has_room(self, priority: RequestPriority) -> bool:
+        if self.global_limit is None:
+            return True
+        if self.global_in_use >= self.global_limit:
+            return False
+        if priority != PRIORITY_BATCH:
+            return True
+        return self.global_batch_in_use < self.global_batch_capacity()
+
+    def _instance_has_room(self, instance_id: int, instance_limit: int | None) -> bool:
+        if instance_limit is None:
+            return True
+        return self.instance_in_use.get(instance_id, 0) < instance_limit
+
+    def _grant(
+        self,
+        instance_id: int,
+        instance_limit: int | None,
+        priority: RequestPriority,
+    ) -> None:
+        if self.global_limit is not None:
+            self.global_in_use += 1
+            if priority == PRIORITY_BATCH:
+                self.global_batch_in_use += 1
+        if instance_limit is not None:
+            self.instance_in_use[instance_id] = self.instance_in_use.get(instance_id, 0) + 1
+
+    def _release(
+        self,
+        instance_id: int,
+        instance_limit: int | None,
+        priority: RequestPriority,
+    ) -> None:
+        if self.global_limit is not None:
+            self.global_in_use = max(0, self.global_in_use - 1)
+            if priority == PRIORITY_BATCH:
+                self.global_batch_in_use = max(0, self.global_batch_in_use - 1)
+        if instance_limit is not None:
+            used = max(0, self.instance_in_use.get(instance_id, 0) - 1)
+            if used == 0:
+                self.instance_in_use.pop(instance_id, None)
+            else:
+                self.instance_in_use[instance_id] = used
+
+    def _remove_waiter(self, target: _UpstreamWaiter) -> None:
+        for queue in (self._interactive, self._batch):
+            try:
+                queue.remove(target)
+                return
+            except ValueError:
+                continue
+
+    def _grant_waiters(self) -> None:
+        while True:
+            waiter = self._pick_grantable_waiter()
+            if waiter is None:
+                return
+            self._grant(waiter.instance_id, waiter.instance_limit, waiter.priority)
+            waiter.future.set_result(None)
+
+    def _pick_grantable_waiter(self) -> _UpstreamWaiter | None:
+        for queue in (self._interactive, self._batch):
+            for waiter in list(queue):
+                if not self._can_grant(
+                    waiter.instance_id,
+                    waiter.instance_limit,
+                    waiter.priority,
+                ):
+                    continue
+                queue.remove(waiter)
+                return waiter
+        return None
 
 
 def _clamp_share(value: float) -> float:
