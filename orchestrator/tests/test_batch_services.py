@@ -3,25 +3,33 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
 from django.conf import settings
 
 from orchestrator.batch_file_store import batch_files_dir
+from io import BytesIO
+
 from orchestrator.batch_services import (
     BatchServiceError,
+    _batch_errors_payload,
     _claim_batch_job,
     _execute_batch_lines,
+    _normalize_batch_errors,
     _post_chat_completion,
     _run_claimed_batch_job,
+    batch_to_openai_dict,
     cancel_batch_job,
     create_batch_file,
+    create_batch_file_from_stream,
     create_batch_job,
     delete_batch_file,
     file_to_openai_dict,
     get_batch_file,
     process_pending_batch_jobs,
+    purge_expired_batch_jobs,
 )
 from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH
 from orchestrator.models import GatewayBatchJob
@@ -401,7 +409,90 @@ def test_execute_batch_lines_empty_returns_empty(batch_files_tmp) -> None:
     job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
     assert isinstance(job, GatewayBatchJob)
 
-    output, counts, cancelled = _execute_batch_lines(job.pk, [])
+    output, counts, cancelled = _execute_batch_lines(
+        job.pk,
+        [],
+        {"total": 0, "completed": 0, "failed": 0},
+    )
     assert output == []
     assert counts == {"total": 0, "completed": 0, "failed": 0}
     assert cancelled is False
+
+
+@pytest.mark.django_db
+def test_create_batch_file_from_stream(batch_files_tmp) -> None:
+    record = create_batch_file_from_stream(
+        purpose="batch",
+        filename="stream.jsonl",
+        readable=BytesIO(b'{"custom_id":"s"}\n'),
+    )
+    assert not isinstance(record, BatchServiceError)
+    assert record.bytes == len(b'{"custom_id":"s"}\n')
+
+
+@pytest.mark.django_db
+def test_output_lines_include_openai_batch_req_id(batch_files_tmp) -> None:
+    line = {
+        "custom_id": "req-1",
+        "url": CHAT_COMPLETIONS_PATH,
+        "body": {"model": "demo", "messages": [{"role": "user", "content": "hi"}]},
+    }
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=(json.dumps(line) + "\n").encode("utf-8"),
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    mock_response = type(
+        "R",
+        (),
+        {"status_code": 200, "json": lambda self: {"id": "chatcmpl-1", "choices": []}},
+    )()
+    with patch("orchestrator.batch_services.httpx.post", return_value=mock_response):
+        process_pending_batch_jobs(max_jobs=1)
+    job.refresh_from_db()
+    from orchestrator.batch_services import read_batch_file_content
+
+    raw = read_batch_file_content(job.output_file)
+    assert raw is not None
+    parsed = json.loads(raw.decode().strip().split("\n")[0])
+    assert parsed["id"].startswith("batch_req_")
+    assert parsed["custom_id"] == "req-1"
+
+
+@pytest.mark.django_db
+def test_failed_job_uses_openai_errors_list(batch_files_tmp) -> None:
+    record = create_batch_file(purpose="batch", filename="bad.jsonl", data=b"not-json\n")
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    process_pending_batch_jobs(max_jobs=1)
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_FAILED
+    payload = batch_to_openai_dict(job)
+    assert payload["errors"]["object"] == "list"
+    assert payload["errors"]["data"][0]["message"]
+
+
+@pytest.mark.django_db
+def test_purge_expired_batch_jobs(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    GatewayBatchJob.objects.filter(pk=job.pk).update(
+        status=GatewayBatchJob.STATUS_COMPLETED,
+        completed_at=datetime.now(timezone.utc) - timedelta(days=60),
+    )
+    with patch.dict("os.environ", {"NADIR_BATCH_RETENTION_DAYS": "30"}):
+        removed = purge_expired_batch_jobs()
+    assert removed == 1
+    assert GatewayBatchJob.objects.filter(pk=job.pk).exists() is False
+
+
+def test_normalize_batch_errors_legacy_message() -> None:
+    normalized = _normalize_batch_errors({"message": "legacy"})
+    assert normalized == _batch_errors_payload("legacy")

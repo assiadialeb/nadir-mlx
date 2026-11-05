@@ -34,3 +34,8 @@ class OrchestratorConfig(AppConfig):
             from orchestrator.instance_idle_watcher import start_idle_watcher_if_needed
 
             start_idle_watcher_if_needed()
+
+        if getattr(settings, "NADIR_GATEWAY_BATCH_WORKER_ENABLED", True):
+            from orchestrator.gateway_batch_worker import start_gateway_batch_worker_if_needed
+
+            start_gateway_batch_worker_if_needed()

@@ -338,6 +338,9 @@ The gateway is designed for **local-first** use. Browser CSRF and DNS-rebinding 
 | `NADIR_BATCH_FILE_MAX_MB` | `200` | Max upload for `POST /v1/files` (multipart JSONL) |
 | `NADIR_BATCH_FILES_DIR` | `data/batch_files` | Local blob store for batch input/output |
 | `NADIR_BATCH_LINE_TIMEOUT_SECONDS` | `600` | Per-line timeout when the batch worker calls `/v1/chat/completions` |
+| `NADIR_GATEWAY_BATCH_WORKER_ENABLED` | `true` | Daemon batch worker inside `run_gateway` / `serve` |
+| `NADIR_GATEWAY_BATCH_POLL_SECONDS` | `15` | Poll interval for validating batch jobs |
+| `NADIR_BATCH_RETENTION_DAYS` | `30` | Purge terminal batches and blobs (worker cycle) |
 | `NADIR_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `300` | Max wait in gateway queue when all slots are busy |
 | `NADIR_GATEWAY_ROUTE_CACHE_TTL_SECONDS` | `20` | In-memory alias / models cache TTL |
 | `NADIR_GATEWAY_WAKE_TIMEOUT_SECONDS` | `300` | Max wait for `on_demand` wake + health |
@@ -435,14 +438,15 @@ pytest -m contract orchestrator/tests/contracts -q
 
 ## Local batch jobs (OpenAI-compatible)
 
-Privacy-first overnight eval: upload JSONL, create a batch, run the worker (cron or manual).
+Privacy-first overnight eval: upload JSONL, create a batch, let the gateway worker drain validating jobs (or run the management command manually).
 
-1. `POST /v1/files` with `purpose=batch` and a JSONL file (OpenAI batch line shape: `custom_id`, `url`, `body`).
+1. `POST /v1/files` with `purpose=batch` and a JSONL file (streamed to disk; OpenAI line shape: `custom_id`, `url`, `body`).
 2. `POST /v1/batches` with `input_file_id` and `endpoint: /v1/chat/completions`.
-3. `python manage.py process_gateway_batches --max-jobs 1` (add `--reconcile-stale` after a gateway crash).
-4. Poll `GET /v1/batches/{id}`; download `GET /v1/files/{output_file_id}/content`.
+3. With `run_gateway` / `serve`, the **batch worker** polls every `NADIR_GATEWAY_BATCH_POLL_SECONDS` (default 15s) and holds the same lock as `process_gateway_batches`. Optional manual run: `python manage.py process_gateway_batches --max-jobs 1` (`--reconcile-stale` only when recovering from a crash).
+4. Poll `GET /v1/batches/{id}` — `request_counts` updates while `in_progress`; output/error JSONL files grow line-by-line.
+5. Download `GET /v1/files/{output_file_id}/content` and optional `error_file_id`.
 
-Fan-out uses `X-Nadir-Priority: batch` and shares the global scheduler with interactive traffic.
+Fan-out uses `X-Nadir-Priority: batch` and shares the global scheduler with interactive traffic. Cancel sets `cancelling` and waits for in-flight lines (up to `NADIR_BATCH_LINE_TIMEOUT_SECONDS` each). Terminal jobs and blobs older than `NADIR_BATCH_RETENTION_DAYS` are purged by the worker.
 
 Cancel while `validating` stops immediately. Cancel while `in_progress` sets `cancelling`; the worker records any line that already finished, then stops scheduling new lines. In-flight upstream calls still run until they complete or hit `NADIR_BATCH_LINE_TIMEOUT_SECONDS` (default 600s).
 
