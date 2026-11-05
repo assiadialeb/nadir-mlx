@@ -143,3 +143,42 @@ def test_hf_fetch_limit_for_filters() -> None:
     assert hf_fetch_limit_for_filters("", "", "name_asc") == HF_FETCH_LIMIT_DEFAULT
     assert hf_fetch_limit_for_filters("", "IMAGE", "name_asc") == HF_FETCH_LIMIT_FILTERED
 
+
+def test_fetch_hf_models_requests_full_hub_expand_fields(mocker) -> None:
+    from orchestrator.ui_selectors import HF_HUB_MODEL_EXPAND_FIELDS, fetch_hf_models
+
+    mock_get = mocker.patch("orchestrator.ui_selectors.huggingface_get")
+    mock_get.return_value.raise_for_status = lambda: None
+    mock_get.return_value.json.return_value = []
+
+    fetch_hf_models()
+
+    params = mock_get.call_args.kwargs["params"]
+    assert params["expand"] == list(HF_HUB_MODEL_EXPAND_FIELDS)
+    assert set(params["expand"]) >= {
+        "safetensors",
+        "tags",
+        "pipeline_tag",
+        "likes",
+        "downloads",
+        "library_name",
+    }
+
+
+def test_parse_hf_model_from_api_minimal_expand_payload() -> None:
+    """Contract: HF expand-only payloads still parse (capabilities from name)."""
+    from orchestrator.ui_selectors import parse_hf_model_from_api
+
+    parsed = parse_hf_model_from_api(
+        {
+            "id": "mlx-community/parakeet-tdt-0.6b-v3",
+            "downloads": 42,
+            "safetensors": {"total": 600_000_000},
+        },
+        {},
+    )
+    assert parsed["supports_stt"] is True
+    assert parsed["downloads"] == 42
+    assert parsed["likes"] == 0
+    assert parsed["param_size_b"] == 0.6
+
