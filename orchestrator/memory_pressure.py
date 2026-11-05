@@ -1,8 +1,8 @@
 """Host memory pressure helpers for LRU eviction (MLX-112 / MLX-127).
 
-Footprint estimate = weights (disk × factor) + active KV + prompt-cache budget.
-Planning uses a capped context window so ``max_position_embeddings`` (often 128k+)
-does not pretend the whole window is always resident.
+Footprint estimate = weights (disk × factor) + active KV × parallel sequences
++ a small prompt-cache planning budget. KV is sized layer-by-layer so sliding /
+shared / linear-attention architectures are not treated as full dense caches.
 """
 
 from __future__ import annotations
@@ -25,8 +25,26 @@ _DISK_TO_RUNTIME_FACTOR = 1.15
 _DEFAULT_FOOTPRINT_BYTES = 2 * 1024**3
 _DEFAULT_PLANNING_CONTEXT_TOKENS = 8192
 _DEFAULT_PROMPT_PREFIX_TOKENS = 4096
+# Cold load has an empty prompt cache; grow with use — do not reserve every slot.
+_DEFAULT_PLANNING_PROMPT_CACHE_ENTRIES = 1
+# Concurrent decode slots assumed for eviction planning (not the mlx default of 32).
+_DEFAULT_PLANNING_PARALLEL_SEQUENCES = 2
 _DEFAULT_KV_BITS = 16.0
 _LAUNCH_MODES_WITH_KV = frozenset({"TEXT", "MULTIMODAL"})
+_FULL_ATTENTION = "full_attention"
+_SLIDING_ATTENTION = "sliding_attention"
+_LINEAR_ATTENTION = "linear_attention"
+
+
+@dataclass(frozen=True)
+class LinearAttentionShape:
+    """Fixed-size GatedDeltaNet / linear-attention state (Qwen3.5+)."""
+
+    num_key_heads: int
+    num_value_heads: int
+    key_head_dim: int
+    value_head_dim: int
+    conv_kernel_dim: int = 4
 
 
 @dataclass(frozen=True)
@@ -37,6 +55,11 @@ class TransformerShape:
     num_kv_heads: int
     head_dim: int
     max_position_embeddings: int | None = None
+    layer_types: tuple[str, ...] = ()
+    sliding_window: int | None = None
+    num_kv_shared_layers: int = 0
+    attention_k_eq_v: bool = False
+    linear: LinearAttentionShape | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +73,7 @@ class MemoryFootprintEstimate:
     context_tokens: int
     prompt_prefix_tokens: int
     kv_bits: float
+    parallel_sequences: int = 1
 
 
 def lru_eviction_enabled() -> bool:
@@ -72,35 +96,38 @@ def memory_reserve_bytes() -> int:
 
 def planning_context_tokens() -> int:
     """Default context tokens assumed resident when sizing KV for eviction."""
-    raw = os.environ.get("NADIR_MEMORY_PLANNING_CONTEXT_TOKENS")
-    if raw:
-        try:
-            return max(512, int(raw))
-        except ValueError:
-            pass
-    return int(
-        getattr(
-            settings,
-            "NADIR_MEMORY_PLANNING_CONTEXT_TOKENS",
-            _DEFAULT_PLANNING_CONTEXT_TOKENS,
-        )
+    return _positive_setting_or_env(
+        "NADIR_MEMORY_PLANNING_CONTEXT_TOKENS",
+        _DEFAULT_PLANNING_CONTEXT_TOKENS,
+        minimum=512,
     )
 
 
 def planning_prompt_prefix_tokens() -> int:
     """Assumed prefix length per prompt-cache entry when no byte cap is set."""
-    raw = os.environ.get("NADIR_MEMORY_PLANNING_PROMPT_PREFIX_TOKENS")
-    if raw:
-        try:
-            return max(256, int(raw))
-        except ValueError:
-            pass
-    return int(
-        getattr(
-            settings,
-            "NADIR_MEMORY_PLANNING_PROMPT_PREFIX_TOKENS",
-            _DEFAULT_PROMPT_PREFIX_TOKENS,
-        )
+    return _positive_setting_or_env(
+        "NADIR_MEMORY_PLANNING_PROMPT_PREFIX_TOKENS",
+        _DEFAULT_PROMPT_PREFIX_TOKENS,
+        minimum=256,
+    )
+
+
+def planning_prompt_cache_entries() -> int:
+    """Prompt-cache slots reserved at load time (cold cache is empty)."""
+    return _positive_setting_or_env(
+        "NADIR_MEMORY_PLANNING_PROMPT_CACHE_ENTRIES",
+        _DEFAULT_PLANNING_PROMPT_CACHE_ENTRIES,
+        minimum=0,
+        allow_zero=True,
+    )
+
+
+def planning_parallel_sequences_cap() -> int:
+    """Upper bound on concurrent sequences assumed for eviction planning."""
+    return _positive_setting_or_env(
+        "NADIR_MEMORY_PLANNING_PARALLEL_SEQUENCES",
+        _DEFAULT_PLANNING_PARALLEL_SEQUENCES,
+        minimum=1,
     )
 
 
@@ -122,7 +149,7 @@ def estimate_instance_footprint(
     *,
     launch_mode: str | None = None,
 ) -> MemoryFootprintEstimate:
-    """Return a structured footprint used by LRU eviction and (later) Mac-fit UI."""
+    """Return a structured footprint used by LRU eviction and Mac-fit UI."""
     config = dict(server_config or {})
     resolved_mode = str(
         launch_mode or config.get("launch_mode") or "TEXT"
@@ -139,12 +166,15 @@ def estimate_instance_footprint(
             context_tokens=0,
             prompt_prefix_tokens=0,
             kv_bits=_DEFAULT_KV_BITS,
+            parallel_sequences=1,
         )
 
     shape = load_transformer_shape(model_name)
     context = _resolve_context_tokens(config, shape)
     kv_bits = _resolve_kv_bits(config)
-    kv_bytes = estimate_kv_cache_bytes(shape, context_tokens=context, kv_bits=kv_bits)
+    parallel = resolve_planning_parallel_sequences(config)
+    per_sequence = estimate_kv_cache_bytes(shape, context_tokens=context, kv_bits=kv_bits)
+    kv_bytes = per_sequence * parallel
     prefix_tokens = min(context, planning_prompt_prefix_tokens()) if context else 0
     prompt_cache = estimate_prompt_cache_budget_bytes(
         shape,
@@ -162,7 +192,24 @@ def estimate_instance_footprint(
         context_tokens=context,
         prompt_prefix_tokens=prefix_tokens,
         kv_bits=kv_bits,
+        parallel_sequences=parallel,
     )
+
+
+def resolve_planning_parallel_sequences(server_config: dict[str, Any] | None) -> int:
+    """``min(decode_concurrency, gateway caps, planning cap)`` — at least 1."""
+    caps = [planning_parallel_sequences_cap()]
+    advanced = dict((server_config or {}).get("advanced") or {})
+    for raw in (
+        advanced.get("decode_concurrency"),
+        (server_config or {}).get("max_concurrent_upstream"),
+        getattr(settings, "NADIR_GATEWAY_MAX_CONCURRENT_UPSTREAM", None),
+        getattr(settings, "NADIR_GATEWAY_MAX_CONCURRENT_GLOBAL", None),
+    ):
+        value = _positive_int(raw)
+        if value is not None:
+            caps.append(value)
+    return max(1, min(caps))
 
 
 def load_transformer_shape(model_name: str) -> TransformerShape | None:
@@ -200,19 +247,32 @@ def estimate_kv_cache_bytes(
     context_tokens: int,
     kv_bits: float = _DEFAULT_KV_BITS,
 ) -> int:
-    """Bytes for one full KV cache at ``context_tokens`` (K + V, all layers)."""
-    if shape is None or context_tokens <= 0:
+    """Bytes for one sequence's KV / linear state at ``context_tokens``."""
+    if shape is None or context_tokens < 0:
         return 0
+    if context_tokens == 0 and not shape.layer_types:
+        return 0
+
     bytes_per_value = max(kv_bits, 1.0) / 8.0
-    # 2 = keys + values
-    return int(
-        2
-        * shape.num_layers
-        * shape.num_kv_heads
-        * shape.head_dim
-        * context_tokens
-        * bytes_per_value
-    )
+    owning_layers = max(0, shape.num_layers - max(0, shape.num_kv_shared_layers))
+    total = 0
+    for layer_index in range(owning_layers):
+        layer_type = _layer_type_at(shape, layer_index)
+        if layer_type == _LINEAR_ATTENTION:
+            total += _linear_state_bytes(shape.linear)
+            continue
+        tokens = _tokens_for_layer(shape, layer_type, context_tokens)
+        if tokens <= 0:
+            continue
+        tensors = 1 if (layer_type == _FULL_ATTENTION and shape.attention_k_eq_v) else 2
+        total += int(
+            tensors
+            * shape.num_kv_heads
+            * shape.head_dim
+            * tokens
+            * bytes_per_value
+        )
+    return total
 
 
 def estimate_prompt_cache_budget_bytes(
@@ -223,10 +283,11 @@ def estimate_prompt_cache_budget_bytes(
     prefix_tokens: int,
     launch_mode: str,
 ) -> int:
-    """Budget for mlx-lm prompt-cache entries (TEXT only).
+    """Budget for mlx-lm prompt-cache entries reserved at load (TEXT only).
 
-    Explicit ``prompt_cache_bytes`` wins. Otherwise multiply entry count by the
-    KV size of an assumed shared agent prefix.
+    Explicit ``prompt_cache_bytes`` wins. Otherwise count ``min(configured size,
+    planning entries)`` × KV of an assumed shared agent prefix — cold loads do
+    not reserve the full LRU capacity.
     """
     if launch_mode != "TEXT" or shape is None:
         return 0
@@ -242,10 +303,8 @@ def estimate_prompt_cache_budget_bytes(
     size = advanced.get("prompt_cache_size")
     if size is None:
         size = default_prompt_cache_settings().get("prompt_cache_size", 10)
-    try:
-        entries = max(0, int(size))
-    except (TypeError, ValueError):
-        entries = 10
+    configured = _positive_int(size) or 0
+    entries = min(configured, planning_prompt_cache_entries())
     if entries <= 0 or prefix_tokens <= 0:
         return 0
     return entries * estimate_kv_cache_bytes(
@@ -318,24 +377,123 @@ def _shape_from_flat_config(config: dict[str, Any]) -> TransformerShape | None:
         config,
         ("max_position_embeddings", "max_sequence_length", "max_seq_len"),
     )
+    sliding = _first_int(config, ("sliding_window", "sliding_window_size"))
+    shared = _first_int(config, ("num_kv_shared_layers",)) or 0
+    layer_types = _parse_layer_types(config.get("layer_types"), layers)
     return TransformerShape(
         num_layers=layers,
         num_kv_heads=kv_heads,
         head_dim=head_dim,
         max_position_embeddings=max_pos,
+        layer_types=layer_types,
+        sliding_window=sliding,
+        num_kv_shared_layers=min(shared, layers),
+        attention_k_eq_v=bool(config.get("attention_k_eq_v")),
+        linear=_linear_shape_from_config(config),
     )
+
+
+def _linear_shape_from_config(config: dict[str, Any]) -> LinearAttentionShape | None:
+    key_heads = _first_int(config, ("linear_num_key_heads",))
+    value_heads = _first_int(config, ("linear_num_value_heads",))
+    key_dim = _first_int(config, ("linear_key_head_dim",))
+    value_dim = _first_int(config, ("linear_value_head_dim",))
+    if not key_heads or not value_heads or not key_dim or not value_dim:
+        return None
+    conv = _first_int(config, ("linear_conv_kernel_dim",)) or 4
+    return LinearAttentionShape(
+        num_key_heads=key_heads,
+        num_value_heads=value_heads,
+        key_head_dim=key_dim,
+        value_head_dim=value_dim,
+        conv_kernel_dim=conv,
+    )
+
+
+def _parse_layer_types(raw: object, num_layers: int) -> tuple[str, ...]:
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return ()
+    normalized: list[str] = []
+    for entry in raw[:num_layers]:
+        name = str(entry).strip().lower()
+        if "linear" in name:
+            normalized.append(_LINEAR_ATTENTION)
+        elif "sliding" in name or "window" in name:
+            normalized.append(_SLIDING_ATTENTION)
+        else:
+            normalized.append(_FULL_ATTENTION)
+    return tuple(normalized)
+
+
+def _layer_type_at(shape: TransformerShape, layer_index: int) -> str:
+    if layer_index < len(shape.layer_types):
+        return shape.layer_types[layer_index]
+    return _FULL_ATTENTION
+
+
+def _tokens_for_layer(
+    shape: TransformerShape,
+    layer_type: str,
+    context_tokens: int,
+) -> int:
+    if layer_type != _SLIDING_ATTENTION or not shape.sliding_window:
+        return context_tokens
+    return min(context_tokens, int(shape.sliding_window))
+
+
+def _linear_state_bytes(linear: LinearAttentionShape | None) -> int:
+    """One-sequence GatedDeltaNet state: float32 recurrent + bf16 conv window."""
+    if linear is None:
+        return 0
+    # state shape (1, Hv, Dv, Dk) in float32 — see mlx_lm.models.gated_delta
+    recurrent = (
+        linear.num_value_heads
+        * linear.value_head_dim
+        * linear.key_head_dim
+        * 4
+    )
+    conv_channels = (
+        2 * linear.num_key_heads * linear.key_head_dim
+        + linear.num_value_heads * linear.value_head_dim
+    )
+    conv = max(0, linear.conv_kernel_dim - 1) * conv_channels * 2
+    return recurrent + conv
+
+
+def _positive_setting_or_env(
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    allow_zero: bool = False,
+) -> int:
+    raw = os.environ.get(name)
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = default
+    else:
+        value = int(getattr(settings, name, default))
+    if allow_zero and value == 0:
+        return 0
+    return max(minimum, value)
+
+
+def _positive_int(raw: object) -> int | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def _first_int(config: dict[str, Any], keys: tuple[str, ...]) -> int | None:
     for key in keys:
-        raw = config.get(key)
-        if raw is None:
-            continue
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if value > 0:
+        value = _positive_int(config.get(key))
+        if value is not None:
             return value
     return None
 
