@@ -442,6 +442,8 @@ Privacy-first overnight eval: upload JSONL, create a batch, run the worker (cron
 
 Fan-out uses `X-Nadir-Priority: batch` and shares the global scheduler with interactive traffic.
 
+Cancel while `validating` stops immediately. Cancel while `in_progress` sets `cancelling`; the worker records any line that already finished, then stops scheduling new lines. In-flight upstream calls still run until they complete or hit `NADIR_BATCH_LINE_TIMEOUT_SECONDS` (default 600s).
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

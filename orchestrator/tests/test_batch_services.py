@@ -12,6 +12,9 @@ from orchestrator.batch_file_store import batch_files_dir
 from orchestrator.batch_services import (
     BatchServiceError,
     _claim_batch_job,
+    _execute_batch_lines,
+    _post_chat_completion,
+    _run_claimed_batch_job,
     cancel_batch_job,
     create_batch_file,
     create_batch_job,
@@ -130,3 +133,275 @@ def test_claim_batch_job_allows_only_one_worker(batch_files_tmp) -> None:
     job.refresh_from_db()
     assert job.status == GatewayBatchJob.STATUS_IN_PROGRESS
     assert _claim_batch_job(job.pk) is False
+
+
+@pytest.mark.django_db
+def test_line_exception_completes_batch_with_failed_line(batch_files_tmp) -> None:
+    line = {
+        "custom_id": "req-1",
+        "url": CHAT_COMPLETIONS_PATH,
+        "body": {"model": "demo", "messages": []},
+    }
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=(json.dumps(line) + "\n").encode("utf-8"),
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+
+    with patch(
+        "orchestrator.batch_services._post_chat_completion",
+        side_effect=TypeError("probe"),
+    ):
+        process_pending_batch_jobs(max_jobs=1)
+
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_COMPLETED
+    assert job.request_counts.get("failed") == 1
+
+
+@pytest.mark.django_db
+def test_unexpected_worker_failure_marks_batch_failed(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    assert _claim_batch_job(job.pk)
+
+    with patch(
+        "orchestrator.batch_services._execute_batch_lines",
+        side_effect=RuntimeError("worker boom"),
+    ):
+        _run_claimed_batch_job(job.pk)
+
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_FAILED
+
+
+@pytest.mark.django_db
+def test_cancel_while_in_progress_uses_cancelling(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    GatewayBatchJob.objects.filter(pk=job.pk).update(
+        status=GatewayBatchJob.STATUS_IN_PROGRESS,
+    )
+
+    result = cancel_batch_job(job.batch_id)
+    assert not isinstance(result, BatchServiceError)
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_CANCELLING
+
+
+@pytest.mark.django_db
+def test_cancel_after_claim_uses_cancelling_not_cancelled(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    assert _claim_batch_job(job.pk)
+
+    result = cancel_batch_job(job.batch_id)
+    assert not isinstance(result, BatchServiceError)
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_CANCELLING
+
+
+@pytest.mark.django_db
+def test_cancel_cancelling_batch_is_idempotent(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    GatewayBatchJob.objects.filter(pk=job.pk).update(status=GatewayBatchJob.STATUS_CANCELLING)
+
+    result = cancel_batch_job(job.batch_id)
+    assert not isinstance(result, BatchServiceError)
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_CANCELLING
+
+
+@pytest.mark.django_db
+def test_cancel_finished_batch_returns_error(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    GatewayBatchJob.objects.filter(pk=job.pk).update(status=GatewayBatchJob.STATUS_COMPLETED)
+
+    result = cancel_batch_job(job.batch_id)
+    assert isinstance(result, BatchServiceError)
+    assert result.status_code == 400
+
+
+@pytest.mark.django_db
+def test_invalid_jsonl_marks_batch_failed(batch_files_tmp) -> None:
+    record = create_batch_file(purpose="batch", filename="bad.jsonl", data=b"not-json\n")
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+
+    process_pending_batch_jobs(max_jobs=1)
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_FAILED
+
+
+@pytest.mark.django_db
+def test_missing_input_blob_marks_batch_failed(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+
+    with patch("orchestrator.batch_services.read_batch_file_content", return_value=None):
+        process_pending_batch_jobs(max_jobs=1)
+
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_FAILED
+
+
+@pytest.mark.django_db
+def test_post_chat_completion_maps_http_error(batch_files_tmp) -> None:
+    mock_response = type(
+        "R",
+        (),
+        {
+            "status_code": 503,
+            "text": "busy",
+            "json": lambda self: (_ for _ in ()).throw(ValueError("no json")),
+        },
+    )()
+    with patch("orchestrator.batch_services.httpx.post", return_value=mock_response):
+        result = _post_chat_completion("cid-1", {"model": "m", "messages": []})
+    assert result["custom_id"] == "cid-1"
+    assert "error" in result
+
+
+@pytest.mark.django_db
+def test_process_line_missing_body_and_bad_url(batch_files_tmp) -> None:
+    payload = (
+        json.dumps({"custom_id": "a", "url": "/v1/other", "body": {}}) + "\n"
+        + json.dumps({"custom_id": "b", "url": CHAT_COMPLETIONS_PATH}) + "\n"
+    )
+    record = create_batch_file(purpose="batch", filename="in.jsonl", data=payload.encode())
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+
+    mock_response = type(
+        "R",
+        (),
+        {"status_code": 200, "json": lambda self: {"choices": []}},
+    )()
+    with patch("orchestrator.batch_services.httpx.post", return_value=mock_response):
+        process_pending_batch_jobs(max_jobs=1)
+
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_COMPLETED
+    assert job.request_counts.get("failed") == 2
+
+
+@pytest.mark.django_db
+def test_multi_line_output_preserves_order(batch_files_tmp) -> None:
+    lines = [
+        {"custom_id": "first", "url": CHAT_COMPLETIONS_PATH, "body": {"model": "m", "messages": []}},
+        {"custom_id": "second", "url": CHAT_COMPLETIONS_PATH, "body": {"model": "m", "messages": []}},
+    ]
+    payload = "\n".join(json.dumps(line) for line in lines) + "\n"
+    record = create_batch_file(purpose="batch", filename="in.jsonl", data=payload.encode())
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+
+    mock_response = type(
+        "R",
+        (),
+        {"status_code": 200, "json": lambda self: {"choices": []}},
+    )()
+    with patch("orchestrator.batch_services.httpx.post", return_value=mock_response):
+        process_pending_batch_jobs(max_jobs=1)
+
+    job.refresh_from_db()
+    from orchestrator.batch_services import read_batch_file_content
+
+    assert job.output_file is not None
+    raw = read_batch_file_content(job.output_file)
+    assert raw is not None
+    out_lines = raw.decode().strip().split("\n")
+    assert json.loads(out_lines[0])["custom_id"] == "first"
+    assert json.loads(out_lines[1])["custom_id"] == "second"
+
+
+@pytest.mark.django_db
+def test_cancel_during_execution_keeps_first_line(batch_files_tmp) -> None:
+    lines = [
+        {"custom_id": "keep", "url": CHAT_COMPLETIONS_PATH, "body": {"model": "m", "messages": []}},
+        {"custom_id": "skip", "url": CHAT_COMPLETIONS_PATH, "body": {"model": "m", "messages": []}},
+    ]
+    payload = "\n".join(json.dumps(line) for line in lines) + "\n"
+    record = create_batch_file(purpose="batch", filename="in.jsonl", data=payload.encode())
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+    assert _claim_batch_job(job.pk)
+
+    mock_response = type(
+        "R",
+        (),
+        {"status_code": 200, "json": lambda self: {"choices": []}},
+    )()
+    cancel_checks = {"n": 0}
+
+    def cancel_after_first_record(_job_pk: int) -> bool:
+        cancel_checks["n"] += 1
+        return cancel_checks["n"] == 1
+
+    with patch("orchestrator.batch_services.batch_line_parallelism", return_value=1):
+        with patch(
+            "orchestrator.batch_services._batch_cancel_requested",
+            side_effect=cancel_after_first_record,
+        ):
+            with patch("orchestrator.batch_services.httpx.post", return_value=mock_response):
+                _run_claimed_batch_job(job.pk)
+
+    job.refresh_from_db()
+    assert job.status == GatewayBatchJob.STATUS_CANCELLED
+    assert job.request_counts.get("completed", 0) >= 1
+    from orchestrator.batch_services import read_batch_file_content
+
+    assert job.output_file is not None
+    raw = read_batch_file_content(job.output_file)
+    assert raw is not None
+    assert "keep" in raw.decode()
+
+
+@pytest.mark.django_db
+def test_execute_batch_lines_empty_returns_empty(batch_files_tmp) -> None:
+    record = create_batch_file(
+        purpose="batch",
+        filename="in.jsonl",
+        data=b'{"custom_id":"a","url":"/v1/chat/completions","body":{"model":"x","messages":[]}}\n',
+    )
+    job = create_batch_job(input_file_id=record.file_id, endpoint=CHAT_COMPLETIONS_PATH)
+    assert isinstance(job, GatewayBatchJob)
+
+    output, counts, cancelled = _execute_batch_lines(job.pk, [])
+    assert output == []
+    assert counts == {"total": 0, "completed": 0, "failed": 0}
+    assert cancelled is False

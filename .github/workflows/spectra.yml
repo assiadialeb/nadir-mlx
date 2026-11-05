@@ -214,6 +214,7 @@ jobs:
             "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_x86"
           chmod +x "$TOOLS_DIR/opengrep"
           echo "$TOOLS_DIR" >> "$GITHUB_PATH"
+          export PATH="$TOOLS_DIR:$PATH"
           opengrep scan --json --taint-intrafile --config auto --output sast_output.json . || true
 
       - name: Install Trivy

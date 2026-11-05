@@ -29,7 +29,7 @@ from orchestrator.gateway.router import CHAT_COMPLETIONS_PATH
 from orchestrator.gateway.upstream_concurrency import batch_line_parallelism
 from orchestrator.gateway_client_auth import gateway_api_key
 from orchestrator.models import GatewayBatchFile, GatewayBatchJob
-from orchestrator.security_utils import validated_gateway_chat_completions_url
+from orchestrator.security_utils import public_error_message, validated_gateway_chat_completions_url
 
 logger = logging.getLogger(__name__)
 
@@ -147,13 +147,27 @@ def cancel_batch_job(batch_id: str) -> GatewayBatchJob | BatchServiceError:
     if job.status == GatewayBatchJob.STATUS_CANCELLING:
         return job
     now = datetime.now(timezone.utc)
-    if job.status == GatewayBatchJob.STATUS_VALIDATING:
-        job.status = GatewayBatchJob.STATUS_CANCELLED
-        job.cancelled_at = now
-        job.save(update_fields=["status", "cancelled_at"])
-        return job
-    job.status = GatewayBatchJob.STATUS_CANCELLING
-    job.save(update_fields=["status"])
+    if GatewayBatchJob.objects.filter(
+        pk=job.pk,
+        status=GatewayBatchJob.STATUS_VALIDATING,
+    ).update(status=GatewayBatchJob.STATUS_CANCELLED, cancelled_at=now):
+        refreshed = get_batch_job(batch_id)
+        return refreshed if refreshed is not None else job
+
+    if GatewayBatchJob.objects.filter(
+        pk=job.pk,
+        status=GatewayBatchJob.STATUS_IN_PROGRESS,
+    ).update(status=GatewayBatchJob.STATUS_CANCELLING):
+        refreshed = get_batch_job(batch_id)
+        return refreshed if refreshed is not None else job
+
+    job.refresh_from_db()
+    if job.status in {
+        GatewayBatchJob.STATUS_COMPLETED,
+        GatewayBatchJob.STATUS_FAILED,
+        GatewayBatchJob.STATUS_CANCELLED,
+    }:
+        return BatchServiceError("Batch already finished.", status_code=400)
     return job
 
 
@@ -233,22 +247,28 @@ def _run_claimed_batch_job(job_pk: int) -> None:
     if job is None or job.status != GatewayBatchJob.STATUS_IN_PROGRESS:
         return
 
-    raw = read_batch_file_content(job.input_file)
-    if raw is None:
-        _fail_job(job, "Input file missing on disk.")
-        return
-
     try:
-        lines = _parse_jsonl_lines(raw)
-    except ValueError as exc:
-        _fail_job(job, str(exc))
-        return
+        raw = read_batch_file_content(job.input_file)
+        if raw is None:
+            _fail_job(job, "Input file missing on disk.")
+            return
 
-    output_lines, counts, cancelled = _execute_batch_lines(job.pk, lines)
-    if cancelled:
-        _cancel_job(job, output_lines, counts)
-        return
-    _complete_job(job, output_lines, counts)
+        try:
+            lines = _parse_jsonl_lines(raw)
+        except ValueError as exc:
+            _fail_job(job, str(exc))
+            return
+
+        output_lines, counts, cancelled = _execute_batch_lines(job.pk, lines)
+        if cancelled:
+            _cancel_job(job, output_lines, counts)
+            return
+        _complete_job(job, output_lines, counts)
+    except Exception as exc:
+        logger.exception("Batch job %s failed unexpectedly", job_pk)
+        job.refresh_from_db()
+        if job.status == GatewayBatchJob.STATUS_IN_PROGRESS:
+            _fail_job(job, public_error_message(exc, fallback="Batch worker failed."))
 
 
 def _execute_batch_lines(
@@ -267,18 +287,22 @@ def _execute_batch_lines(
     def run_line(index: int, line: dict[str, Any]) -> tuple[int, dict[str, Any] | None]:
         if cancel_event.is_set():
             return index, None
-        return index, _process_batch_line(line, line_no=index + 1)
+        custom_id = str(line.get("custom_id") or f"line-{index + 1}")
+        try:
+            return index, _process_batch_line(line, line_no=index + 1)
+        except Exception as exc:
+            logger.exception("Batch line %s failed", custom_id)
+            return index, {"custom_id": custom_id, "error": {"message": str(exc)}}
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(run_line, idx, line) for idx, line in enumerate(lines)]
         for future in as_completed(futures):
-            if _batch_cancel_requested(job_pk):
-                cancel_event.set()
+            try:
+                index, result = future.result()
+            except Exception as exc:
+                logger.exception("Batch worker thread failed for job %s", job_pk)
                 cancelled = True
-                for pending in futures:
-                    pending.cancel()
                 break
-            index, result = future.result()
             if result is None:
                 cancelled = True
                 break
@@ -287,6 +311,12 @@ def _execute_batch_lines(
                 counts["failed"] += 1
             else:
                 counts["completed"] += 1
+            if _batch_cancel_requested(job_pk):
+                cancel_event.set()
+                cancelled = True
+                for pending in futures:
+                    pending.cancel()
+                break
 
     if cancelled:
         output_lines = [
