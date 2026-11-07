@@ -55,7 +55,6 @@ jobs:
       RP_API_KEY: ${{ secrets.REPORTPORTAL_API_KEY }}
       RP_ENDPOINT: ${{ vars.REPORTPORTAL_URL }}
       RP_PROJECT: nadir-mlx
-      RP_LAUNCH_ATTRIBUTES: ${{ steps.rp_launch.outputs.attributes }}
       RP_LAUNCH_DESCRIPTION: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -124,6 +123,7 @@ jobs:
       - name: Run unit tests with coverage
         env:
           RP_LAUNCH: ${{ steps.rp_launch.outputs.name }}
+          RP_LAUNCH_ATTRIBUTES: ${{ steps.rp_launch.outputs.attributes }}
         run: |
           export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
           export MLX_DISABLE_INSTANCE_WATCHDOG=1
