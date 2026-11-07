@@ -29,6 +29,10 @@ on:
         description: "PR number (optional — enables Sonar PR analysis and posts a comment on the PR)"
         required: false
         type: string
+      reportportal_launch_name:
+        description: "Optional ReportPortal launch name (e.g. Release v0.5.0). Empty = auto Tag/Release/…"
+        required: false
+        type: string
 
 # Dedupe when a Release both creates a tag (push) and publishes (release).
 concurrency:
@@ -51,7 +55,7 @@ jobs:
       RP_API_KEY: ${{ secrets.REPORTPORTAL_API_KEY }}
       RP_ENDPOINT: ${{ vars.REPORTPORTAL_URL }}
       RP_PROJECT: nadir-mlx
-      RP_LAUNCH: nadir-mlx ${{ github.event_name }} ${{ github.head_ref || github.ref_name }}
+      RP_LAUNCH: ${{ github.event.inputs.reportportal_launch_name || (github.event_name == 'release' && format('Release {0}', github.event.release.tag_name)) || (startsWith(github.ref, 'refs/tags/') && format('Tag {0}', github.ref_name)) || format('nadir-mlx {0} {1}', github.event_name, github.head_ref || github.ref_name) }}
       RP_LAUNCH_ATTRIBUTES: ci:github;branch:${{ github.head_ref || github.ref_name }};event:${{ github.event_name }};commit:${{ github.event.pull_request.head.sha || github.sha }}
       RP_LAUNCH_DESCRIPTION: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
