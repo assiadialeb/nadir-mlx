@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 AC_MARK_PATTERN = re.compile(
-    r"^[A-Za-z][A-Za-z0-9]*-\d+:AC\d+$",
+    r"^[A-Z][A-Z0-9]*-\d+:AC\d+$",
     flags=re.IGNORECASE,
 )
 
