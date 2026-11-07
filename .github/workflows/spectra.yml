@@ -42,7 +42,7 @@ jobs:
       RP_ENDPOINT: ${{ vars.REPORTPORTAL_URL }}
       RP_PROJECT: nadir-mlx
       RP_LAUNCH: nadir-mlx ${{ github.event_name }} ${{ github.head_ref || github.ref_name }}
-      RP_LAUNCH_ATTRIBUTES: ci:github;branch:${{ github.head_ref || github.ref_name }};event:${{ github.event_name }}
+      RP_LAUNCH_ATTRIBUTES: ci:github;branch:${{ github.head_ref || github.ref_name }};event:${{ github.event_name }};commit:${{ github.event.pull_request.head.sha || github.sha }}
       RP_LAUNCH_DESCRIPTION: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
