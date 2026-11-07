@@ -55,8 +55,7 @@ jobs:
       RP_API_KEY: ${{ secrets.REPORTPORTAL_API_KEY }}
       RP_ENDPOINT: ${{ vars.REPORTPORTAL_URL }}
       RP_PROJECT: nadir-mlx
-      RP_LAUNCH: ${{ github.event.inputs.reportportal_launch_name || (github.event_name == 'release' && format('Release {0}', github.event.release.tag_name)) || (startsWith(github.ref, 'refs/tags/') && format('Tag {0}', github.ref_name)) || format('nadir-mlx {0} {1}', github.event_name, github.head_ref || github.ref_name) }}
-      RP_LAUNCH_ATTRIBUTES: ci:github;branch:${{ github.head_ref || github.ref_name }};event:${{ github.event_name }};commit:${{ github.event.pull_request.head.sha || github.sha }}
+      RP_LAUNCH_ATTRIBUTES: ci:github;ref:${{ github.head_ref || github.ref_name }};event:${{ github.event_name }};commit:${{ github.event.pull_request.head.sha || github.sha }}
       RP_LAUNCH_DESCRIPTION: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -66,6 +65,31 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
+
+      - name: Resolve ReportPortal launch name
+        id: rp_launch
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          LAUNCH_OVERRIDE: ${{ github.event.inputs.reportportal_launch_name }}
+          PRODUCT: nadir-mlx
+        run: |
+          set -euo pipefail
+          if [ -n "${LAUNCH_OVERRIDE:-}" ]; then
+            name="$LAUNCH_OVERRIDE"
+          elif [ "$EVENT_NAME" = "release" ]; then
+            name="Release ${RELEASE_TAG}"
+          elif [[ "$GIT_REF" == refs/tags/* ]]; then
+            name="Tag ${REF_NAME}"
+          else
+            ref="${HEAD_REF:-$REF_NAME}"
+            name="${PRODUCT} ${EVENT_NAME} ${ref}"
+          fi
+          echo "Resolved ReportPortal launch name: $name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: |
@@ -86,6 +110,8 @@ jobs:
           pytest -m contract orchestrator/tests/contracts -q
 
       - name: Run unit tests with coverage
+        env:
+          RP_LAUNCH: ${{ steps.rp_launch.outputs.name }}
         run: |
           export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
           export MLX_DISABLE_INSTANCE_WATCHDOG=1
