@@ -1,5 +1,5 @@
 # Spectra Quality Gate — CI/CD integration
-# Runs on every PR targeting main, on push to main (coverage baseline), or via workflow_dispatch.
+# Runs on PR→main, push to main, version tags (v*), published releases, or workflow_dispatch.
 # Posts a quality summary as a PR comment with a link to the detailed analysis.
 #
 # Required GitHub configuration:
@@ -18,12 +18,21 @@ on:
     branches: [main]
   push:
     branches: [main]
+    tags:
+      - "v*"
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       pull_request_number:
         description: "PR number (optional — enables Sonar PR analysis and posts a comment on the PR)"
         required: false
         type: string
+
+# Dedupe when a Release both creates a tag (push) and publishes (release).
+concurrency:
+  group: spectra-quality-gate-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
