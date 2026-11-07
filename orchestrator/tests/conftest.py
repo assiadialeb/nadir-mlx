@@ -11,6 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest_plugins = ("orchestrator.tests.plugins.vela_rp_marks",)
+
 from orchestrator.batch_file_store import batch_files_dir
 
 # reportportal-client posts usage data to Google Analytics unless this is set.

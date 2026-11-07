@@ -55,7 +55,7 @@ jobs:
       RP_API_KEY: ${{ secrets.REPORTPORTAL_API_KEY }}
       RP_ENDPOINT: ${{ vars.REPORTPORTAL_URL }}
       RP_PROJECT: nadir-mlx
-      RP_LAUNCH_ATTRIBUTES: ci:github;ref:${{ github.head_ref || github.ref_name }};event:${{ github.event_name }};commit:${{ github.event.pull_request.head.sha || github.sha }}
+      RP_LAUNCH_ATTRIBUTES: ${{ steps.rp_launch.outputs.attributes }}
       RP_LAUNCH_DESCRIPTION: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -75,6 +75,7 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           LAUNCH_OVERRIDE: ${{ github.event.inputs.reportportal_launch_name }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           PRODUCT: nadir-mlx
         run: |
           set -euo pipefail
@@ -90,6 +91,17 @@ jobs:
           fi
           echo "Resolved ReportPortal launch name: $name"
           echo "name=$name" >> "$GITHUB_OUTPUT"
+
+          # Keep in sync with build_ci_launch_attributes (SPCTR-159)
+          branch_ref="${HEAD_REF:-$REF_NAME}"
+          attrs="ci:github;ref:${branch_ref};branch:${branch_ref};event:${EVENT_NAME};commit:${COMMIT_SHA}"
+          if [ "$EVENT_NAME" = "release" ] && [ -n "${RELEASE_TAG:-}" ]; then
+            attrs="${attrs};tag:${RELEASE_TAG};release:${RELEASE_TAG}"
+          elif [[ "$GIT_REF" == refs/tags/* ]]; then
+            attrs="${attrs};tag:${REF_NAME};release:${REF_NAME}"
+          fi
+          echo "Resolved ReportPortal launch attributes: $attrs"
+          echo "attributes=$attrs" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: |
