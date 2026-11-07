@@ -13,6 +13,9 @@ import pytest
 
 from orchestrator.batch_file_store import batch_files_dir
 
+# reportportal-client posts usage data to Google Analytics unless this is set.
+os.environ["AGENT_NO_ANALYTICS"] = "1"
+
 MLX_CORE_MODULE = "mlx.core"
 MLX_AUDIO_STT_UTILS_MODULE = "mlx_audio.stt.utils"
 MLX_AUDIO_IO_MODULE = "mlx_audio.audio_io"

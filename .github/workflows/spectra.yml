@@ -1,10 +1,16 @@
 # Spectra Quality Gate — CI/CD integration
 # Runs on every PR targeting main, on push to main (coverage baseline), or via workflow_dispatch.
+# Posts a quality summary as a PR comment with a link to the detailed analysis.
 #
-# Required configuration:
-#   vars.SPECTRA_URL       — Spectra instance URL
-#   secrets.SPECTRA_CI_KEY — API key from Spectra → Code Analysis → repo Settings
-#   secrets.SONAR_TOKEN    — Sonar token (API Client mode; Managed mode uses Spectra token)
+# Required GitHub configuration:
+#   vars.SPECTRA_URL          — Spectra instance URL (e.g. https://spectra.vela-labs.net)
+#   secrets.SPECTRA_CI_KEY    — API key from Spectra → Code Analysis → repo Settings
+#   secrets.SONAR_TOKEN       — Sonar token (API Client mode; Managed mode uses Spectra token)
+#   vars.REPORTPORTAL_URL    — ReportPortal base URL, no trailing slash
+#   secrets.REPORTPORTAL_API_KEY — API key that can write to the project "nadir-mlx"
+# When the URL variable and the API key are both set, pytest publishes the launch. Otherwise results stay on the runner.
+#
+# Spectra CI repo must declare sonar_project_key in Code Analysis settings.
 name: Spectra Quality Gate
 
 on:
@@ -31,6 +37,13 @@ jobs:
       CI_BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
       CI_SCM_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       CI_TRIGGERED_BY: ${{ github.event_name }}
+      AGENT_NO_ANALYTICS: "1"
+      RP_API_KEY: ${{ secrets.REPORTPORTAL_API_KEY }}
+      RP_ENDPOINT: ${{ vars.REPORTPORTAL_URL }}
+      RP_PROJECT: nadir-mlx
+      RP_LAUNCH: nadir-mlx ${{ github.event_name }} ${{ github.head_ref || github.ref_name }}
+      RP_LAUNCH_ATTRIBUTES: ci:github;branch:${{ github.head_ref || github.ref_name }};event:${{ github.event_name }}
+      RP_LAUNCH_DESCRIPTION: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -59,21 +72,16 @@ jobs:
           pytest -m contract orchestrator/tests/contracts -q
 
       - name: Run unit tests with coverage
-        id: pytest
-        continue-on-error: true
         run: |
           export DJANGO_SETTINGS_MODULE=mlx_orchestrator.settings
           export MLX_DISABLE_INSTANCE_WATCHDOG=1
           export NADIR_CI_STUB_MLX=1
-          set +e
-          pytest orchestrator/tests \
-            --cov=. \
-            --cov-report=xml:coverage.xml
-          PYTEST_EXIT=$?
-          set -e
-          test -f coverage.xml
-          echo "coverage.xml size: $(wc -c < coverage.xml) bytes"
-          exit "$PYTEST_EXIT"
+          if [ -n "$RP_API_KEY" ] && [ -n "$RP_ENDPOINT" ]; then
+            pytest orchestrator/tests --cov=. --cov-report=xml:coverage.xml --reportportal
+          else
+            echo "ReportPortal URL or API key is unset; test results stay on the runner."
+            pytest orchestrator/tests --cov=. --cov-report=xml:coverage.xml
+          fi
 
       - name: Verify coverage report for Sonar
         run: |
@@ -93,284 +101,36 @@ jobs:
             grep -o 'filename="[^"]*"' coverage.xml | head -5
           fi
 
-      - name: Register scan with Spectra
-        id: scan
-        run: |
-          BRANCH_NAME="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          BODY=$(jq -n \
-            --arg sha "$GITHUB_SHA" \
-            --arg branch "$BRANCH_NAME" \
-            --arg pr "$CI_PR_NUMBER" \
-            --arg trigger "$CI_TRIGGERED_BY" \
-            '{commit_sha: $sha, branch: $branch, pull_request: $pr, triggered_by: $trigger}')
-
-          RESPONSE=$(curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans" \
-            -H "X-CI-Key: $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$BODY")
-
-          echo "$RESPONSE" | jq .
-
-          SCAN_ID=$(echo "$RESPONSE" | jq -r '.data.scan_id')
-          STATUS=$(echo "$RESPONSE" | jq -r '.data.status')
-          echo "scan_id=$SCAN_ID" >> "$GITHUB_OUTPUT"
-          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
-          echo "sonar_url=$(echo "$RESPONSE" | jq -r '.data.sonar.host_url // empty')" >> "$GITHUB_OUTPUT"
-          echo "sonar_token=$(echo "$RESPONSE" | jq -r '.data.sonar.token // empty')" >> "$GITHUB_OUTPUT"
-          echo "sonar_key=$(echo "$RESPONSE" | jq -r '.data.sonar.project_key // empty')" >> "$GITHUB_OUTPUT"
-          echo "sast=$(echo "$RESPONSE" | jq -r '.data.scanners.sast_enabled // false')" >> "$GITHUB_OUTPUT"
-          echo "sca=$(echo "$RESPONSE" | jq -r '.data.scanners.sca_enabled // false')" >> "$GITHUB_OUTPUT"
-          echo "iac=$(echo "$RESPONSE" | jq -r '.data.scanners.iac_enabled // false')" >> "$GITHUB_OUTPUT"
-          echo "secrets=$(echo "$RESPONSE" | jq -r '.data.scanners.secrets_enabled // false')" >> "$GITHUB_OUTPUT"
-          echo "sbom=$(echo "$RESPONSE" | jq -r '.data.scanners.sbom_enabled // false')" >> "$GITHUB_OUTPUT"
-        env:
-          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
-          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-
-      - name: Run SonarQube analysis
-        if: steps.scan.outputs.status != 'bypassed'
-        env:
-          SONAR_HOST_URL: ${{ steps.scan.outputs.sonar_url }}
-          SONAR_PROJECT_KEY: ${{ steps.scan.outputs.sonar_key }}
-          SONAR_TOKEN_MANAGED: ${{ steps.scan.outputs.sonar_token }}
-          SONAR_TOKEN_CI: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          if [ -n "$SONAR_TOKEN_MANAGED" ]; then
-            SONAR_TOKEN="$SONAR_TOKEN_MANAGED"
-          else
-            SONAR_TOKEN="$SONAR_TOKEN_CI"
-          fi
-          if [ -z "$SONAR_HOST_URL" ] || [ -z "$SONAR_PROJECT_KEY" ]; then
-            echo "Sonar host URL or project key missing. Check Spectra CI repo settings."
-            exit 1
-          fi
-          if [ -z "$SONAR_TOKEN" ]; then
-            echo "Missing Sonar token. Set secrets.SONAR_TOKEN (API Client) or use Managed mode."
-            exit 1
-          fi
-
-          curl -sSLo sonar-scanner.zip "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.1.0.6389-linux-x64.zip"
-          unzip -q sonar-scanner.zip
-          BRANCH_NAME="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          BASE_ARGS="-Dsonar.host.url=$SONAR_HOST_URL"
-          BASE_ARGS="$BASE_ARGS -Dsonar.token=$SONAR_TOKEN"
-          BASE_ARGS="$BASE_ARGS -Dsonar.projectKey=$SONAR_PROJECT_KEY"
-          BASE_ARGS="$BASE_ARGS -Dsonar.projectVisibility=private"
-          BASE_ARGS="$BASE_ARGS -Dsonar.python.version=3.12"
-          BASE_ARGS="$BASE_ARGS -Dsonar.scm.revision=$CI_SCM_REVISION"
-          BASE_ARGS="$BASE_ARGS -Dsonar.sources=orchestrator,mlx_orchestrator"
-          BASE_ARGS="$BASE_ARGS -Dsonar.tests=orchestrator/tests"
-          BASE_ARGS="$BASE_ARGS -Dsonar.test.inclusions=**/test_*.py"
-          BASE_ARGS="$BASE_ARGS -Dsonar.coverage.exclusions=orchestrator/migrations/**,orchestrator/tests/**,manage.py,**/*_server.py,**/mlx_*_launcher.py,orchestrator/mlx_launcher.py,orchestrator/management/commands/migrate_sqlite_to_postgres.py,orchestrator/vendor/**,orchestrator/views.py,orchestrator/ui_selectors.py,orchestrator/registry_builder.py,orchestrator/downloader.py"
-          BASE_ARGS="$BASE_ARGS -Dsonar.exclusions=orchestrator/migrations/**,orchestrator/static/**,docs/**,site/**,adr/**,models/**,logs/**,venv/**,**/__pycache__/**"
-          BASE_ARGS="$BASE_ARGS -Dsonar.python.coverage.reportPaths=coverage.xml"
-
-          BRANCH_ARGS="-Dsonar.branch.name=$BRANCH_NAME"
-          REF_BRANCH_ARG="-Dsonar.newCode.referenceBranch=$CI_BASE_REF"
-
-          if [ -n "$CI_PR_NUMBER" ]; then
-            PR_ARGS="-Dsonar.pullrequest.key=$CI_PR_NUMBER"
-            PR_ARGS="$PR_ARGS -Dsonar.pullrequest.branch=$BRANCH_NAME"
-            PR_ARGS="$PR_ARGS -Dsonar.pullrequest.base=$CI_BASE_REF"
-
-            set +e
-            ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $REF_BRANCH_ARG $PR_ARGS 2>&1 | tee sonar.log
-            SONAR_EXIT=${PIPESTATUS[0]}
-            set -e
-
-            if [ "$SONAR_EXIT" -ne 0 ] && grep -qiE "No branch exists in Sonar(qube)? with the name" sonar.log; then
-              echo "Base branch '$CI_BASE_REF' not in Sonar yet — bootstrapping with branch analysis on $BRANCH_NAME (no PR params)."
-              set +e
-              ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS 2>&1 | tee sonar-bootstrap.log
-              SONAR_EXIT=${PIPESTATUS[0]}
-              set -e
-            fi
-
-            if [ "$SONAR_EXIT" -ne 0 ] && grep -q "Developer Edition or above is required" sonar.log sonar-bootstrap.log 2>/dev/null; then
-              echo "PR parameters not supported. Retrying with branch context to protect main baseline."
-              set +e
-              ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS 2>&1 | tee sonar-branch.log
-              BRANCH_EXIT=${PIPESTATUS[0]}
-              set -e
-              if [ "$BRANCH_EXIT" -ne 0 ]; then
-                echo "Target SonarQube does not support PR/branch analysis. Aborting to avoid overwriting main baseline."
-                exit "$BRANCH_EXIT"
-              fi
-            elif [ "$SONAR_EXIT" -ne 0 ]; then
-              exit "$SONAR_EXIT"
-            fi
-          else
-            echo "No PR context — running branch analysis on $BRANCH_NAME."
-            ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $BRANCH_ARGS
-          fi
-
-      - name: Run SAST analysis (OpenGrep)
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sast == 'true'
-        run: |
-          TOOLS_DIR="$RUNNER_TEMP/spectra-tools"
-          mkdir -p "$TOOLS_DIR"
-          OPENGREP_VERSION=1.25.0
-          curl -sSfL -o "$TOOLS_DIR/opengrep" \
-            "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_x86"
-          chmod +x "$TOOLS_DIR/opengrep"
-          echo "$TOOLS_DIR" >> "$GITHUB_PATH"
-          export PATH="$TOOLS_DIR:$PATH"
-          opengrep scan --json --taint-intrafile --config auto --output sast_output.json . || true
-
-      - name: Install Trivy
-        if: steps.scan.outputs.status != 'bypassed' && (steps.scan.outputs.sca == 'true' || steps.scan.outputs.iac == 'true' || steps.scan.outputs.secrets == 'true' || steps.scan.outputs.sbom == 'true')
-        run: |
-          TOOLS_DIR="$RUNNER_TEMP/spectra-tools"
-          mkdir -p "$TOOLS_DIR"
-          TRIVY_VERSION=0.72.0
-          curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | tar -xz -C "$TOOLS_DIR" trivy
-          chmod +x "$TOOLS_DIR/trivy"
-          echo "$TOOLS_DIR" >> "$GITHUB_PATH"
-
-      - name: Run SCA analysis
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sca == 'true'
-        run: |
-          trivy fs --format json --scanners vuln --output trivy_sca.json . || true
-
-      - name: Run IaC analysis
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.iac == 'true'
-        run: |
-          trivy config --format json --output trivy_iac.json . || true
-
-      - name: Run Secrets analysis
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.secrets == 'true'
-        run: |
-          trivy fs --format json --scanners secret --output trivy_secrets.json . || true
-
-      - name: Generate SBOM (CycloneDX)
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sbom == 'true'
-        run: |
-          trivy fs --format cyclonedx --output sbom.cdx.json . || true
-
-      - name: Upload SAST results
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sast == 'true'
-        run: |
-          [ -f sast_output.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/sast" \
-            -H "X-CI-Key: $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @sast_output.json || true
-        env:
-          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
-          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
-
-      - name: Upload SCA results
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sca == 'true'
-        run: |
-          [ -f trivy_sca.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/sca" \
-            -H "X-CI-Key: $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @trivy_sca.json || true
-        env:
-          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
-          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
-
-      - name: Upload IaC results
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.iac == 'true'
-        run: |
-          [ -f trivy_iac.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/iac" \
-            -H "X-CI-Key: $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @trivy_iac.json || true
-        env:
-          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
-          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
-
-      - name: Upload Secrets results
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.secrets == 'true'
-        run: |
-          [ -f trivy_secrets.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/secrets" \
-            -H "X-CI-Key: $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @trivy_secrets.json || true
-        env:
-          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
-          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
-
-      - name: Upload SBOM results
-        if: steps.scan.outputs.status != 'bypassed' && steps.scan.outputs.sbom == 'true'
-        run: |
-          [ -f sbom.cdx.json ] && curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/results/sbom" \
-            -H "X-CI-Key: $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @sbom.cdx.json || true
-        env:
-          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
-          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
-
-      - name: Notify Spectra — scan complete
-        if: always() && steps.scan.outputs.scan_id != '' && steps.scan.outputs.status != 'bypassed'
-        run: |
-          CE_TASK_ID=""
-          [ -f .scannerwork/report-task.txt ] && CE_TASK_ID=$(awk -F= '$1=="ceTaskId"{print $2}' .scannerwork/report-task.txt | tr -d '\r')
-          curl -sf -X POST "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/complete" \
-            -H "X-CI-Key: $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"ce_task_id\":\"$CE_TASK_ID\"}"
-        env:
-          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
-          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
-
-      - name: Wait for Spectra verdict
-        id: verdict
-        if: always() && steps.scan.outputs.scan_id != '' && steps.scan.outputs.status != 'bypassed'
-        run: |
-          for i in $(seq 1 60); do
-            RESPONSE=$(curl -sS "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/status" \
-              -H "X-CI-Key: $API_KEY" || true)
-            STATUS=$(echo "$RESPONSE" | jq -r '.data.status // empty' 2>/dev/null)
-
-            if [ -z "$STATUS" ]; then
-              echo "[$i/60] Status unavailable (transient API/network error), retrying..."
-              sleep 10
-              continue
-            fi
-            echo "[$i/60] Status: $STATUS"
-
-            case "$STATUS" in
-              passed|failed|bypassed|error)
-                echo "status=$STATUS" >> "$GITHUB_OUTPUT"
-                {
-                  echo "response<<EOF"
-                  echo "$RESPONSE"
-                  echo "EOF"
-                } >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-            esac
-            sleep 10
-          done
-          echo "status=timeout" >> "$GITHUB_OUTPUT"
-          {
-            echo "response<<EOF"
-            echo '{"data":{"status":"timeout"}}'
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          echo "Timeout waiting for Spectra verdict."
-          exit 0
-        env:
-          SPECTRA_URL: ${{ vars.SPECTRA_URL }}
-          API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+      - name: Spectra quality gate
+        id: spectra
+        uses: ./.github/actions/spectra-ci
+        with:
+          spectra-url: ${{ vars.SPECTRA_URL }}
+          api-key: ${{ secrets.SPECTRA_CI_KEY }}
+          sonar-token: ${{ secrets.SONAR_TOKEN }}
+          commit-sha: ${{ env.CI_SCM_REVISION }}
+          branch: ${{ github.head_ref || github.ref_name }}
+          pull-request: ${{ env.CI_PR_NUMBER }}
+          triggered-by: ${{ env.CI_TRIGGERED_BY }}
+          base-ref: ${{ env.CI_BASE_REF }}
+          sonar-sources: orchestrator,mlx_orchestrator
+          coverage-report: coverage.xml
+          scm-revision: ${{ env.CI_SCM_REVISION }}
+          sast-mode: pack
+          sonar-extra-args: >-
+            -Dsonar.tests=orchestrator/tests
+            -Dsonar.test.inclusions=**/test_*.py
+            -Dsonar.coverage.exclusions=orchestrator/migrations/**,orchestrator/tests/**,manage.py,**/*_server.py,**/mlx_*_launcher.py,orchestrator/mlx_launcher.py,orchestrator/management/commands/migrate_sqlite_to_postgres.py,orchestrator/vendor/**,orchestrator/views.py,orchestrator/ui_selectors.py,orchestrator/registry_builder.py,orchestrator/downloader.py
+            -Dsonar.exclusions=orchestrator/migrations/**,orchestrator/static/**,docs/**,site/**,adr/**,models/**,logs/**,venv/**,**/__pycache__/**
 
       - name: Post PR comment
-        if: always() && steps.scan.outputs.scan_id != '' && env.CI_PR_NUMBER != ''
+        if: always() && steps.spectra.outputs.scan_id != '' && env.CI_PR_NUMBER != ''
         env:
           GH_TOKEN: ${{ github.token }}
           SPECTRA_URL: ${{ vars.SPECTRA_URL }}
           API_KEY: ${{ secrets.SPECTRA_CI_KEY }}
-          SCAN_ID: ${{ steps.scan.outputs.scan_id }}
-          VERDICT_STATUS: ${{ steps.verdict.outputs.status }}
+          SCAN_ID: ${{ steps.spectra.outputs.scan_id }}
+          VERDICT_STATUS: ${{ steps.spectra.outputs.status }}
         run: |
           DATA=$(curl -sS "$SPECTRA_URL/api/v1/ci/scans/$SCAN_ID/status" \
             -H "X-CI-Key: $API_KEY" | jq '.data // {}' 2>/dev/null)
@@ -443,34 +203,4 @@ jobs:
           )
 
           BODY=$(echo "$BODY" | sed 's/^          //')
-
           gh pr comment "$CI_PR_NUMBER" --body "$BODY"
-
-      - name: Enforce gate result
-        if: always()
-        run: |
-          if [ "${{ steps.pytest.outcome }}" = "failure" ]; then
-            echo "Unit tests failed."
-            exit 1
-          fi
-          if [ -z "${{ steps.scan.outputs.scan_id }}" ]; then
-            echo "No scan_id available. Failing fast."
-            exit 1
-          fi
-          if [ "${{ steps.scan.outputs.status }}" = "bypassed" ]; then
-            echo "Quality gate bypassed."
-            exit 0
-          fi
-          STATUS="${{ steps.verdict.outputs.status }}"
-          [ -z "$STATUS" ] && STATUS="timeout"
-          case "$STATUS" in
-            passed|bypassed) echo "Quality gate $STATUS."; exit 0 ;;
-            failed)
-              echo "Quality gate FAILED."
-              [ "$MODE" = "blocking" ] && exit 1 || exit 0
-              ;;
-            error|timeout) echo "Quality gate $STATUS."; exit 1 ;;
-            *) echo "Unexpected status: $STATUS"; exit 1 ;;
-          esac
-        env:
-          MODE: advisory

@@ -5,6 +5,7 @@ pytest>=9.0.3
 pytest-django>=4.8
 pytest-mock>=3.14
 pytest-cov>=5.0
+pytest-reportportal==5.6.13
 jsonschema>=4.23
 # SDK façade smokes (MLX-121) — official clients against TestClient / ASGITransport
 openai>=1.40.0

@@ -1,0 +1,174 @@
+name: Spectra CI
+description: >-
+  Register a Spectra CI scan, run Sonar and optional scanners, upload results,
+  complete, and wait for the quality gate (spectra-action v1).
+
+inputs:
+  spectra-url:
+    description: Spectra instance URL (vars.SPECTRA_URL).
+    required: true
+  api-key:
+    description: Repository CI API key (secrets.SPECTRA_CI_KEY).
+    required: true
+  sonar-token:
+    description: Sonar token for API Client mode (secrets.SONAR_TOKEN).
+    required: false
+    default: ''
+  commit-sha:
+    description: Commit SHA for scan registration.
+    required: true
+  branch:
+    description: Branch name.
+    required: true
+  pull-request:
+    description: Pull request number (optional).
+    required: false
+    default: ''
+  triggered-by:
+    description: push or pull_request.
+    required: false
+    default: push
+  base-ref:
+    description: Base branch for Sonar PR analysis (empty = main).
+    required: false
+    default: ''
+  scm-revision:
+    description: SCM revision for Sonar (defaults to commit-sha).
+    required: false
+    default: ''
+  coverage-report:
+    description: Path to coverage XML for Sonar (empty = do not pass coverage to Sonar).
+    required: false
+    default: ''
+  sonar-sources:
+    description: Sonar sources path (e.g. app or . for repo root).
+    required: false
+    default: '.'
+  sonar-extra-args:
+    description: Extra sonar-scanner -D properties (space-separated).
+    required: false
+    default: ''
+  sast-mode:
+    description: SAST mode — pack (CI rules), local (repo configs), or skip.
+    required: false
+    default: pack
+  sast-local-configs:
+    description: OpenGrep --config paths when sast-mode=local.
+    required: false
+    default: rules/sast
+  sast-extra-args:
+    description: Extra OpenGrep CLI flags.
+    required: false
+    default: ''
+  fail-on-gate:
+    description: Exit 1 when Spectra reports should_fail.
+    required: false
+    default: 'true'
+  wait-timeout:
+    description: Seconds to wait for terminal scan status.
+    required: false
+    default: '600'
+
+outputs:
+  scan_id:
+    description: Registered CI scan id.
+    value: ${{ steps.register.outputs.scan_id }}
+  status:
+    description: Terminal scan status.
+    value: ${{ steps.wait.outputs.status }}
+  should_fail:
+    description: Whether the runner should fail the job.
+    value: ${{ steps.wait.outputs.should_fail }}
+
+runs:
+  using: composite
+  steps:
+    - id: register
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/register.sh"
+      env:
+        SPECTRA_URL: ${{ inputs.spectra-url }}
+        API_KEY: ${{ inputs.api-key }}
+        COMMIT_SHA: ${{ inputs.commit-sha }}
+        BRANCH: ${{ inputs.branch }}
+        PULL_REQUEST: ${{ inputs.pull-request }}
+        TRIGGERED_BY: ${{ inputs.triggered-by }}
+
+    - name: SonarQube analysis
+      if: steps.register.outputs.status != 'bypassed' && steps.register.outputs.quality_provider == 'sonar'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/run-sonar.sh"
+      env:
+        SCAN_STATUS: ${{ steps.register.outputs.status }}
+        QUALITY_PROVIDER: ${{ steps.register.outputs.quality_provider }}
+        SONAR_HOST_URL: ${{ steps.register.outputs.sonar_url }}
+        SONAR_PROJECT_KEY: ${{ steps.register.outputs.sonar_key }}
+        SONAR_TOKEN_MANAGED: ${{ steps.register.outputs.sonar_token }}
+        SONAR_TOKEN_CI: ${{ inputs.sonar-token }}
+        SONAR_ORGANIZATION: ${{ steps.register.outputs.sonar_organization }}
+        BRANCH: ${{ inputs.branch }}
+        PULL_REQUEST: ${{ inputs.pull-request }}
+        BASE_REF: ${{ inputs.base-ref }}
+        SCM_REVISION: ${{ inputs.scm-revision != '' && inputs.scm-revision || inputs.commit-sha }}
+        COVERAGE_REPORT: ${{ inputs.coverage-report }}
+        SONAR_SOURCES: ${{ inputs.sonar-sources }}
+        SONAR_EXTRA_ARGS: ${{ inputs.sonar-extra-args }}
+
+    - name: Setup OpenGrep
+      if: steps.register.outputs.status != 'bypassed' && steps.register.outputs.sast == 'true'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/setup-opengrep.sh"
+
+    - name: SAST (OpenGrep)
+      if: steps.register.outputs.status != 'bypassed' && steps.register.outputs.sast == 'true'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/run-sast.sh"
+      env:
+        SCAN_STATUS: ${{ steps.register.outputs.status }}
+        SAST_ENABLED: ${{ steps.register.outputs.sast }}
+        SAST_MODE: ${{ inputs.sast-mode }}
+        SAST_LOCAL_CONFIGS: ${{ inputs.sast-local-configs }}
+        SAST_RULES_SHA256: ${{ steps.register.outputs.sast_rules_sha256 }}
+        SAST_EXTRA_ARGS: ${{ inputs.sast-extra-args }}
+        SPECTRA_URL: ${{ inputs.spectra-url }}
+        API_KEY: ${{ inputs.api-key }}
+
+    - name: Setup Trivy
+      if: >-
+        steps.register.outputs.status != 'bypassed' &&
+        (steps.register.outputs.sca == 'true' || steps.register.outputs.iac == 'true' ||
+         steps.register.outputs.secrets == 'true' || steps.register.outputs.sbom == 'true')
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/setup-trivy.sh"
+
+    - name: Trivy scanners
+      if: steps.register.outputs.status != 'bypassed'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/run-trivy-scans.sh"
+      env:
+        SCAN_STATUS: ${{ steps.register.outputs.status }}
+        SCA_ENABLED: ${{ steps.register.outputs.sca }}
+        IAC_ENABLED: ${{ steps.register.outputs.iac }}
+        SECRETS_ENABLED: ${{ steps.register.outputs.secrets }}
+        SBOM_ENABLED: ${{ steps.register.outputs.sbom }}
+
+    - name: Upload scanner results
+      if: steps.register.outputs.status != 'bypassed'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/upload-results.sh"
+      env:
+        SPECTRA_URL: ${{ inputs.spectra-url }}
+        API_KEY: ${{ inputs.api-key }}
+        SCAN_ID: ${{ steps.register.outputs.scan_id }}
+        SBOM_ENABLED: ${{ steps.register.outputs.sbom }}
+
+    - id: wait
+      if: steps.register.outputs.status != 'bypassed'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/complete-wait.sh"
+      env:
+        SPECTRA_URL: ${{ inputs.spectra-url }}
+        API_KEY: ${{ inputs.api-key }}
+        SCAN_ID: ${{ steps.register.outputs.scan_id }}
+        FAIL_ON_GATE: ${{ inputs.fail-on-gate }}
+        WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
