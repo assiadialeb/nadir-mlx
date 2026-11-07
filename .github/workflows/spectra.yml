@@ -21,7 +21,8 @@ on:
     tags:
       - "v*"
   release:
-    types: [published]
+    # published = draft→publish or direct publish; released = non-prerelease publish
+    types: [published, released]
   workflow_dispatch:
     inputs:
       pull_request_number:
