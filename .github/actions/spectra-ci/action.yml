@@ -117,6 +117,8 @@ runs:
     - name: Setup OpenGrep
       if: steps.register.outputs.status != 'bypassed' && steps.register.outputs.sast == 'true'
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: bash "${{ github.action_path }}/scripts/setup-opengrep.sh"
 
     - name: SAST (OpenGrep)
@@ -139,6 +141,8 @@ runs:
         (steps.register.outputs.sca == 'true' || steps.register.outputs.iac == 'true' ||
          steps.register.outputs.secrets == 'true' || steps.register.outputs.sbom == 'true')
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: bash "${{ github.action_path }}/scripts/setup-trivy.sh"
 
     - name: Trivy scanners
