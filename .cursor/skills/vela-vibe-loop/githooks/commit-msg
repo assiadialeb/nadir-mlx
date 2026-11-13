@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+HOOK_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+exec "$HOOK_DIR/../scripts/validate_commit_msg.sh" "$1"

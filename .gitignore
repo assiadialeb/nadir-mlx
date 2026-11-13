@@ -100,3 +100,10 @@ data/runtime/
 # MLX / model caches inside project tree
 **/.cache/
 .mimosa/*
+
+# Cursor local MCP secrets
+.cursor/mcp.json
+
+# Vela vibe-loop local artifacts (keep loop.yaml when added)
+.vela/*
+!.vela/loop.yaml
