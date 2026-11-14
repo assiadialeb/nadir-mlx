@@ -1,0 +1,58 @@
+# .vela/loop.yaml — per-repo configuration for the vela-vibe-loop skill.
+# Copy to <repo>/.vela/loop.yaml. Ids must be verified, never guessed.
+# Never store tokens, passwords, or API keys in this file.
+
+gravity:
+  project_code: SPCTR        # GP | GRVT | MLX | SPCTR | VLSK
+  project_id: 2
+  states: { start: in-progress, handoff: test }   # agents never set "done"
+
+spectra:
+  project_id: 2              # manual-audit project (MCP) — never guess by name
+  ci_gate_name: "Spectra — Quality Gate"   # PR comment/check of the CI module
+  base_branch: main
+
+sonar:
+  project_key: spectra
+  pr_analysis: true          # query PR gates with pullRequest=<n>
+
+reportportal:
+  project: spectra
+  launch_name: spectra-ci
+
+ci:
+  base_branch: main
+  poll_timeout_minutes: 30
+
+local_gate:
+  command: scripts/local_gate.sh      # path relative to the repo root
+  test_command: "pytest -q --junitxml=.vela/junit.xml"
+  lint_command: "ruff check . && radon cc -n C -s app"   # complexity <= 15
+  opengrep_config: ".opengrep"        # local rules dir; avoid network registries
+
+thresholds:                 # may be tightened, never loosened by an agent
+  new_findings_max_severity: MEDIUM   # any new HIGH/CRITICAL blocks
+  new_secrets: 0
+  sonar_gate: OK
+  sonar_new_coverage_min: 80
+  reportportal_max_failed: 0
+
+risk_paths:
+  high:
+    - "app/auth/**"
+    - "app/crypto.py"
+    - "app/tenant.py"
+    - "app/sso.py"
+    - "app/licensing.py"
+    - "app/cloud/**"
+    - "infra/**"
+    - "infrastructure/**"
+    - "**/migrations/**"
+    - "**/*.tf"
+
+custom_gates: []
+# - name: example-nonreg
+#   command: "pytest tests/test_example.py -q"
+#   applies_to: ["app/example/**"]
+
+max_iterations: 5
