@@ -31,7 +31,7 @@ on:
         required: false
         type: string
       reportportal_launch_name:
-        description: "Optional ReportPortal launch name (e.g. Release v0.5.0). Empty = auto Tag/Release/…"
+        description: "Optional ReportPortal launch name. Empty = fixed name per event (pull request, merge, commit, tag, release, manual)"
         required: false
         type: string
 
@@ -76,32 +76,9 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           LAUNCH_OVERRIDE: ${{ github.event.inputs.reportportal_launch_name }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          PRODUCT: nadir-mlx
-        run: |
-          set -euo pipefail
-          if [ -n "${LAUNCH_OVERRIDE:-}" ]; then
-            name="$LAUNCH_OVERRIDE"
-          elif [ "$EVENT_NAME" = "release" ]; then
-            name="Release ${RELEASE_TAG}"
-          elif [[ "$GIT_REF" == refs/tags/* ]]; then
-            name="Tag ${REF_NAME}"
-          else
-            ref="${HEAD_REF:-$REF_NAME}"
-            name="${PRODUCT} ${EVENT_NAME} ${ref}"
-          fi
-          echo "Resolved ReportPortal launch name: $name"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-
-          # Keep in sync with build_ci_launch_attributes (SPCTR-159)
-          branch_ref="${HEAD_REF:-$REF_NAME}"
-          attrs="ci:github;ref:${branch_ref};branch:${branch_ref};event:${EVENT_NAME};commit:${COMMIT_SHA}"
-          if [ "$EVENT_NAME" = "release" ] && [ -n "${RELEASE_TAG:-}" ]; then
-            attrs="${attrs};tag:${RELEASE_TAG};release:${RELEASE_TAG}"
-          elif [[ "$GIT_REF" == refs/tags/* ]]; then
-            attrs="${attrs};tag:${REF_NAME};release:${REF_NAME}"
-          fi
-          echo "Resolved ReportPortal launch attributes: $attrs"
-          echo "attributes=$attrs" >> "$GITHUB_OUTPUT"
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        # Fixed launch name per CI event + attributes (MLX-135): orchestrator/rp_marks.py
+        run: python3 orchestrator/rp_marks.py
 
       - name: Install dependencies
         run: |
