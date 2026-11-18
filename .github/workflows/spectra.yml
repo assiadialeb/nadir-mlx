@@ -5,8 +5,9 @@
 # Required GitHub configuration:
 #   vars.SPECTRA_URL          — Spectra instance URL (e.g. https://spectra.vela-labs.net)
 #   secrets.SPECTRA_CI_KEY    — API key from Spectra → Code Analysis → repo Settings
-#   secrets.SONAR_TOKEN       — Sonar token (API Client mode; Managed mode uses Spectra token)
 #   vars.REPORTPORTAL_URL    — ReportPortal base URL, no trailing slash
+# Sonar analysis runs in the parallel sonarqube.yml workflow (quality only);
+# the runner stays on quality_provider=linters (SPCTR-290 comparison setup).
 #   secrets.REPORTPORTAL_API_KEY — API key that can write to the project "nadir-mlx"
 # When the URL variable and the API key are both set, pytest publishes the launch. Otherwise results stay on the runner.
 #
@@ -153,13 +154,22 @@ jobs:
             grep -o 'filename="[^"]*"' coverage.xml | head -5
           fi
 
+      # The parallel Sonar workflow (.github/workflows/sonarqube.yml) consumes this
+      # artifact instead of re-running pytest, so both analyses report the same coverage.
+      - name: Upload coverage for the Sonar workflow
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-${{ env.CI_SCM_REVISION }}
+          path: coverage.xml
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Spectra quality gate
         id: spectra
         uses: ./.github/actions/spectra-ci
         with:
           spectra-url: ${{ vars.SPECTRA_URL }}
           api-key: ${{ secrets.SPECTRA_CI_KEY }}
-          sonar-token: ${{ secrets.SONAR_TOKEN }}
           commit-sha: ${{ env.CI_SCM_REVISION }}
           branch: ${{ github.head_ref || github.ref_name }}
           pull-request: ${{ env.CI_PR_NUMBER }}
