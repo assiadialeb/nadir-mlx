@@ -92,7 +92,13 @@ CI_LAUNCH_NAMES = (
     LAUNCH_MANUAL,
 )
 
-_PULL_REQUEST_EVENTS = frozenset({"pull_request", "pull_request_target"})
+# Events whose launch name does not depend on the ref.
+_NAME_BY_EVENT = {
+    "pull_request": LAUNCH_PULL_REQUEST,
+    "pull_request_target": LAUNCH_PULL_REQUEST,
+    "release": LAUNCH_RELEASE,
+    "workflow_dispatch": LAUNCH_MANUAL,
+}
 
 
 def is_ci_launch_name(name: str | None) -> bool:
@@ -119,17 +125,13 @@ def resolve_ci_launch_name(
     if manual_name:
         return manual_name
     event = (event_name or "").strip()
-    if event in _PULL_REQUEST_EVENTS:
-        return LAUNCH_PULL_REQUEST
-    if event == "release":
-        return LAUNCH_RELEASE
-    if event == "workflow_dispatch":
-        return LAUNCH_MANUAL
+    by_event = _NAME_BY_EVENT.get(event)
+    if by_event:
+        return by_event
     if (git_ref or "").startswith("refs/tags/"):
         return LAUNCH_TAG
-    if event == "push" and (ref_name or "").strip() == (default_branch or "main").strip():
-        return LAUNCH_MERGE
-    return LAUNCH_COMMIT
+    on_default_branch = (ref_name or "").strip() == (default_branch or "main").strip()
+    return LAUNCH_MERGE if event == "push" and on_default_branch else LAUNCH_COMMIT
 
 
 def resolve_ci_launch(env: Mapping[str, str]) -> tuple[str, str]:

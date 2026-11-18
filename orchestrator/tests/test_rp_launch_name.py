@@ -159,7 +159,7 @@ def test_script_runs_with_stdlib_only_before_pip_install_ac1(tmp_path) -> None:
 def test_workflow_delegates_launch_name_to_module_ac1(workflow) -> None:
     """AC1/AC2: no inline bash copy of the naming/attribute logic left in CI."""
     content = (REPO_ROOT / workflow).read_text(encoding="utf-8")
-    assert f"run: python3 orchestrator/rp_marks.py" in content
+    assert "run: python3 orchestrator/rp_marks.py" in content
     assert "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}" in content
     assert 'name="Release' not in content
     assert 'name="Tag' not in content
