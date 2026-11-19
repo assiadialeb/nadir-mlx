@@ -1,0 +1,3 @@
+# Spectra hadolint configuration (SPCTR-300): passed with --config, so the
+# repository's .hadolint.yaml is never read. Every rule stays enabled.
+ignored: []

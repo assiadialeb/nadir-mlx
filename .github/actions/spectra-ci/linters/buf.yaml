@@ -1,0 +1,6 @@
+# Spectra buf configuration (SPCTR-300): passed with --config, so the
+# repository's buf.yaml / buf.work.yaml never choose the lint rules.
+version: v2
+lint:
+  use:
+    - STANDARD
