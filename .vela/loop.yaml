@@ -1,0 +1,59 @@
+# Nadir-MLX mapping for the vela vibe loop (MLX-136).
+# Ids verified via Gravity / Spectra / Sonar MCP on 2026-11-19. No secrets.
+
+gravity:
+  project_code: MLX
+  project_id: 4
+  states: { start: in-progress, handoff: test }
+
+spectra:
+  project_id: 4              # "Nadir MLX", CI repository id 3 (github, gate advisory)
+  ci_gate_name: "Spectra — Quality Gate"
+  base_branch: main
+
+sonar:
+  project_key: assiadialeb_nadir_mlx
+  pr_analysis: true
+
+reportportal:
+  project: nadir-mlx
+  # Fixed launch name per CI event (MLX-135, orchestrator/rp_marks.py).
+  # Find the launch for a commit by its `commit` attribute, not by name.
+  launch_names: [pull request, merge, commit, tag, release, manual]
+
+ci:
+  base_branch: main
+  poll_timeout_minutes: 30
+
+local_gate:
+  # No scripts/local_gate.sh in this repo: use the vendored skill script.
+  # It needs bash >= 4 (mapfile); macOS ships bash 3.2.
+  command: .agents/skills/vela-vibe-loop/scripts/local_gate.sh
+  # Same test scope as the spectra workflow (contract tests live under orchestrator/tests/contracts).
+  test_command: "pytest orchestrator/tests -q --junitxml=.vela/junit.xml"
+  lint_command: ""           # no linter in CI for this repo
+  # No rules vendored in this repo yet: the local sast check reports "skipped"
+  # unless OPENGREP_CONFIG points to a rules dir. Spectra CI still runs SAST.
+  opengrep_config: ".opengrep"
+
+thresholds:
+  new_findings_max_severity: MEDIUM
+  new_secrets: 0
+  sonar_gate: OK
+  sonar_new_coverage_min: 80
+  reportportal_max_failed: 0
+
+risk_paths:
+  high:
+    - "orchestrator/gateway/auth.py"
+    - "orchestrator/gateway_client_auth.py"
+    - "orchestrator/inference_auth.py"
+    - "orchestrator/security_utils.py"
+    - "orchestrator/server_manager.py"          # builds model launch commands
+    - "orchestrator/management/commands/migrate_sqlite_to_postgres.py"
+    - "mlx_orchestrator/settings.py"
+    - "**/migrations/**"
+
+custom_gates: []
+
+max_iterations: 5
