@@ -6,12 +6,11 @@
 #   vars.SPECTRA_URL          — Spectra instance URL (e.g. https://spectra.vela-labs.net)
 #   secrets.SPECTRA_CI_KEY    — API key from Spectra → Code Analysis → repo Settings
 #   vars.REPORTPORTAL_URL    — ReportPortal base URL, no trailing slash
-# Sonar analysis runs in the parallel sonarqube.yml workflow (quality only);
-# the runner stays on quality_provider=linters (SPCTR-290 comparison setup).
 #   secrets.REPORTPORTAL_API_KEY — API key that can write to the project "nadir-mlx"
 # When the URL variable and the API key are both set, pytest publishes the launch. Otherwise results stay on the runner.
 #
-# Spectra CI repo must declare sonar_project_key in Code Analysis settings.
+# Quality comes from the Spectra linters provider only (full Spectra mode, MLX-139):
+# coverage exclusions live in the Spectra CI repo settings, not in this workflow.
 name: Spectra Quality Gate
 
 on:
@@ -27,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       pull_request_number:
-        description: "PR number (optional — enables Sonar PR analysis and posts a comment on the PR)"
+        description: "PR number (optional — scans as a PR and posts a comment on the PR)"
         required: false
         type: string
       reportportal_launch_name:
@@ -113,33 +112,23 @@ jobs:
             pytest orchestrator/tests --cov=. --cov-report=xml:coverage.xml
           fi
 
-      - name: Verify coverage report for Sonar
+      - name: Verify coverage report for Spectra
         run: |
           if [ ! -f coverage.xml ]; then
-            echo "coverage.xml is missing — Sonar will not receive coverage."
+            echo "coverage.xml is missing — Spectra will not receive coverage."
             exit 1
           fi
           echo "coverage.xml size: $(wc -c < coverage.xml) bytes"
           if grep -qE '<source>/|<class filename="/' coverage.xml; then
-            echo "WARNING: absolute paths detected in coverage.xml; Sonar may fail to match files."
+            echo "WARNING: absolute paths detected in coverage.xml; Spectra may fail to match files."
             head -20 coverage.xml
           fi
           covered_files=$(grep -c '<class ' coverage.xml || true)
           echo "Cobertura classes in report: $covered_files"
           if ! grep -qE 'filename="(orchestrator|mlx_orchestrator)/' coverage.xml; then
-            echo "WARNING: coverage.xml paths may not match Sonar (expected orchestrator/ or mlx_orchestrator/ prefix)."
+            echo "WARNING: coverage.xml paths may not match the repo (expected orchestrator/ or mlx_orchestrator/ prefix)."
             grep -o 'filename="[^"]*"' coverage.xml | head -5
           fi
-
-      # The parallel Sonar workflow (.github/workflows/sonarqube.yml) consumes this
-      # artifact instead of re-running pytest, so both analyses report the same coverage.
-      - name: Upload coverage for the Sonar workflow
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: coverage-${{ env.CI_SCM_REVISION }}
-          path: coverage.xml
-          retention-days: 7
-          if-no-files-found: error
 
       - name: Spectra quality gate
         id: spectra
@@ -152,15 +141,8 @@ jobs:
           pull-request: ${{ env.CI_PR_NUMBER }}
           triggered-by: ${{ env.CI_TRIGGERED_BY }}
           base-ref: ${{ env.CI_BASE_REF }}
-          sonar-sources: orchestrator,mlx_orchestrator
           coverage-report: coverage.xml
-          scm-revision: ${{ env.CI_SCM_REVISION }}
           sast-mode: pack
-          sonar-extra-args: >-
-            -Dsonar.tests=orchestrator/tests
-            -Dsonar.test.inclusions=**/test_*.py
-            -Dsonar.coverage.exclusions=orchestrator/migrations/**,orchestrator/tests/**,manage.py,**/*_server.py,**/mlx_*_launcher.py,orchestrator/mlx_launcher.py,orchestrator/management/commands/migrate_sqlite_to_postgres.py,orchestrator/vendor/**,orchestrator/views.py,orchestrator/ui_selectors.py,orchestrator/registry_builder.py,orchestrator/downloader.py
-            -Dsonar.exclusions=orchestrator/migrations/**,orchestrator/static/**,docs/**,site/**,adr/**,models/**,logs/**,venv/**,**/__pycache__/**
 
       - name: Post PR comment
         if: always() && steps.spectra.outputs.scan_id != '' && env.CI_PR_NUMBER != ''
