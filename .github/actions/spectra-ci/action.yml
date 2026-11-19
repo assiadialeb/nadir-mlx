@@ -32,6 +32,13 @@ inputs:
     description: Base branch for Sonar PR analysis (empty = main).
     required: false
     default: ''
+  new-code-reference:
+    description: >-
+      Linters mode: commit SHA new code is measured from (empty = automatic:
+      merge-base with base-ref on a pull request, the commit before the push
+      otherwise). SPCTR-303.
+    required: false
+    default: ''
   scm-revision:
     description: SCM revision for Sonar (defaults to commit-sha).
     required: false
@@ -40,6 +47,16 @@ inputs:
     description: Path to coverage XML for Sonar (empty = do not pass coverage to Sonar).
     required: false
     default: ''
+  repo-sarif:
+    description: >-
+      SARIF files produced by the repository's own build job (PMD, detekt,
+      clippy…), comma-separated git pathspecs; ingested in linters mode only.
+    required: false
+    default: ''
+  sqlfluff-dialect:
+    description: sqlfluff dialect when the repository tracks .sql files (ansi, postgres, duckdb…).
+    required: false
+    default: 'ansi'
   sonar-sources:
     description: Sonar sources path (e.g. app or . for repo root).
     required: false
@@ -64,10 +81,29 @@ inputs:
     description: Exit 1 when Spectra reports should_fail.
     required: false
     default: 'true'
-  wait-timeout:
-    description: Seconds to wait for terminal scan status.
+  tool-mirror-url:
+    description: Opt-in Forgejo base URL for the pinned-tool mirror (SPCTR-291). Empty disables the mirror.
     required: false
-    default: '600'
+    default: ''
+  tool-mirror-owner:
+    description: Forgejo owner holding the mirror packages (default vela-labs).
+    required: false
+    default: ''
+  tool-mirror-token:
+    description: Forgejo token used to publish verified upstream artifacts to the mirror.
+    required: false
+    default: ''
+  tools-cache-dir:
+    description: Persistent runner cache for pinned tools (empty = job-local cache).
+    required: false
+    default: ''
+  wait-timeout:
+    description: >-
+      Seconds to wait for terminal scan status. Must exceed the Spectra global
+      Sonar CE wait deadline (SONAR_CE_MAX_WAIT_SECONDS, default 900s) so
+      Spectra decides the timeout first with a clear message.
+    required: false
+    default: '1500'
 
 outputs:
   scan_id:
@@ -99,6 +135,8 @@ runs:
       shell: bash
       run: bash "${{ github.action_path }}/scripts/run-sonar.sh"
       env:
+        # advisory never fails the job (SPCTR-308).
+        GATE_MODE: ${{ steps.register.outputs.gate_mode }}
         SCAN_STATUS: ${{ steps.register.outputs.status }}
         QUALITY_PROVIDER: ${{ steps.register.outputs.quality_provider }}
         SONAR_HOST_URL: ${{ steps.register.outputs.sonar_url }}
@@ -114,11 +152,56 @@ runs:
         SONAR_SOURCES: ${{ inputs.sonar-sources }}
         SONAR_EXTRA_ARGS: ${{ inputs.sonar-extra-args }}
 
+    # jscpd (duplication) runs through npx: without Node.js the analysis is
+    # incomplete (SPCTR-301), so the action provides it in linters mode.
+    - name: Setup Node.js for jscpd
+      if: steps.register.outputs.status != 'bypassed' && steps.register.outputs.quality_provider == 'linters'
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: '22'
+
+    - name: Spectra linters
+      if: steps.register.outputs.status != 'bypassed' && steps.register.outputs.quality_provider == 'linters'
+      shell: bash
+      env:
+        # advisory never fails the job: failures become analysis_incomplete.
+        GATE_MODE: ${{ steps.register.outputs.gate_mode }}
+        SPECTRA_URL: ${{ inputs.spectra-url }}
+        API_KEY: ${{ inputs.api-key }}
+        SCAN_ID: ${{ steps.register.outputs.scan_id }}
+        SCAN_STATUS: ${{ steps.register.outputs.status }}
+        BASE_REF: ${{ inputs.base-ref }}
+        # New code reference (SPCTR-303): explicit input, else the push's
+        # "before" commit, else the fork point from the default branch.
+        NEW_CODE_REFERENCE: ${{ inputs.new-code-reference }}
+        PUSH_BEFORE: ${{ github.event.before }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        CURRENT_BRANCH: ${{ inputs.branch != '' && inputs.branch || github.ref_name }}
+        COVERAGE_REPORT: ${{ inputs.coverage-report }}
+        # SARIF files produced by the repository's own build job (PMD, detekt,
+        # clippy…), comma-separated git pathspecs (SPCTR-289).
+        REPO_SARIF: ${{ inputs.repo-sarif }}
+        SQLFLUFF_DIALECT: ${{ inputs.sqlfluff-dialect }}
+        GITHUB_TOKEN: ${{ github.token }}
+        SPECTRA_TOOL_MIRROR_URL: ${{ inputs.tool-mirror-url }}
+        SPECTRA_TOOL_MIRROR_OWNER: ${{ inputs.tool-mirror-owner }}
+        SPECTRA_TOOL_MIRROR_TOKEN: ${{ inputs.tool-mirror-token }}
+        SPECTRA_TOOLS_CACHE_DIR: ${{ inputs.tools-cache-dir }}
+      run: bash "${{ github.action_path }}/scripts/run-linters.sh"
+
     - name: Setup OpenGrep
       if: steps.register.outputs.status != 'bypassed' && steps.register.outputs.sast == 'true'
       shell: bash
       env:
+        # advisory never fails the job (SPCTR-308).
+        GATE_MODE: ${{ steps.register.outputs.gate_mode }}
         GITHUB_TOKEN: ${{ github.token }}
+        # Mirror configuration travels through inputs (composite actions cannot
+        # read vars/secrets); empty by default keeps upstream-only behavior.
+        SPECTRA_TOOL_MIRROR_URL: ${{ inputs.tool-mirror-url }}
+        SPECTRA_TOOL_MIRROR_OWNER: ${{ inputs.tool-mirror-owner }}
+        SPECTRA_TOOL_MIRROR_TOKEN: ${{ inputs.tool-mirror-token }}
+        SPECTRA_TOOLS_CACHE_DIR: ${{ inputs.tools-cache-dir }}
       run: bash "${{ github.action_path }}/scripts/setup-opengrep.sh"
 
     - name: SAST (OpenGrep)
@@ -126,6 +209,8 @@ runs:
       shell: bash
       run: bash "${{ github.action_path }}/scripts/run-sast.sh"
       env:
+        # advisory never fails the job (SPCTR-308).
+        GATE_MODE: ${{ steps.register.outputs.gate_mode }}
         SCAN_STATUS: ${{ steps.register.outputs.status }}
         SAST_ENABLED: ${{ steps.register.outputs.sast }}
         SAST_MODE: ${{ inputs.sast-mode }}
@@ -142,25 +227,35 @@ runs:
          steps.register.outputs.secrets == 'true' || steps.register.outputs.sbom == 'true')
       shell: bash
       env:
+        # advisory never fails the job (SPCTR-308).
+        GATE_MODE: ${{ steps.register.outputs.gate_mode }}
         GITHUB_TOKEN: ${{ github.token }}
+        SPECTRA_TOOL_MIRROR_URL: ${{ inputs.tool-mirror-url }}
+        SPECTRA_TOOL_MIRROR_OWNER: ${{ inputs.tool-mirror-owner }}
+        SPECTRA_TOOL_MIRROR_TOKEN: ${{ inputs.tool-mirror-token }}
+        SPECTRA_TOOLS_CACHE_DIR: ${{ inputs.tools-cache-dir }}
       run: bash "${{ github.action_path }}/scripts/setup-trivy.sh"
-
     - name: Trivy scanners
       if: steps.register.outputs.status != 'bypassed'
       shell: bash
       run: bash "${{ github.action_path }}/scripts/run-trivy-scans.sh"
       env:
+        # advisory never fails the job (SPCTR-308).
+        GATE_MODE: ${{ steps.register.outputs.gate_mode }}
         SCAN_STATUS: ${{ steps.register.outputs.status }}
         SCA_ENABLED: ${{ steps.register.outputs.sca }}
         IAC_ENABLED: ${{ steps.register.outputs.iac }}
         SECRETS_ENABLED: ${{ steps.register.outputs.secrets }}
         SBOM_ENABLED: ${{ steps.register.outputs.sbom }}
+        SECRETS_SCAN_JSON: ${{ steps.register.outputs.secrets_scan }}
 
     - name: Upload scanner results
       if: steps.register.outputs.status != 'bypassed'
       shell: bash
       run: bash "${{ github.action_path }}/scripts/upload-results.sh"
       env:
+        # advisory never fails the job (SPCTR-308).
+        GATE_MODE: ${{ steps.register.outputs.gate_mode }}
         SPECTRA_URL: ${{ inputs.spectra-url }}
         API_KEY: ${{ inputs.api-key }}
         SCAN_ID: ${{ steps.register.outputs.scan_id }}
@@ -176,3 +271,4 @@ runs:
         SCAN_ID: ${{ steps.register.outputs.scan_id }}
         FAIL_ON_GATE: ${{ inputs.fail-on-gate }}
         WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+        GATE_MODE: ${{ steps.register.outputs.gate_mode }}

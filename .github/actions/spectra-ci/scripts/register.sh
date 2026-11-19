@@ -38,6 +38,7 @@ _scanner_flag() {
   echo "scan_id=$SCAN_ID"
   echo "status=$STATUS"
   echo "quality_provider=$QUALITY"
+  echo "gate_mode=$(echo "$RESPONSE" | jq -r '.data.gate_mode // "advisory"')"
   echo "sonar_url=$(echo "$RESPONSE" | jq -r '.data.sonar.host_url // empty')"
   echo "sonar_token=$SONAR_TOKEN_MANAGED"
   echo "sonar_key=$(echo "$RESPONSE" | jq -r '.data.sonar.project_key // empty')"
@@ -48,4 +49,5 @@ _scanner_flag() {
   echo "secrets=$(_scanner_flag '.data.scanners.secrets_enabled')"
   echo "sbom=$(_scanner_flag '.data.scanners.sbom_enabled')"
   echo "sast_rules_sha256=$(echo "$RESPONSE" | jq -r '.data.sast_rules.sha256 // empty')"
+  echo "secrets_scan=$(echo "$RESPONSE" | jq -c '.data.secrets_scan // {}')"
 } >> "$GITHUB_OUTPUT"

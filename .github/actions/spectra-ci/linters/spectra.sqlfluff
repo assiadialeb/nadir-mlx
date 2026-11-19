@@ -1,0 +1,9 @@
+# Spectra sqlfluff configuration (SPCTR-300).
+#
+# Passed with --ignore-local-config --config: the scanned repository's
+# .sqlfluff, setup.cfg, tox.ini and pyproject.toml are never read.
+# The raw templater never imports or renders repository code (the Jinja
+# templater would import any library_path module the repository names).
+# The dialect and the excluded cosmetic rules come from the action inputs.
+[sqlfluff]
+templater = raw

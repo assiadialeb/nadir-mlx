@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+# Blocking mode fails the job; advisory mode warns and skips Sonar (SPCTR-308).
+sonar_failed() {
+  spectra_step_failed "$1" "${2:-1}" || exit $?
+  exit 0
+}
+
 if [ "${QUALITY_PROVIDER:-sonar}" = "none" ]; then
   echo "Sonar skipped (quality_provider=none)."
   exit 0
@@ -21,20 +31,24 @@ if [ -n "${SONAR_TOKEN:-}" ]; then
 fi
 
 if [ -z "${SONAR_HOST_URL:-}" ] || [ -z "${SONAR_PROJECT_KEY:-}" ]; then
-  echo "Sonar host URL or project key missing."
-  exit 1
+  sonar_failed "Sonar host URL or project key missing."
 fi
 if [ -z "${SONAR_TOKEN:-}" ]; then
-  echo "Missing Sonar token."
-  exit 1
+  sonar_failed "Missing Sonar token."
 fi
 
 SONAR_SCANNER_VERSION="${SONAR_SCANNER_VERSION:-8.3.1.16491}"
 SONAR_SCANNER_SHA256="${SONAR_SCANNER_SHA256:-0f304e4c5982f0cfbd06762306d6e60e6ed9c8e3853629ae3b8ec2f4dc9bdc04}"
 curl -fsSL -o sonar-scanner.zip \
-  "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux-x64.zip"
-echo "${SONAR_SCANNER_SHA256}  sonar-scanner.zip" | sha256sum --check --strict
-unzip -q sonar-scanner.zip
+  "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux-x64.zip" \
+  || sonar_failed "Sonar scanner download failed."
+echo "${SONAR_SCANNER_SHA256}  sonar-scanner.zip" | sha256sum --check --strict \
+  || sonar_failed "Sonar scanner checksum mismatch."
+unzip -q sonar-scanner.zip || sonar_failed "Sonar scanner extraction failed."
+# Resolve the versioned scanner directory once instead of globbing a command name.
+SCANNER_CANDIDATES=(./sonar-scanner-*/bin/sonar-scanner)
+SCANNER_BIN="${SCANNER_CANDIDATES[0]}"
+[ -x "$SCANNER_BIN" ] || sonar_failed "Sonar scanner binary not found at ${SCANNER_BIN}."
 
 BASE_ARGS="-Dsonar.host.url=$SONAR_HOST_URL"
 BASE_ARGS="$BASE_ARGS -Dsonar.token=$SONAR_TOKEN"
@@ -63,8 +77,9 @@ if [ -n "${PULL_REQUEST:-}" ]; then
   PR_ARGS="$PR_ARGS -Dsonar.pullrequest.base=$BASE_BRANCH"
   PR_ARGS="$PR_ARGS -Dsonar.newCode.referenceBranch=$BASE_BRANCH"
   # shellcheck disable=SC2086
-  ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS $PR_ARGS
+  "$SCANNER_BIN" $BASE_ARGS $PR_ARGS || sonar_failed "Sonar analysis failed (exit $?)." $?
 else
   # shellcheck disable=SC2086
-  ./sonar-scanner-*/bin/sonar-scanner $BASE_ARGS -Dsonar.branch.name="$BRANCH_NAME"
+  "$SCANNER_BIN" $BASE_ARGS -Dsonar.branch.name="$BRANCH_NAME" \
+    || sonar_failed "Sonar analysis failed (exit $?)." $?
 fi

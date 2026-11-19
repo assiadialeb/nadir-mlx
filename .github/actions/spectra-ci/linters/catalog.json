@@ -1,0 +1,150 @@
+{
+  "$comment": "Language catalog for the Spectra CI linters phase (SPCTR-289). core_tools are executed on the runner from the pinned allowlist binaries; paths are git pathspecs used to detect whether the tool applies to this repository. repo_build lists the languages whose primary linter runs in the repository's own build job, which only drops its SARIF files (repo-sarif input). SAST, secrets and taint analysis stay on OpenGrep and Trivy — never enable a linter's taint engine (e.g. Psalm taint).",
+  "default_excludes": [
+    "**/node_modules/**",
+    "**/vendor/**",
+    "**/dist/**",
+    "**/*.min.js",
+    "**/*.min.css",
+    "**/*.bundle.js"
+  ],
+  "$default_excludes_comment": "Vendored, built and minified files are never linted (SPCTR-301): they are not the repository's code, and biome ran out of memory on them (exit 137, 24 GB on Gravity's static/vendor bundles). Same intent as Sonar's default JS exclusions; applied as git pathspec excludes before the repository's own Source Exclusions.",
+  "core_tools": {
+    "ruff": {
+      "phase": "python",
+      "paths": ["*.py"],
+      "sarif": "native"
+    },
+    "biome": {
+      "phase": "generic",
+      "paths": ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts"],
+      "sarif": "native"
+    },
+    "shellcheck": {
+      "phase": "generic",
+      "paths": ["*.sh", "*.bash"],
+      "sarif": "json1"
+    },
+    "hadolint": {
+      "phase": "generic",
+      "paths": ["Dockerfile", "Dockerfile.*", "Containerfile", "Containerfile.*", "*.dockerfile"],
+      "sarif": "native"
+    },
+    "yamllint": {
+      "phase": "generic",
+      "paths": ["*.yml", "*.yaml"],
+      "sarif": "parsable"
+    },
+    "sqlfluff": {
+      "phase": "generic",
+      "paths": ["*.sql"],
+      "sarif": "json"
+    },
+    "tflint": {
+      "phase": "generic",
+      "paths": ["*.tf", "*.tfvars"],
+      "sarif": "json"
+    },
+    "buf": {
+      "phase": "generic",
+      "paths": ["*.proto"],
+      "sarif": "jsonl"
+    },
+    "lizard": {
+      "phase": "complexity",
+      "paths": ["*.py", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts", "*.go", "*.java", "*.kt", "*.kts", "*.cs", "*.c", "*.h", "*.cc", "*.cpp", "*.cxx", "*.hpp", "*.php", "*.rb", "*.swift", "*.rs", "*.scala"],
+      "sarif": "none",
+      "metric": "complexity"
+    },
+    "cognitive": {
+      "phase": "python",
+      "paths": ["*.py"],
+      "sarif": "none",
+      "metric": "cognitive"
+    },
+    "jscpd": {
+      "phase": "python",
+      "paths": ["*.py"],
+      "sarif": "none",
+      "metric": "duplication"
+    }
+  },
+  "repo_build": {
+    "java": {
+      "primary": "PMD 7",
+      "deep": ["SpotBugs", "Error Prone", "NullAway (per repository)"],
+      "complexity": "PMD CognitiveComplexity (exact)",
+      "coverage": "JaCoCo → Cobertura",
+      "sarif": "native"
+    },
+    "c_cpp": {
+      "primary": "clang-tidy, cppcheck",
+      "deep": "-Wall -Wextra -Werror",
+      "complexity": "readability-function-cognitive-complexity (exact, LLVM 12+)",
+      "coverage": "gcov/lcov → LCOV → Cobertura",
+      "sarif": "wrapper"
+    },
+    "rust": {
+      "primary": "Clippy",
+      "deep": "type system",
+      "complexity": "cognitive_complexity (exact)",
+      "coverage": "llvm-cov → LCOV → Cobertura",
+      "sarif": "wrapper"
+    },
+    "go": {
+      "primary": "golangci-lint",
+      "deep": ["staticcheck", "govet", "errcheck"],
+      "complexity": "gocognit (exact)",
+      "coverage": "go test → Cobertura",
+      "sarif": "native"
+    },
+    "csharp": {
+      "primary": "Roslyn + SonarAnalyzer.CSharp",
+      "deep": "nullable analysis",
+      "complexity": "Roslyn analyzers",
+      "coverage": "coverlet → Cobertura",
+      "sarif": "native (MSBuild /errorlog)"
+    },
+    "kotlin": {
+      "primary": "detekt",
+      "complexity": "proxies",
+      "coverage": "Kover → XML → Cobertura",
+      "sarif": "optional"
+    },
+    "php": {
+      "primary": "PHPStan or Psalm (typing only, taint ignored)",
+      "complexity": "PhpMetrics",
+      "coverage": "PHPUnit → Clover → Cobertura",
+      "sarif": "native (Psalm)"
+    },
+    "ruby": {
+      "primary": "RuboCop",
+      "complexity": "PerceivedComplexity (proxy)",
+      "coverage": "SimpleCov → Cobertura",
+      "sarif": "wrapper"
+    },
+    "swift": {
+      "primary": "SwiftLint",
+      "complexity": "proxies",
+      "coverage": "xcresult → Cobertura",
+      "sarif": "wrapper"
+    },
+    "scala": {
+      "primary": "Scalafix",
+      "complexity": "proxies",
+      "coverage": "scoverage → Cobertura",
+      "sarif": "wrapper"
+    },
+    "elixir": {
+      "primary": "Credo",
+      "complexity": "proxies",
+      "coverage": "ExCoveralls → Cobertura",
+      "sarif": "wrapper"
+    },
+    "markdown": {
+      "primary": "markdownlint + vale",
+      "notes": "Useful for agent-generated documentation; INFO findings, non-blocking by default.",
+      "sarif": "wrapper"
+    }
+  }
+}

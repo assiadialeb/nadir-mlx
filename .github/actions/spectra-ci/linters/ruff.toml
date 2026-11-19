@@ -1,0 +1,30 @@
+# Spectra default Python ruleset for quality_provider=linters (SPCTR-287).
+#
+# Passed to ruff with --config, which overrides any ruff configuration found
+# in the scanned repository: a repository cannot loosen the gate through its
+# own pyproject.toml or ruff.toml. Spectra maps rule codes to Bug / Code Smell
+# server-side (app/ci/rule_profiles.py); gate thresholds live in Spectra.
+#
+# Complexity is not ruff's job (SPCTR-305): mccabe (C901), too-many-branches
+# (PLR0912) and too-many-statements (PLR0915) are cyclomatic proxies that
+# disagreed with SonarQube and counted the same function up to three times.
+# Python complexity is judged once, on cognitive complexity, by the Spectra
+# complexity gate (app/ci/complexity_gate.py). The size rules below stay;
+# their thresholds become configurable per project in SPCTR-314.
+
+# Vendored code is never linted (catalog default_excludes, SPCTR-301); ruff
+# already skips node_modules, dist and build by default.
+extend-exclude = ["**/vendor/**"]
+
+[lint]
+select = [
+    "E4", "E7", "E9",   # pycodestyle errors: imports, statements, syntax
+    "F",                # pyflakes
+    "B",                # flake8-bugbear
+    "PLE", "PLW",       # pylint errors and warnings
+    "PLR0911", "PLR0913",  # too many returns, too many arguments
+]
+
+[lint.pylint]
+max-args = 7
+max-returns = 6
