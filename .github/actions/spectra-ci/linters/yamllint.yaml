@@ -1,6 +1,0 @@
-# Spectra yamllint configuration (SPCTR-300, SPCTR-301).
-#
-# Passed with -c, so the repository's .yamllint files are never read.
-# "relaxed" keeps the structural checks (syntax, duplicate keys, trailing
-# spaces, indentation) without failing on house-style choices.
-extends: relaxed

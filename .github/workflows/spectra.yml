@@ -130,9 +130,11 @@ jobs:
             grep -o 'filename="[^"]*"' coverage.xml | head -5
           fi
 
+      # Spectra CI action from the master repository, pinned to its merged commit
+      # (SPCTR-380). Spectra CI › repository settings shows the commit to use.
       - name: Spectra quality gate
         id: spectra
-        uses: ./.github/actions/spectra-ci
+        uses: assiadialeb/spectra-ci@a5c5ca19b99f713228fb1123c7cca0b7e803c658
         with:
           spectra-url: ${{ vars.SPECTRA_URL }}
           api-key: ${{ secrets.SPECTRA_CI_KEY }}
