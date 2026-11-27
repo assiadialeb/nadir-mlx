@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -68,7 +67,7 @@ def has_whisper_processor_assets(model_path: Path) -> bool:
     return (model_path / "preprocessor_config.json").is_file()
 
 
-def ensure_whisper_hf_assets(model_path: os.PathLike[str] | str) -> None:
+def ensure_whisper_hf_assets(model_path: Path | str) -> None:
     """Download missing tokenizer/processor files for legacy MLX Whisper checkpoints."""
     path = Path(model_path).resolve()
     if has_whisper_processor_assets(path):
@@ -104,7 +103,7 @@ def ensure_whisper_hf_assets(model_path: os.PathLike[str] | str) -> None:
         )
 
 
-def is_stt_servable(model_path: os.PathLike[str] | str) -> bool:
+def is_stt_servable(model_path: Path | str) -> bool:
     """Return True when mlx-audio can transcribe with this local folder."""
     path = Path(model_path)
     if not path.is_dir() or not (path / CONFIG_JSON).is_file():
@@ -135,7 +134,7 @@ def is_stt_servable(model_path: os.PathLike[str] | str) -> bool:
     if has_whisper_processor_assets(path):
         return True
 
-    if is_legacy_mlx_whisper_checkpoint(path):
-        return resolve_legacy_whisper_processor_repo(path.name) is not None
-
-    return False
+    return (
+        is_legacy_mlx_whisper_checkpoint(path)
+        and resolve_legacy_whisper_processor_repo(path.name) is not None
+    )
