@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 
+from orchestrator.gateway import route_cache
 from orchestrator.gateway.route_cache import (
     clear_gateway_route_cache,
     gateway_route_cache_ttl_seconds,
@@ -91,6 +92,17 @@ class GatewayRouteCacheTests(TestCase):
             get_route_snapshot()
             get_route_snapshot(force_refresh=True)
             self.assertEqual(mock_build.call_count, 2)
+
+    def test_clear_resets_in_memory_expiry(self) -> None:
+        with patch(
+            "orchestrator.gateway.route_cache.time.monotonic",
+            return_value=100.0,
+        ):
+            get_route_snapshot(force_refresh=True)
+        self.assertGreater(route_cache._ROUTE_CACHE.expires_at, 0.0)
+        clear_gateway_route_cache()
+        self.assertEqual(route_cache._ROUTE_CACHE.expires_at, 0.0)
+        self.assertIsNone(route_cache._ROUTE_CACHE.snapshot)
 
     def test_clear_cache_forces_next_resolve_to_rebuild(self) -> None:
         InferenceInstance.objects.create(

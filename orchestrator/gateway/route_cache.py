@@ -30,10 +30,17 @@ class RouteCacheSnapshot:
 
 
 _CACHE_LOCK = threading.Lock()
-_CACHED_SNAPSHOT: RouteCacheSnapshot | None = None
-_CACHE_EXPIRES_AT: float = 0.0
-_CACHED_GENERATION: int = -1
 _GENERATION_FILENAME = "route-cache.generation"
+
+
+@dataclass
+class _RouteCacheState:
+    snapshot: RouteCacheSnapshot | None = None
+    expires_at: float = 0.0
+    generation: int = -1
+
+
+_ROUTE_CACHE = _RouteCacheState()
 
 
 def _generation_path() -> str:
@@ -71,16 +78,14 @@ def gateway_route_cache_ttl_seconds() -> float:
 
 def clear_gateway_route_cache() -> None:
     """Drop the cached snapshot here and signal other processes to drop theirs."""
-    global _CACHED_SNAPSHOT, _CACHE_EXPIRES_AT
     with _CACHE_LOCK:
-        _CACHED_SNAPSHOT = None
-        _CACHE_EXPIRES_AT = 0.0
+        _ROUTE_CACHE.snapshot = None
+        _ROUTE_CACHE.expires_at = 0.0
     _bump_route_generation()
 
 
 def get_route_snapshot(*, force_refresh: bool = False) -> RouteCacheSnapshot:
     """Return a fresh or cached routing snapshot."""
-    global _CACHED_SNAPSHOT, _CACHE_EXPIRES_AT, _CACHED_GENERATION
     from orchestrator.gateway.selectors import build_route_snapshot_from_db
 
     now = time.monotonic()
@@ -88,12 +93,12 @@ def get_route_snapshot(*, force_refresh: bool = False) -> RouteCacheSnapshot:
     with _CACHE_LOCK:
         if (
             not force_refresh
-            and _CACHED_SNAPSHOT is not None
-            and now < _CACHE_EXPIRES_AT
-            and generation == _CACHED_GENERATION
+            and _ROUTE_CACHE.snapshot is not None
+            and now < _ROUTE_CACHE.expires_at
+            and generation == _ROUTE_CACHE.generation
         ):
-            return _CACHED_SNAPSHOT
-        _CACHED_SNAPSHOT = build_route_snapshot_from_db()
-        _CACHE_EXPIRES_AT = now + gateway_route_cache_ttl_seconds()
-        _CACHED_GENERATION = generation
-        return _CACHED_SNAPSHOT
+            return _ROUTE_CACHE.snapshot
+        _ROUTE_CACHE.snapshot = build_route_snapshot_from_db()
+        _ROUTE_CACHE.expires_at = now + gateway_route_cache_ttl_seconds()
+        _ROUTE_CACHE.generation = generation
+        return _ROUTE_CACHE.snapshot
