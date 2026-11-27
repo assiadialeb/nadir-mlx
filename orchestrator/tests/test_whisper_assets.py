@@ -25,6 +25,10 @@ class WhisperAssetsTests(TestCase):
         hints = typing.get_type_hints(ensure_whisper_hf_assets)
         self.assertIn("model_path", hints)
 
+    def test_is_stt_servable_type_hints_resolve(self) -> None:
+        hints = typing.get_type_hints(is_stt_servable)
+        self.assertIn("model_path", hints)
+
     def test_legacy_checkpoint_detection(self) -> None:
         model_path = REPO_ROOT / "models" / "whisper-small-mlx"
         if not model_path.is_dir():
