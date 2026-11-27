@@ -1,5 +1,6 @@
 # Nadir-MLX mapping for the vela vibe loop (MLX-136).
-# Ids verified via Gravity / Spectra / Sonar MCP on 2026-11-19. No secrets.
+# Ids verified via Gravity / Spectra MCP on 2026-11-19. No secrets.
+# Full Spectra mode: no SonarQube (MLX-139), quality comes from the Spectra linters provider.
 
 gravity:
   project_code: MLX
@@ -10,10 +11,6 @@ spectra:
   project_id: 4              # "Nadir MLX", CI repository id 3 (github, gate advisory)
   ci_gate_name: "Spectra — Quality Gate"
   base_branch: main
-
-sonar:
-  project_key: assiadialeb_nadir_mlx
-  pr_analysis: true
 
 reportportal:
   project: nadir-mlx
@@ -39,8 +36,6 @@ local_gate:
 thresholds:
   new_findings_max_severity: MEDIUM
   new_secrets: 0
-  sonar_gate: OK
-  sonar_new_coverage_min: 80
   reportportal_max_failed: 0
 
 risk_paths:
