@@ -2,7 +2,6 @@
     <form method="GET" action="{% url 'models' %}" class="flex flex-col lg:flex-row gap-3 lg:items-end">
         <input type="hidden" name="tab" value="{{ filter_tab }}">
         {% if filter_cap %}<input type="hidden" name="cap" value="{{ filter_cap }}">{% endif %}
-        {% if filter_tab == 'hub' and filter_fits_mac %}<input type="hidden" name="fits_mac" value="1">{% endif %}
         <div class="flex-grow">
             <label for="models-filter-q" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Search</label>
             <div class="relative">
