@@ -1,34 +1,45 @@
-"""The contract gateway client closes the connections its requests open (MLX-137)."""
+"""The contract gateway client drains telemetry writes before teardown (MLX-137)."""
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+from django.db import transaction
 
+from orchestrator import gateway_telemetry_services as telemetry
 from orchestrator.models import InferenceInstance
-from orchestrator.tests.contracts.conftest import gateway_test_client
 
 
 @pytest.mark.contract
 @pytest.mark.ticket("MLX-137")
 @pytest.mark.ac("MLX-137:AC1")
 @pytest.mark.django_db(transaction=True)
-def test_gateway_client_closes_executor_thread_connections_ac1() -> None:
-    """AC1: connections opened by gateway executor threads are closed on exit."""
-    InferenceInstance.objects.create(
-        model_name="teardown-llama",
-        port=11470,
-        launch_mode="TEXT",
-        server_config={"model_id": "teardown-llama"},
-        status="RUNNING",
-    )
-    opened: list[Any] = []
+def test_gateway_client_drains_telemetry_writer_before_flush_ac1(gateway_client: Any) -> None:
+    """AC1: a telemetry write still running when the test ends does not lock the flush.
 
-    with gateway_test_client(opened) as client:
-        response = client.get("/v1/models")
-        assert response.status_code == 200
-        assert opened, "the request should read the database from an executor thread"
-        assert any(wrapper.connection is not None for wrapper in opened)
+    The writer thread holds a write transaction past the end of the test body.
+    Without the drain in ``gateway_client`` the teardown flush of the shared
+    in-memory SQLite DB fails with ``database table is locked`` (CI run
+    44479483504).
+    """
+    writing = threading.Event()
 
-    assert all(wrapper.connection is None for wrapper in opened)
+    def slow_write(_snapshot: Any) -> None:
+        with transaction.atomic():
+            InferenceInstance.objects.create(
+                model_name="teardown-probe",
+                port=11470,
+                launch_mode="TEXT",
+                server_config={},
+                status="RUNNING",
+            )
+            writing.set()
+            time.sleep(1)
+
+    with patch.object(telemetry, "record_gateway_request_timing", slow_write):
+        telemetry.enqueue_gateway_request_timing(object())
+        assert writing.wait(timeout=5), "the telemetry writer did not start the write"
