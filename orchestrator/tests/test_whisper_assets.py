@@ -1,5 +1,6 @@
 """Tests for legacy Whisper asset bootstrapping."""
 
+import typing
 from pathlib import Path
 from unittest import TestCase
 
@@ -19,6 +20,10 @@ class WhisperAssetsTests(TestCase):
             resolve_legacy_whisper_processor_repo("whisper-small-mlx-4bit"),
             "openai/whisper-small",
         )
+
+    def test_ensure_whisper_hf_assets_type_hints_resolve(self) -> None:
+        hints = typing.get_type_hints(ensure_whisper_hf_assets)
+        self.assertIn("model_path", hints)
 
     def test_legacy_checkpoint_detection(self) -> None:
         model_path = REPO_ROOT / "models" / "whisper-small-mlx"
